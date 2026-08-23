@@ -2,8 +2,98 @@ import fs from "fs/promises"
 import path from "path"
 import OpenAI from "openai"
 import type { ChatCompletionTool, ChatCompletionMessageParam } from "openai/resources/chat/completions"
+import "./config.ts"
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+// ── Client factory ──────────────────────────────────────────────────────────
+
+function getGeminiClient(): OpenAI {
+	return new OpenAI({
+		baseURL: process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/",
+		apiKey: process.env.GEMINI_API_KEY || "",
+		fetch: globalThis.fetch
+	})
+}
+
+function getOpenRouterClient(): OpenAI {
+	return new OpenAI({
+		baseURL: "https://openrouter.ai/api/v1",
+		apiKey: process.env.OPENROUTER_API_KEY || "",
+		fetch: globalThis.fetch
+	})
+}
+
+// ── Model fallback chain ────────────────────────────────────────────────────
+
+interface ModelEntry {
+	client: () => OpenAI
+	model: string
+}
+
+function getModelChain(): ModelEntry[] {
+	const primary = process.env.AI_MODEL || "gemini-2.5-flash"
+	const chain: ModelEntry[] = [
+		{ client: getGeminiClient, model: primary },
+	]
+
+	// Add OpenRouter fallbacks if key is available
+	if (process.env.OPENROUTER_API_KEY) {
+		chain.push(
+			{ client: getOpenRouterClient, model: "google/gemini-2.5-flash:free" },
+			{ client: getOpenRouterClient, model: "google/gemma-4-27b-it:free" }
+		)
+	}
+
+	return chain
+}
+
+// ── Retry helper ────────────────────────────────────────────────────────────
+
+const MAX_RETRIES = parseInt(process.env.AI_MAX_RETRIES || "3", 10)
+const RETRY_BASE_MS = 2_000
+
+async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
+
+function isRetryable(error: unknown): boolean {
+	if (error && typeof error === "object" && "status" in error) {
+		const status = (error as any).status
+		return status === 429 || status === 503 || status === 500 || status === 502
+	}
+	return false
+}
+
+async function callWithRetry(
+	modelChain: ModelEntry[],
+	messages: ChatCompletionMessageParam[],
+	tools: ChatCompletionTool[]
+) {
+	for (const entry of modelChain) {
+		const client = entry.client()
+		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+			try {
+				console.log(`  [ai] Calling ${entry.model} (attempt ${attempt})`)
+				const response = await client.chat.completions.create({
+					model: entry.model,
+					messages,
+					tools
+				})
+				return response
+			} catch (error: unknown) {
+				const status = (error as any)?.status
+				console.warn(`  ⚠ ${entry.model} error (${status}): ${(error as Error).message?.slice(0, 100)}`)
+
+				if (!isRetryable(error) || attempt === MAX_RETRIES) {
+					// Non-retryable or exhausted retries → try next model
+					break
+				}
+				const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1)
+				console.log(`  [ai] Retrying in ${delay}ms...`)
+				await sleep(delay)
+			}
+		}
+		console.log(`  [ai] Model ${entry.model} exhausted, trying next fallback...`)
+	}
+	throw new Error("All AI models exhausted — no successful response")
+}
 
 // ── Tool-call shape returned to the caller ──────────────────────────────────
 
@@ -98,6 +188,8 @@ const tools: ChatCompletionTool[] = [
 // ── Main generation function ────────────────────────────────────────────────
 
 export async function generateToolCalls(prompt: string, projectDir: string): Promise<FileOperation[]> {
+	const modelChain = getModelChain()
+
 	const messages: ChatCompletionMessageParam[] = [
 		{ role: "system", content: SYSTEM_PROMPT },
 		{ role: "user", content: prompt }
@@ -110,20 +202,28 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 	while (iterations < MAX_ITERATIONS) {
 		iterations++
 
-		const response = await client.chat.completions.create({
-			model: "gpt-4o",
-			messages,
-			tools,
-			tool_choice: iterations === 1 ? "required" : "auto"
-		})
+		console.log(`  [ai] Iteration ${iterations} — sending ${messages.length} messages`)
+
+		const response = await callWithRetry(modelChain, messages, tools)
 
 		const choice = response.choices[0]
-		if (!choice || !choice.message.tool_calls?.length) break
+		if (!choice) break
 
-		// Collect tool calls and build per-call results
-		messages.push(choice.message)
+		const message = choice.message
 
-		for (const call of choice.message.tool_calls) {
+		// Diagnostic logging
+		console.log(`  [ai] finish_reason: ${choice.finish_reason}`)
+		console.log(`  [ai] tool_calls: ${message.tool_calls?.length ?? 0}`)
+		if (message.content) {
+			console.log(`  [ai] text response: ${message.content.slice(0, 200)}`)
+		}
+
+		if (!message.tool_calls?.length) break
+
+		// Feed the assistant message back so the model maintains conversation context
+		messages.push(message)
+
+		for (const call of message.tool_calls) {
 			const args = JSON.parse(call.function.arguments)
 			const name = call.function.name
 			let result = "OK"

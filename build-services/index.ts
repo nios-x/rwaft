@@ -2,7 +2,7 @@ import fs from "fs/promises"
 import path from "node:path"
 import { spawn } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { redis } from "./lib/config.ts"
+import { createRedisClient } from "./lib/config.ts"
 import { v2 as cloudinary } from "cloudinary"
 import { getAllFileNames } from "./lib/helper.ts"
 import { uploadFile } from "./lib/upload.ts"
@@ -108,6 +108,8 @@ const buildFromCloudinary = async (id: string) => {
 }
 
 const deployWorker = async () => {
+	const redis = createRedisClient()
+	await redis.connect()
 	console.log(`[deploy] Listening on ${DEPLOY_QUEUE}`)
 
 	while (true) {
@@ -133,12 +135,16 @@ const deployWorker = async () => {
 
 // ── Worker: rwaft:prompt (AI → scaffold → build → upload) ───────────────────
 
+const TEMPLATE_REPO = "https://github.com/nios-x/vite-template"
+
 const scaffoldViteProject = async (projectDir: string) => {
 	await fs.rm(projectDir, { recursive: true, force: true })
-	await run(`npx -y create-vite@latest ${projectDir} --template react-ts`, root)
+	await run(`git clone ${TEMPLATE_REPO} ${projectDir}`, root)
 }
 
 const promptWorker = async () => {
+	const redis = createRedisClient()
+	await redis.connect()
 	console.log(`[prompt] Listening on ${PROMPT_QUEUE}`)
 
 	while (true) {
@@ -197,17 +203,23 @@ const promptWorker = async () => {
 
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 
+// Prevent stray errors (like Redis ECONNRESET) from crashing the process
+process.on("uncaughtException", (error) => {
+	console.error("[process] Uncaught exception:", error.message)
+})
+process.on("unhandledRejection", (reason) => {
+	console.error("[process] Unhandled rejection:", reason)
+})
+
 await fs.mkdir(root, { recursive: true })
 
-try {
-	await redis.connect()
-} catch (error) {
-	console.error("Failed to connect to Redis:", error)
-	process.exit(1)
-}
-
-// Run both workers concurrently
 await Promise.all([
-	deployWorker(),
-	promptWorker()
+	deployWorker().catch(error => {
+		console.error("[deploy] Worker crashed:", error)
+		process.exit(1)
+	}),
+	promptWorker().catch(error => {
+		console.error("[prompt] Worker crashed:", error)
+		process.exit(1)
+	})
 ])

@@ -355,3 +355,63 @@ button:disabled { cursor: wait; opacity: .6; }
     border-right-color: var(--border);
   }
 }
+
+/* Tab Switcher & Textarea Styles */
+.form-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-switcher {
+  display: flex;
+  margin-bottom: -1px;
+  position: relative;
+  z-index: 1;
+}
+
+.tab-btn {
+  flex: 1;
+  margin-top: 0;
+  padding: 12px;
+  background: rgba(255, 255, 255, .15);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  font: 600 12px 'Space Grotesk', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  cursor: pointer;
+  transition: background .2s, color .2s;
+  justify-content: center;
+}
+
+.tab-btn.active {
+  background: var(--ink);
+  color: var(--acid);
+  border-color: var(--ink);
+}
+
+.tab-btn:hover:not(.active):not(:disabled) {
+  background: rgba(255, 255, 255, .4);
+  transform: none;
+}
+
+.textarea-wrap {
+  border-bottom: 2px solid var(--ink);
+  width: 100%;
+}
+
+textarea {
+  width: 100%;
+  padding: 12px 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 14px 'DM Mono', monospace;
+  resize: vertical;
+}
+
+textarea::placeholder {
+  color: #aaa89c;
+}

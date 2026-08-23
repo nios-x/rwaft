@@ -21,7 +21,22 @@ if (!redisUrl || Object.values(cloudinaryConfig).some((value) => !value)) {
 cloudinary.config(cloudinaryConfig)
 
 
-export const redis = createClient({ url: redisUrl })
-redis.on("error", (error) => {
-	console.error("Redis error:", error)
-})
+export function createRedisClient() {
+	const client = createClient({
+		url: redisUrl,
+		socket: {
+			reconnectStrategy(retries) {
+				// Exponential backoff: 500ms, 1s, 2s, 4s, ... capped at 30s
+				const delay = Math.min(retries * 500, 30_000)
+				console.log(`[redis] Reconnecting in ${delay}ms (attempt ${retries})`)
+				return delay
+			},
+			connectTimeout: 10_000,
+		}
+	})
+	client.on("error", (error) => {
+		// Log but don't crash — the reconnectStrategy handles recovery
+		console.error("[redis] Connection error:", error.message)
+	})
+	return client
+}
