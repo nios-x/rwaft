@@ -6,10 +6,10 @@ import "./config.ts"
 
 // ── Client factory ──────────────────────────────────────────────────────────
 
-function getGeminiClient(): OpenAI {
+function getGeminiClient(apiKey: string): OpenAI {
 	return new OpenAI({
 		baseURL: process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/",
-		apiKey: process.env.GEMINI_API_KEY || "",
+		apiKey,
 		fetch: globalThis.fetch
 	})
 }
@@ -27,19 +27,58 @@ function getOpenRouterClient(): OpenAI {
 interface ModelEntry {
 	client: () => OpenAI
 	model: string
+	provider: string
+}
+
+let nextGeminiKey = 0
+
+const DEFAULT_GEMINI_MODELS = [
+	"gemini-3.7-flash",
+	"gemini-3.6-flash",
+	"gemini-3.5-flash",
+	"gemini-3.5-flash-lite",
+	"gemini-3.1-flash-lite"
+]
+
+function getGeminiApiKeys(): string[] {
+	const numberedKeys: string[] = []
+	for (let index = 1; index <= 9; index++) {
+		const key = process.env[`GEMINI_API_KEY${index}`]
+		if (key) numberedKeys.push(key)
+	}
+	const keys = numberedKeys.length === 9
+		? numberedKeys
+		: [process.env.GEMINI_API_KEY, ...numberedKeys].slice(0, 9)
+
+	return [...new Set(keys.filter((key): key is string => Boolean(key)))]
 }
 
 function getModelChain(): ModelEntry[] {
-	const primary = process.env.AI_MODEL || "gemini-2.5-flash"
-	const chain: ModelEntry[] = [
-		{ client: getGeminiClient, model: primary },
-	]
+	const geminiKeys = getGeminiApiKeys()
+	const chain: ModelEntry[] = []
+
+	if (geminiKeys.length > 0) {
+		const start = nextGeminiKey % geminiKeys.length
+		nextGeminiKey = (nextGeminiKey + 1) % geminiKeys.length
+		const rotatedKeys = [...geminiKeys.slice(start), ...geminiKeys.slice(0, start)]
+		const configuredModel = process.env.AI_MODEL
+		const models = configuredModel
+			? [configuredModel, ...DEFAULT_GEMINI_MODELS.filter(model => model !== configuredModel)]
+			: DEFAULT_GEMINI_MODELS
+
+		for (const model of models) {
+			chain.push(...rotatedKeys.map((key, index) => ({
+				client: () => getGeminiClient(key),
+				model,
+				provider: `Gemini key ${start + index >= geminiKeys.length ? start + index - geminiKeys.length + 1 : start + index + 1}`
+			})))
+		}
+	}
 
 	// Add OpenRouter fallbacks if key is available
 	if (process.env.OPENROUTER_API_KEY) {
 		chain.push(
-			{ client: getOpenRouterClient, model: "google/gemini-2.5-flash:free" },
-			{ client: getOpenRouterClient, model: "google/gemma-4-27b-it:free" }
+			{ client: getOpenRouterClient, model: process.env.OPENROUTER_MODEL || "google/gemini-3.5-flash-lite", provider: "OpenRouter" }
 		)
 	}
 
@@ -70,7 +109,7 @@ async function callWithRetry(
 		const client = entry.client()
 		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
 			try {
-				console.log(`  [ai] Calling ${entry.model} (attempt ${attempt})`)
+				console.log(`  [ai] Calling ${entry.model} via ${entry.provider} (attempt ${attempt})`)
 				const response = await client.chat.completions.create({
 					model: entry.model,
 					messages,
@@ -81,7 +120,7 @@ async function callWithRetry(
 				const status = (error as any)?.status
 				console.warn(`  ⚠ ${entry.model} error (${status}): ${(error as Error).message?.slice(0, 100)}`)
 
-				if (!isRetryable(error) || attempt === MAX_RETRIES) {
+				if (status === 429 || !isRetryable(error) || attempt === MAX_RETRIES) {
 					// Non-retryable or exhausted retries → try next model
 					break
 				}
@@ -118,6 +157,20 @@ Rules:
 - All file paths are relative to the project root (e.g. "src/App.tsx", "src/components/Header.tsx").
 - Write complete, production-quality code. No placeholders or TODOs.
 - You may add CSS files, components, assets, and new dependencies (via patch_file on package.json).
+- When using React hooks such as useState or useEffect, import each hook from "react" in the file that uses it.
+- Ensure package.json includes react, react-dom, typescript, vite, and @vitejs/plugin-react when the Vite config imports the React plugin.
+- Use type-only imports for TypeScript types when verbatimModuleSyntax is enabled.
+- Ensure index.html references an entry file that exists. Use a relative path such as ./src/main.tsx, and create that file when it is missing.
+- Keep the mount element ID in index.html identical to the ID queried by the entry file (normally <div id="root"></div> or <div id="app"></div>).
+- App.tsx must only export the app component; never call createRoot, hydrateRoot, or ReactDOM.render from App.tsx. Mount React exactly once in the entry file.
+- Ensure tsconfig.json sets compilerOptions.jsx to "react-jsx" when the project contains .tsx files.
+- Set tsconfig.json compilerOptions.lib to ["ES2020", "DOM", "DOM.Iterable"] and allowImportingTsExtensions to true.
+- Do not add compiler options that may not be supported by the installed TypeScript version, especially erasableSyntaxOnly.
+- Replace the scaffold entry implementation instead of leaving imports for starter assets that do not exist; every imported file must exist.
+- After inspecting a file, implement the required changes immediately. Do not use the remaining tool-call iterations only for repeated file inspection.
+- Keep Vite config syntax consistent with its extension: never use 'import type' or TypeScript annotations in vite.config.js; prefer vite.config.ts for TypeScript config.
+- Ensure the entry file imports the app component and mounts it with ReactDOM before finishing.
+- Before finishing, inspect package.json and every imported module/config file so npm install and npm run build can resolve them.
 - Make sure the app compiles and builds cleanly with "npm run build".`
 
 // ── Tool definitions ────────────────────────────────────────────────────────
@@ -197,7 +250,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 
 	const operations: FileOperation[] = []
 	let iterations = 0
-	const MAX_ITERATIONS = 10
+	const MAX_ITERATIONS = 20
 
 	while (iterations < MAX_ITERATIONS) {
 		iterations++

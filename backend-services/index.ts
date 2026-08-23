@@ -16,6 +16,7 @@ const app = express()
 const PORT = process.env.PORT || 3000
 const UPLOAD_BATCH_SIZE = 10
 const DEPLOY_QUEUE = "rwaft:deploy"
+const DEPLOYMENT_STATUS_PREFIX = "rwaft:deployment-status:"
 const redisClient = await getRedisClient()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const deploymentDomain = process.env.DEPLOYMENT_DOMAIN || "localhost:3000"
@@ -67,6 +68,16 @@ app.get("/{*splat}", async (req, res) => {
         return
     }
 
+    const deploymentStatus = await redisClient.get(`${DEPLOYMENT_STATUS_PREFIX}${deploymentId}`)
+    if (deploymentStatus === "building") {
+        res.status(202).type("html").send(`<!doctype html><title>Building deployment</title><meta http-equiv="refresh" content="3"> <p>Your site is still building. This page will refresh automatically.</p>`)
+        return
+    }
+    if (deploymentStatus === "failed") {
+        res.status(503).send("Deployment failed")
+        return
+    }
+
     const requestedPath = parts.join("/") || "index.html"
     if (requestedPath.split("/").some((part) => part === "..")) {
         res.status(400).json({ status: "Invalid file path" })
@@ -76,13 +87,6 @@ app.get("/{*splat}", async (req, res) => {
     try {
         await sendCloudinaryFile(deploymentId, requestedPath, res)
     } catch (error) {
-        if (requestedPath !== "index.html") {
-            try {
-                await sendCloudinaryFile(deploymentId, "index.html", res)
-                return
-            } catch { }
-        }
-
         console.error(`Failed to find deployed file ${deploymentId}/${requestedPath}:`, error)
         res.status(404).json({ status: "File not found" })
     }
@@ -120,6 +124,7 @@ app.post("/deploy", async (req, res) => {
     console.log("WAKING WORKER")
 
     try {
+        await redisClient.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "building", { EX: 3600 })
         await redisClient.rPush(DEPLOY_QUEUE, id)
     } catch (error) {
         console.error("Deployment queue push failed:", error)
@@ -142,6 +147,7 @@ app.post("/prompt", async (req, res) => {
     const id = genId()
     const AI_PROMPT_QUEUE = "rwaft:prompt"
     try {
+        await redisClient.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "building", { EX: 3600 })
         await redisClient.rPush(AI_PROMPT_QUEUE, JSON.stringify({ id, prompt: req.body.prompt }))
     } catch (error) {
         console.error("Prompt queue push failed:", error)

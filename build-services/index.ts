@@ -15,6 +15,7 @@ const root = path.join(directory, "builds")
 
 const DEPLOY_QUEUE = "rwaft:deploy"
 const PROMPT_QUEUE = "rwaft:prompt"
+const DEPLOYMENT_STATUS_PREFIX = "rwaft:deployment-status:"
 const UPLOAD_BATCH_SIZE = 8
 
 // ── Shell runner ────────────────────────────────────────────────────────────
@@ -23,6 +24,27 @@ const run = (command: string, cwd: string) => new Promise<void>((resolve, reject
 	const child = spawn(command, { cwd, shell: true, stdio: "inherit" })
 	child.on("error", reject)
 	child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`${command} failed`)))
+})
+
+const runWithOutput = (command: string, cwd: string) => new Promise<void>((resolve, reject) => {
+	let output = ""
+	const child = spawn(command, { cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] })
+	const collect = (chunk: Buffer) => {
+		const text = chunk.toString()
+		output += text
+		process.stdout.write(text)
+	}
+
+	child.stdout.on("data", collect)
+	child.stderr.on("data", collect)
+	child.on("error", reject)
+	child.on("exit", (code) => {
+		if (code === 0) {
+			resolve()
+			return
+		}
+		reject(new Error(`${command} failed\n\n${output.slice(-12_000)}`))
+	})
 })
 
 // ── Cloudinary helpers ──────────────────────────────────────────────────────
@@ -102,6 +124,7 @@ const buildFromCloudinary = async (id: string) => {
 	}
 
 	await run("npm install", projectDir)
+	await run("npm install -D @vitejs/plugin-react", projectDir)
 	await run("npm run build", projectDir)
 
 	return projectDir
@@ -125,9 +148,11 @@ const deployWorker = async () => {
 
 			await uploadBuildOutput(id, projectDir)
 			console.log(`[deploy] Uploaded ${id}`)
+			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: 3600 })
 
 			await cleanup(id, projectDir)
 		} catch (error) {
+			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: 3600 }).catch(() => {})
 			console.error(`[deploy] Failed for ${id}:`, error)
 		}
 	}
@@ -140,6 +165,152 @@ const TEMPLATE_REPO = "https://github.com/nios-x/vite-template"
 const scaffoldViteProject = async (projectDir: string) => {
 	await fs.rm(projectDir, { recursive: true, force: true })
 	await run(`git clone ${TEMPLATE_REPO} ${projectDir}`, root)
+	await run("npm install -D @vitejs/plugin-react", projectDir)
+}
+
+const MAX_BUILD_REPAIRS = 3
+
+const normalizeGeneratedProject = async (projectDir: string) => {
+	const tsconfigPath = path.join(projectDir, "tsconfig.json")
+	let tsconfig = await fs.readFile(tsconfigPath, "utf-8")
+	tsconfig = tsconfig.replace(/^\s*"erasableSyntaxOnly"\s*:\s*[^,\r\n]+,?\s*\r?\n?/m, "")
+	const setCompilerOption = (name: string, value: string) => {
+		const optionPattern = new RegExp(`("${name}"\\s*:\\s*)("[^"]*"|true|false|\\[[^\\]]*\\])`)
+		if (optionPattern.test(tsconfig)) {
+			tsconfig = tsconfig.replace(optionPattern, `$1${value}`)
+			return
+		}
+
+		const compilerOptionsStart = tsconfig.search(/"compilerOptions"\s*:\s*\{/)
+		if (compilerOptionsStart === -1) {
+			throw new Error("Generated tsconfig.json has no compilerOptions object")
+		}
+		const openingBrace = tsconfig.indexOf("{", compilerOptionsStart)
+		tsconfig = `${tsconfig.slice(0, openingBrace + 1)}\n    "${name}": ${value},${tsconfig.slice(openingBrace + 1)}`
+	}
+	setCompilerOption("jsx", '"react-jsx"')
+	setCompilerOption("lib", '["ES2020", "DOM", "DOM.Iterable"]')
+	setCompilerOption("allowImportingTsExtensions", "true")
+	setCompilerOption("noEmit", "true")
+	await fs.writeFile(tsconfigPath, tsconfig, "utf-8")
+
+	const viteConfigTs = path.join(projectDir, "vite.config.ts")
+	const viteConfigJs = path.join(projectDir, "vite.config.js")
+
+	try {
+		await fs.access(viteConfigTs)
+		await fs.rm(viteConfigJs, { force: true })
+	} catch {
+	}
+
+	const indexPath = path.join(projectDir, "index.html")
+	let indexHtml = await fs.readFile(indexPath, "utf-8")
+	const appPath = path.join(projectDir, "src/App.tsx")
+	const reactEntryPath = path.join(projectDir, "src/main.tsx")
+	let hasAppComponent = false
+	try {
+		await fs.access(appPath)
+		hasAppComponent = true
+	} catch {
+	}
+
+	if (hasAppComponent) {
+		const appSource = await fs.readFile(appPath, "utf-8")
+		if (/\b(?:createRoot|hydrateRoot)\s*\(|\bReactDOM\.render\s*\(/.test(appSource)) {
+			throw new Error("src/App.tsx must export a component and must not mount React")
+		}
+
+		await fs.writeFile(reactEntryPath, `import { StrictMode } from "react"\nimport { createRoot } from "react-dom/client"\nimport App from "./App"\nimport "./index.css"\n\ncreateRoot(document.getElementById("root")!).render(\n\t<StrictMode>\n\t\t<App />\n\t</StrictMode>\n)\n`, "utf-8")
+		for (const alternateEntry of ["src/main.ts", "src/index.tsx", "src/index.ts", "src/main.jsx", "src/main.js", "src/index.jsx", "src/index.js"]) {
+			await fs.rm(path.join(projectDir, alternateEntry), { force: true })
+		}
+	}
+	const entryCandidates = [
+		"src/main.tsx",
+		"src/main.ts",
+		"src/index.tsx",
+		"src/index.ts",
+		"src/main.jsx",
+		"src/main.js",
+		"src/index.jsx",
+		"src/index.js"
+	]
+
+	let entryPath: string | undefined
+	for (const candidate of entryCandidates) {
+		try {
+			await fs.access(path.join(projectDir, candidate))
+			entryPath = candidate
+			break
+		} catch {
+		}
+	}
+
+	if (!entryPath) {
+		throw new Error("Generated project has no supported entry file in src/")
+	}
+
+	const entrySource = await fs.readFile(path.join(projectDir, entryPath), "utf-8")
+	const mountMatch = entrySource.match(/querySelector(?:<[^>]*>)?\s*\(\s*["']#([^"']+)["']\s*\)|getElementById(?:<[^>]*>)?\s*\(\s*["']([^"']+)["']\s*\)/)
+	const mountId = mountMatch?.[1] || mountMatch?.[2]
+	if (mountId) {
+		const mountElementPattern = /<div\b([^>]*\bid=["'])[^"']*(["'][^>]*)><\/div>/i
+		if (mountElementPattern.test(indexHtml)) {
+			indexHtml = indexHtml.replace(mountElementPattern, `$1${mountId}$2></div>`)
+		} else {
+			indexHtml = indexHtml.replace(/(<body\b[^>]*>)/i, `$1\n    <div id="${mountId}"></div>`)
+		}
+	}
+
+	const moduleScriptPattern = /(<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["'])([^"']+)(["'][^>]*>)/i
+	if (!moduleScriptPattern.test(indexHtml)) {
+		throw new Error("Generated index.html has no module script entry")
+	}
+	indexHtml = indexHtml.replace(moduleScriptPattern, `$1./${entryPath}$3`)
+	await fs.writeFile(indexPath, indexHtml, "utf-8")
+}
+
+const installAndBuildPromptProject = async (
+	projectDir: string,
+	prompt: string,
+	initialOperations: Awaited<ReturnType<typeof generateToolCalls>>
+) => {
+	for (let attempt = 0; attempt <= MAX_BUILD_REPAIRS; attempt++) {
+		try {
+			if (attempt === 0) {
+				await applyOperations(projectDir, initialOperations)
+			}
+			await normalizeGeneratedProject(projectDir)
+			await runWithOutput("npm install", projectDir)
+			await runWithOutput("npm run build", projectDir)
+			return
+		} catch (error) {
+			if (attempt === MAX_BUILD_REPAIRS) throw error
+
+			const failure = error instanceof Error ? error.message : String(error)
+			console.warn(`[prompt] Project step failed, asking AI for repair (${attempt + 1}/${MAX_BUILD_REPAIRS})`)
+			const repairPrompt = `A project step failed. Fix the project using the file tools.
+
+Original user request:
+${prompt}
+
+Failure output:
+${failure}
+
+	Inspect the relevant files first. Fix every error shown above, including dependency, import, TypeScript, and Vite configuration errors. Make the changes needed so npm install and npm run build both succeed. For React JSX files, tsconfig.json must set compilerOptions.jsx to react-jsx and allowImportingTsExtensions to true. Do not leave starter imports to missing assets; replace starter entry code or use only files that exist.`
+			const repairOperations = await generateToolCalls(repairPrompt, projectDir)
+			if (repairOperations.length === 0) {
+				throw new Error(`AI returned no repair operations after project failure\n\n${failure}`)
+			}
+			console.log(`[prompt] Applying ${repairOperations.length} repair operations`)
+			try {
+				await applyOperations(projectDir, repairOperations)
+			} catch (repairError) {
+				const message = repairError instanceof Error ? repairError.message : String(repairError)
+				console.warn(`[prompt] Repair application failed; retrying with AI: ${message}`)
+			}
+		}
+	}
 }
 
 const promptWorker = async () => {
@@ -176,25 +347,22 @@ const promptWorker = async () => {
 			const operations = await generateToolCalls(prompt, projectDir)
 			console.log(`[prompt] Received ${operations.length} operations`)
 
-			// 3. Apply each operation sequentially
+			// 4. Install dependencies and build, repairing failures through the AI
 			console.log(`[prompt] Applying file operations`)
-			await applyOperations(projectDir, operations)
-
-			// 4. Install dependencies and build
 			console.log(`[prompt] Installing dependencies`)
-			await run("npm install", projectDir)
-
 			console.log(`[prompt] Building project`)
-			await run("npm run build", projectDir)
+			await installAndBuildPromptProject(projectDir, prompt, operations)
 
 			// 5. Upload build output to Cloudinary
 			console.log(`[prompt] Uploading to Cloudinary`)
 			await uploadBuildOutput(id, projectDir)
 
 			// 6. Cleanup
+			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: 3600 })
 			await fs.rm(projectDir, { recursive: true, force: true })
 			console.log(`[prompt] ✓ Deployed ${id}`)
 		} catch (error) {
+			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: 3600 }).catch(() => {})
 			console.error(`[prompt] Failed for ${id}:`, error)
 			await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {})
 		}

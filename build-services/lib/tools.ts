@@ -26,8 +26,7 @@ async function patchFile(projectDir: string, filePath: string, search: string, r
 	const original = await fs.readFile(target, "utf-8")
 
 	if (!original.includes(search)) {
-		console.warn(`  ⚠ patch   ${filePath} — search string not found, skipping`)
-		return
+		throw new Error(`Patch search string not found in ${filePath}`)
 	}
 
 	const patched = original.replace(search, replace)
@@ -62,7 +61,18 @@ export async function executeOperation(projectDir: string, operation: FileOperat
  * Applies all operations sequentially (order matters for patches).
  */
 export async function applyOperations(projectDir: string, operations: FileOperation[]): Promise<void> {
+	const errors: string[] = []
 	for (const operation of operations) {
-		await executeOperation(projectDir, operation)
+		try {
+			await executeOperation(projectDir, operation)
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error)
+			errors.push(message)
+			console.warn(`  ⚠ ${operation.tool} ${operation.path} — ${message}`)
+		}
+	}
+
+	if (errors.length > 0) {
+		throw new Error(`One or more file operations failed:\n${errors.join("\n")}`)
 	}
 }
