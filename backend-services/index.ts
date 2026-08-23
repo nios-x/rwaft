@@ -104,7 +104,6 @@ app.post("/deploy", async (req, res) => {
     const fileNames = await getAllFileNames(outputPath)
     const uploadResults = [];
     console.log("PULLING REPOSITORY")
-
     try {
         for (let index = 0; index < fileNames.length; index += UPLOAD_BATCH_SIZE) {
             const batch = fileNames.slice(index, index + UPLOAD_BATCH_SIZE)
