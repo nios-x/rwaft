@@ -171,6 +171,7 @@ Rules:
 - Keep Vite config syntax consistent with its extension: never use 'import type' or TypeScript annotations in vite.config.js; prefer vite.config.ts for TypeScript config.
 - Ensure the entry file imports the app component and mounts it with ReactDOM before finishing.
 - Before finishing, inspect package.json and every imported module/config file so npm install and npm run build can resolve them.
+- When repairing a failed build, treat the complete diagnostic output as a connected problem. Inspect every named file and its imported types/modules before editing, then fix all reported errors in one coherent pass. Check named versus default exports, relative paths, dependency placement, JSX file extensions, callback and function parameter types, object shapes, union literals, indexed records, asset paths, Vite config, and index.html together. Never hide errors with any, @ts-ignore, or broad casts, and never replace requested functionality with a placeholder.
 - Make sure the app compiles and builds cleanly with "npm run build".`
 
 // ── Tool definitions ────────────────────────────────────────────────────────
