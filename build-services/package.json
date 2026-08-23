@@ -1,0 +1,21 @@
+{
+  "name": "builder-worker",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "node --watch index.ts",
+    "start": "node index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "cloudinary": "^2.10.1",
+    "dotenv": "^17.4.2",
+    "redis": "^6.2.1"
+  }
+}

@@ -1,0 +1,92 @@
+import { useState } from 'react'
+import type { FormEvent } from 'react'
+import './App.css'
+
+const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000'
+
+function App() {
+  const [repositoryUrl, setRepositoryUrl] = useState('')
+  const [deploymentUrl, setDeploymentUrl] = useState('')
+  const [error, setError] = useState('')
+  const [isDeploying, setIsDeploying] = useState(false)
+
+  const deployRepository = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setError('')
+    setDeploymentUrl('')
+    setIsDeploying(true)
+
+    try {
+      const response = await fetch(`${backendUrl}/deploy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: repositoryUrl.trim() }),
+      })
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || result.status || 'Deployment failed')
+      }
+
+      setDeploymentUrl(result.url)
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Deployment failed')
+    } finally {
+      setIsDeploying(false)
+    }
+  }
+
+  return (
+    <main className="deploy-page">
+      <header className="topbar">
+        <a className="brand" href="/" aria-label="Rwaft home">
+          <span className="brand-mark">R</span>
+          rwaft
+        </a>
+        <span className="status"><i /> deploy console</span>
+      </header>
+
+      <section className="deploy-shell">
+        <div className="intro">
+          <p className="eyebrow">SHIP FROM GITHUB</p>
+          <h1>Turn a repository<br /><em>into a live site.</em></h1>
+          <p className="lede">Paste a public React repository and we’ll build, publish, and hand you a URL.</p>
+        </div>
+
+        <form className="deploy-form" onSubmit={deployRepository}>
+          <label htmlFor="repository-url">Repository URL</label>
+          <div className="input-wrap">
+            <span className="github-symbol">⌘</span>
+            <input
+              id="repository-url"
+              type="url"
+              required
+              placeholder="https://github.com/you/project"
+              value={repositoryUrl}
+              onChange={(event) => setRepositoryUrl(event.target.value)}
+              disabled={isDeploying}
+            />
+          </div>
+          <button type="submit" disabled={isDeploying}>
+            {isDeploying ? 'Deploying...' : 'Deploy repository'}
+            {!isDeploying && <span aria-hidden="true">↗</span>}
+          </button>
+          <p className="form-note">Public GitHub repositories only · React + Vite ready</p>
+          {error && <p className="message error" role="alert">{error}</p>}
+          {deploymentUrl && (
+            <p className="message success" role="status">
+              Deployed. <a href={deploymentUrl} target="_blank" rel="noreferrer">Open your site ↗</a>
+            </p>
+          )}
+        </form>
+      </section>
+
+      <footer className="footer">
+        <span>01 / READY TO SHIP</span>
+        <span>BUILD · PUBLISH · REPEAT</span>
+      </footer>
+    </main>
+  )
+}
+
+export default App
