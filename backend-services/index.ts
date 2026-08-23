@@ -30,7 +30,7 @@ const sendCloudinaryFile = async (id: string, filePath: string, res: express.Res
         resource_type: "raw",
         secure: true
     })
-    const response:any = await fetch(url)
+    const response: any = await fetch(url)
     if (!response.ok) throw new Error(`Cloudinary returned ${response.status}`)
 
     const types: Record<string, string> = {
@@ -62,7 +62,7 @@ app.get("/{*splat}", async (req, res) => {
         ? hostnameId
         : parts.shift()
 
-    if (!deploymentId ) {
+    if (!deploymentId) {
         res.status(404).json({ status: "Deployment not found" })
         return
     }
@@ -80,7 +80,7 @@ app.get("/{*splat}", async (req, res) => {
             try {
                 await sendCloudinaryFile(deploymentId, "index.html", res)
                 return
-            } catch {}
+            } catch { }
         }
 
         console.error(`Failed to find deployed file ${deploymentId}/${requestedPath}:`, error)
@@ -95,7 +95,7 @@ app.post("/deploy", async (req, res) => {
     }
     const id = genId()
     const outputPath = path.join(__dirname, "outputs", id)
-    
+
     try {
         await simpleGit().clone(req.body.url, outputPath);
     } catch (error) {
@@ -112,7 +112,7 @@ app.post("/deploy", async (req, res) => {
         }
     } catch (error) {
         console.error("Repository upload failed:", error)
-        return res.status(500).json({status: "failed", message: "Failed to upload repository files"});
+        return res.status(500).json({ status: "failed", message: "Failed to upload repository files" });
     } finally {
         await fs.rm(outputPath, { recursive: true, force: true });
     }
@@ -123,7 +123,7 @@ app.post("/deploy", async (req, res) => {
         await redisClient.rPush(DEPLOY_QUEUE, id)
     } catch (error) {
         console.error("Deployment queue push failed:", error)
-        return res.status(500).json({  status: "failed", message: "Failed to queue repository deployment" });
+        return res.status(500).json({ status: "failed", message: "Failed to queue repository deployment" });
     }
 
     res.status(200).json({
@@ -131,8 +131,31 @@ app.post("/deploy", async (req, res) => {
         id,
         url: `${req.protocol}://${id}.${deploymentDomain}/`,
     })
-
 })
+
+
+app.post("/prompt", async (req, res) => {
+    if (!req.body || !req.body.prompt) {
+        res.status(400).json({ "status": "No Prompt Provided" })
+        return;
+    }
+    const id = genId()
+    const AI_PROMPT_QUEUE = "rwaft:prompt"
+    try {
+        await redisClient.rPush(AI_PROMPT_QUEUE, JSON.stringify({ id, prompt: req.body.prompt }))
+    } catch (error) {
+        console.error("Prompt queue push failed:", error)
+        return res.status(500).json({ status: "failed", message: "Failed to queue prompt" });
+    }
+
+    res.status(200).json({
+        status: "success",
+        id,
+        url: `${req.protocol}://${id}.${deploymentDomain}/`,
+    })
+})
+
+
 
 app.listen(PORT, () => {
     console.log(`App is running on port ${PORT}`)
