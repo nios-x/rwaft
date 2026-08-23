@@ -252,21 +252,20 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 
 	const entrySource = await fs.readFile(path.join(projectDir, entryPath), "utf-8")
 	const mountMatch = entrySource.match(/querySelector(?:<[^>]*>)?\s*\(\s*["']#([^"']+)["']\s*\)|getElementById(?:<[^>]*>)?\s*\(\s*["']([^"']+)["']\s*\)/)
-	const mountId = mountMatch?.[1] || mountMatch?.[2]
-	if (mountId) {
-		const mountElementPattern = /<div\b([^>]*\bid=["'])[^"']*(["'][^>]*)><\/div>/i
-		if (mountElementPattern.test(indexHtml)) {
-			indexHtml = indexHtml.replace(mountElementPattern, `$1${mountId}$2></div>`)
-		} else {
-			indexHtml = indexHtml.replace(/(<body\b[^>]*>)/i, `$1\n    <div id="${mountId}"></div>`)
-		}
-	}
-
-	const moduleScriptPattern = /(<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["'])([^"']+)(["'][^>]*>)/i
-	if (!moduleScriptPattern.test(indexHtml)) {
-		throw new Error("Generated index.html has no module script entry")
-	}
-	indexHtml = indexHtml.replace(moduleScriptPattern, `$1./${entryPath}$3`)
+	const mountId = mountMatch?.[1] || mountMatch?.[2] || "root"
+	const headMatch = indexHtml.match(/<head\b[^>]*>([\s\S]*?)<\/head>/i)
+	const headContent = headMatch?.[1]?.trim() || '<meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">'
+	indexHtml = `<!doctype html>
+<html lang="en">
+  <head>
+    ${headContent}
+  </head>
+  <body>
+    <div id="${mountId}"></div>
+    <script type="module" src="./${entryPath}"></script>
+  </body>
+</html>
+`
 	await fs.writeFile(indexPath, indexHtml, "utf-8")
 }
 
