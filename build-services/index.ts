@@ -168,7 +168,22 @@ const scaffoldViteProject = async (projectDir: string) => {
 	await run("npm install -D @vitejs/plugin-react", projectDir)
 }
 
-const MAX_BUILD_REPAIRS = 3
+const MAX_BUILD_REPAIRS = 4
+
+const describeBuildFailure = (failure: string) => {
+	if (/TS\d{4}:/.test(failure)) {
+		return `This is a TypeScript build failure. Treat all diagnostics as one related problem:
+- Inspect every file named in the diagnostics and the shared types file they import.
+- Fix import paths first, especially ./types versus ../types, and create or update the actual shared types module when exports are missing.
+- Reconcile interfaces with the objects created by the UI; add required runtime fields with correct initial values or make fields optional only when the app genuinely supports that state.
+- Give indexed configuration objects explicit key types such as Record<number, ...> or a union of valid string keys; do not use any to silence indexing errors.
+- Type every callback parameter that is reported as implicit any.
+- After fixing the root types, re-check all affected component props and state setters so no downstream diagnostics remain.
+- Do not remove gameplay behavior or replace the app with a placeholder.`
+	}
+
+	return `This is a build or configuration failure. Inspect the named files and fix the root cause, including imports, dependencies, Vite configuration, and generated asset references.`
+}
 
 const normalizeGeneratedProject = async (projectDir: string) => {
 	const tsconfigPath = path.join(projectDir, "tsconfig.json")
@@ -288,6 +303,7 @@ const installAndBuildPromptProject = async (
 
 			const failure = error instanceof Error ? error.message : String(error)
 			console.warn(`[prompt] Project step failed, asking AI for repair (${attempt + 1}/${MAX_BUILD_REPAIRS})`)
+			const failureGuidance = describeBuildFailure(failure)
 			const repairPrompt = `A project step failed. Fix the project using the file tools.
 
 Original user request:
@@ -296,7 +312,9 @@ ${prompt}
 Failure output:
 ${failure}
 
-	Inspect the relevant files first. Fix every error shown above, including dependency, import, TypeScript, and Vite configuration errors. Make the changes needed so npm install and npm run build both succeed. For React JSX files, tsconfig.json must set compilerOptions.jsx to react-jsx and allowImportingTsExtensions to true. Do not leave starter imports to missing assets; replace starter entry code or use only files that exist.`
+${failureGuidance}
+
+Inspect the relevant files first and make all required changes in one repair pass. Fix every error shown above so both npm install and npm run build succeed. For React JSX files, tsconfig.json must set compilerOptions.jsx to react-jsx and allowImportingTsExtensions to true. Do not leave starter imports to missing assets; replace starter entry code or use only files that exist. Before finishing, use find_file on each changed shared type and entry file to verify imports and exports agree.`
 			const repairOperations = await generateToolCalls(repairPrompt, projectDir)
 			if (repairOperations.length === 0) {
 				throw new Error(`AI returned no repair operations after project failure\n\n${failure}`)
