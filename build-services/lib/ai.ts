@@ -36,22 +36,33 @@ let nextGeminiKey = 0
 const DEFAULT_GEMINI_MODELS = [
 	"gemini-3.7-flash",
 	"gemini-3.6-flash",
-	"gemini-3.5-flash",
-	"gemini-3.5-flash-lite",
-	"gemini-3.1-flash-lite"
+	"gemini-3.5-flash"
 ]
 
-function getGeminiApiKeys(): string[] {
-	const numberedKeys: string[] = []
-	for (let index = 1; index <= 9; index++) {
+interface GeminiApiKey {
+	key: string
+	label: string
+}
+
+function getGeminiApiKeys(): GeminiApiKey[] {
+	const numberedKeys: GeminiApiKey[] = []
+	for (let index = 9; index >= 1; index--) {
 		const key = process.env[`GEMINI_API_KEY${index}`]
-		if (key) numberedKeys.push(key)
+		if (key) numberedKeys.push({ key, label: `Gemini key ${index}` })
 	}
 	const keys = numberedKeys.length === 9
 		? numberedKeys
-		: [process.env.GEMINI_API_KEY, ...numberedKeys].slice(0, 9)
+		: [
+			process.env.GEMINI_API_KEY ? { key: process.env.GEMINI_API_KEY, label: "Gemini default key" } : undefined,
+			...numberedKeys
+		].filter((entry): entry is GeminiApiKey => Boolean(entry)).slice(0, 9)
 
-	return [...new Set(keys.filter((key): key is string => Boolean(key)))]
+	const seen = new Set<string>()
+	return keys.filter(entry => {
+		if (seen.has(entry.key)) return false
+		seen.add(entry.key)
+		return true
+	})
 }
 
 function getModelChain(): ModelEntry[] {
@@ -68,10 +79,10 @@ function getModelChain(): ModelEntry[] {
 			: DEFAULT_GEMINI_MODELS
 
 		for (const model of models) {
-			chain.push(...rotatedKeys.map((key, index) => ({
-				client: () => getGeminiClient(key),
+			chain.push(...rotatedKeys.map(entry => ({
+				client: () => getGeminiClient(entry.key),
 				model,
-				provider: `Gemini key ${start + index >= geminiKeys.length ? start + index - geminiKeys.length + 1 : start + index + 1}`
+				provider: entry.label
 			})))
 		}
 	}
@@ -148,9 +159,13 @@ function isRetryable(error: unknown): boolean {
 async function callWithRetry(
 	modelChain: ModelEntry[],
 	messages: ChatCompletionMessageParam[],
-	tools: ChatCompletionTool[]
+	tools: ChatCompletionTool[],
+	exhaustedEntries: Set<string>
 ) {
 	for (const entry of modelChain) {
+		const entryId = `${entry.model}:${entry.provider}`
+		if (exhaustedEntries.has(entryId)) continue
+
 		const client = entry.client()
 		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
 			const controller = new AbortController()
@@ -183,6 +198,7 @@ async function callWithRetry(
 				clearTimeout(timer)
 			}
 		}
+		exhaustedEntries.add(entryId)
 		console.log(`  [ai] Model ${entry.model} exhausted, trying next fallback...`)
 	}
 	throw new Error("All AI models exhausted — no successful response")
@@ -204,11 +220,28 @@ export type FileOperation = CreateFileOp | PatchFileOp | ReplaceFileOp | WriteFi
 // ── System prompt ───────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are a senior frontend engineer. The user will describe a web application.
-You will receive a Vite + React + TypeScript project that has already been scaffolded with the default template.
+You will receive a Vite + React + TypeScript project that has already been scaffolded. The project has:
+- src/main.tsx — the entry point that mounts <App /> (DO NOT modify this file)
+- src/App.tsx — a stub component you MUST replace with the actual application
+- src/index.css — a minimal CSS reset you should replace with full styles
+- react, react-dom, @vitejs/plugin-react already installed
 
 Your job is to use the provided filesystem tools to create and modify files so the project implements what the user asked for.
 
-Rules:
+WORKFLOW — follow these steps in order:
+1. Determine the pages or views needed. Inspect the scaffold first, then create a concise page map with each page's purpose, content, and primary actions. Identify the shared application shell and reusable components needed across pages.
+2. Establish consistency before building broadly. Define shared TypeScript types and component prop contracts, then choose the shared visual language: typography, colors, spacing, borders, radii, responsive breakpoints, and interaction states. Reuse these decisions on every page.
+3. Create each page one at a time. Build the shared shell and global styles first, then implement pages in page-map order. Finish each page's imports, types, responsive layout, and user interactions before starting the next. Every created component must be used by the application; do not create speculative or orphan components.
+4. Fix bugs before moving forward. After each meaningful batch, inspect imports and run the available typecheck or build command. Resolve TypeScript, module-resolution, layout, and behavior errors before adding more pages. Before finishing, run npm run build and fix every blocking error without using any, @ts-ignore, broad casts, or placeholders.
+5. Deploy last. Only deploy after the production build succeeds and the requested pages and primary flows work. Verify the existing deployment command, configuration, environment variables, and provider before running it. If credentials or provider details are unavailable, report the exact prerequisite instead of claiming deployment succeeded.
+
+CRITICAL RULES — read these first:
+- You MUST modify src/App.tsx. This is the root component. Replace the stub content with your actual application that imports and renders all your components.
+- Every component file you create in src/components/ MUST be imported and rendered in App.tsx. Do not create orphan components.
+- After the page map and shared contracts are clear, write App.tsx with the application shell and page-level structure, then create the supporting component files one page at a time.
+- Do NOT leave the default App.tsx stub content ("Hello" or "app-root"). Replace it entirely.
+
+General rules:
 - Only use the provided tools. Do NOT output code in plain text.
 - Use read_file to inspect an existing file before editing it.
 - Use write_file for complete file contents, edit_file for exact search/replace, and delete_file, move_file, copy_file, or create_directory for filesystem management.
@@ -217,19 +250,19 @@ Rules:
 - All file paths are relative to the project root (e.g. "src/App.tsx", "src/components/Header.tsx").
 - Write complete, production-quality code. No placeholders or TODOs.
 - You may add CSS files, components, assets, and new dependencies (via edit_file on package.json or install_package).
+- Do NOT use Tailwind CSS. Tailwind is NOT installed. Write all styles using plain CSS (vanilla CSS) in .css files. Do not use @apply, @tailwind, @theme, or any Tailwind directives.
+- Do NOT use the NodeJS namespace (e.g. NodeJS.Timeout). Use ReturnType<typeof setTimeout> or number for timer types instead.
 - When using React hooks such as useState or useEffect, import each hook from "react" in the file that uses it.
 - Ensure package.json includes react, react-dom, typescript, vite, and @vitejs/plugin-react when the Vite config imports the React plugin.
 - Use type-only imports for TypeScript types when verbatimModuleSyntax is enabled.
-- Ensure index.html references an entry file that exists. Use a relative path such as ./src/main.tsx, and create that file when it is missing.
-- Keep the mount element ID in index.html identical to the ID queried by the entry file (normally <div id="root"></div> or <div id="app"></div>).
+- Do NOT modify src/main.tsx or index.html — they are already configured correctly.
 - App.tsx must only export the app component; never call createRoot, hydrateRoot, or ReactDOM.render from App.tsx. Mount React exactly once in the entry file.
 - Ensure tsconfig.json sets compilerOptions.jsx to "react-jsx" when the project contains .tsx files.
 - Set tsconfig.json compilerOptions.lib to ["ES2020", "DOM", "DOM.Iterable"] and allowImportingTsExtensions to true.
 - Do not add compiler options that may not be supported by the installed TypeScript version, especially erasableSyntaxOnly.
-- Replace the scaffold entry implementation instead of leaving imports for starter assets that do not exist; every imported file must exist.
+- Every imported file must exist. Do not import modules that do not exist.
 - After inspecting a file, implement the required changes immediately. Do not spend multiple iterations only inspecting files.
 - Keep Vite config syntax consistent with its extension: never use 'import type' or TypeScript annotations in vite.config.js; prefer vite.config.ts for TypeScript config.
-- Ensure the entry file imports the app component and mounts it with ReactDOM before finishing.
 - Before finishing, verify package.json and every imported module/config file so npm install and npm run build can resolve them.
 - When repairing a failed build, inspect every named file and its imported types/modules before editing, then fix all reported errors in one coherent pass. Never hide errors with any, @ts-ignore, or broad casts, and never replace requested functionality with a placeholder.
 - Make sure the app compiles and builds cleanly with "npm run build".`
@@ -330,6 +363,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 	]
 
 	const operations: FileOperation[] = []
+	const exhaustedEntries = new Set<string>()
 	let iterations = 0
 	const MAX_ITERATIONS = 20
 	let consecutiveReadOnlyIterations = 0
@@ -343,7 +377,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 
 		console.log(`  [ai] Iteration ${iterations} — sending ${messages.length} messages`)
 
-		const response = await callWithRetry(modelChain, messages, tools)
+		const response = await callWithRetry(modelChain, messages, tools, exhaustedEntries)
 
 		const choice = response.choices[0]
 		if (!choice) break

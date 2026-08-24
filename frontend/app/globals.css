@@ -1,0 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  margin: 0;
+  background: #f2f0e8;
+  color: #20201d;
+}
+
+* { box-sizing: border-box; }
+
+.deploy-page { min-height: 100vh; width: 100%; padding: 28px 5vw 24px; background: #f2f0e8; color: #20201d; }
+.topbar, .footer { display: flex; align-items: center; justify-content: space-between; font: 500 11px 'DM Mono', monospace; letter-spacing: .08em; text-transform: uppercase; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: #20201d; font: 700 22px 'Space Grotesk', sans-serif; text-decoration: none; text-transform: lowercase; }
+.brand-mark { display: grid; width: 30px; height: 30px; place-items: center; background: #20201d; color: #d8f35e; font: 600 16px 'DM Mono', monospace; }
+.status { color: #77766d; } .status i { display: inline-block; width: 7px; height: 7px; margin: 0 8px 1px 0; border-radius: 50%; background: #6b9e3a; }
+.deploy-shell { width: min(100%, 980px); margin: auto; padding: 8vh 0 12vh; display: grid; grid-template-columns: 1.1fr .9fr; gap: clamp(48px, 9vw, 132px); align-items: end; }
+.eyebrow { margin: 0 0 24px; color: #77766d; font: 500 11px 'DM Mono', monospace; letter-spacing: .12em; }
+h1 { max-width: 650px; margin: 0; color: #000; font: 600 clamp(46px, 7vw, 92px)/.94 'Space Grotesk', sans-serif; letter-spacing: -.075em; } h1 em { color: #8b9f35; font-style: normal; }
+.lede { max-width: 400px; margin: 30px 0 0; color: #77766d; font: 400 16px/1.55 'Space Grotesk', sans-serif; }
+.tab-switcher { display: flex; gap: 18px; margin-bottom: 12px; } .tab-btn { width: auto; margin: 0; padding: 8px 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #77766d; font: 500 12px 'DM Mono', monospace; } .tab-btn.active { border-color: #20201d; color: #20201d; }
+.deploy-form { padding: 28px; border: 1px solid #d8d6ca; background: rgba(255,255,255,.25); } .deploy-form label { display: block; margin-bottom: 11px; font: 500 12px 'DM Mono', monospace; letter-spacing: .08em; text-transform: uppercase; }
+.input-wrap { display: flex; align-items: center; border-bottom: 2px solid #20201d; } .github-symbol { padding-right: 10px; font: 22px 'Space Grotesk', sans-serif; } input, textarea { width: 100%; min-width: 0; padding: 12px 0 13px; border: 0; outline: 0; resize: vertical; background: transparent; color: #20201d; font: 14px 'DM Mono', monospace; } input::placeholder, textarea::placeholder { color: #aaa89c; }
+button { width: 100%; margin-top: 25px; padding: 16px 18px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #20201d; background: #20201d; color: #d8f35e; cursor: pointer; font: 600 14px 'Space Grotesk', sans-serif; transition: background .2s, color .2s, transform .2s; } button:hover:not(:disabled) { background: #3b3b35; transform: translateY(-2px); } button:disabled { cursor: wait; opacity: .6; }
+.form-note, .message { margin: 14px 0 0; font: 11px/1.5 'DM Mono', monospace; } .form-note { color: #77766d; } .message a { color: inherit; font-weight: 500; } .error { color: #b83a2d; } .success { color: #55702b; }
+.footer { padding-top: 18px; border-top: 1px solid #d8d6ca; color: #77766d; }
+@media (max-width: 720px) { .deploy-page { padding: 20px; } .status { font-size: 9px; } .deploy-shell { grid-template-columns: 1fr; gap: 42px; padding: 12vh 0 14vh; } h1 { font-size: clamp(48px, 14vw, 72px); } .deploy-form { padding: 22px; } .footer { font-size: 9px; } }

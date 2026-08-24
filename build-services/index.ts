@@ -240,7 +240,91 @@ const TEMPLATE_REPO = "https://github.com/nios-x/vite-template"
 const scaffoldViteProject = async (projectDir: string) => {
 	await fs.rm(projectDir, { recursive: true, force: true })
 	await run(`git clone ${TEMPLATE_REPO} ${projectDir}`, root)
-	await run("npm install -D @vitejs/plugin-react", projectDir)
+
+	// ── Convert vanilla TS template → React + TS ────────────────────────
+	// 1. Remove vanilla starter files that conflict with React
+	for (const file of ["src/main.ts", "src/counter.ts", "src/style.css"]) {
+		await fs.rm(path.join(projectDir, file), { force: true })
+	}
+
+	// 2. Add React dependencies to package.json
+	const pkgPath = path.join(projectDir, "package.json")
+	const pkg = JSON.parse(await fs.readFile(pkgPath, "utf-8"))
+	pkg.dependencies = {
+		...pkg.dependencies,
+		react: "^19.1.0",
+		"react-dom": "^19.1.0"
+	}
+	pkg.devDependencies = {
+		...pkg.devDependencies,
+		"@vitejs/plugin-react": "^6.0.0",
+		"@types/react": "^19.1.0",
+		"@types/react-dom": "^19.1.0"
+	}
+	await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2), "utf-8")
+
+	// 3. Create React entry point
+	await fs.writeFile(path.join(projectDir, "src/main.tsx"), [
+		'import { StrictMode } from "react"',
+		'import { createRoot } from "react-dom/client"',
+		'import App from "./App"',
+		'import "./index.css"',
+		'',
+		'createRoot(document.getElementById("root")!).render(',
+		'\t<StrictMode>',
+		'\t\t<App />',
+		'\t</StrictMode>',
+		')',
+		''
+	].join("\n"), "utf-8")
+
+	// 4. Create App stub for the AI to replace
+	await fs.writeFile(path.join(projectDir, "src/App.tsx"), [
+		'export default function App() {',
+		'\treturn <div id="app-root">Hello</div>',
+		'}',
+		''
+	].join("\n"), "utf-8")
+
+	// 5. Create minimal CSS reset
+	await fs.writeFile(path.join(projectDir, "src/index.css"), [
+		'*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }',
+		'body { font-family: system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }',
+		''
+	].join("\n"), "utf-8")
+
+	// 6. Rewrite index.html to use React entry
+	await fs.writeFile(path.join(projectDir, "index.html"), [
+		'<!doctype html>',
+		'<html lang="en">',
+		'  <head>',
+		'    <meta charset="UTF-8" />',
+		'    <meta name="viewport" content="width=device-width, initial-scale=1.0" />',
+		'    <title>App</title>',
+		'  </head>',
+		'  <body>',
+		'    <div id="root"></div>',
+		'    <script type="module" src="./src/main.tsx"></script>',
+		'  </body>',
+		'</html>',
+		''
+	].join("\n"), "utf-8")
+
+	// 7. Create vite.config.ts with React plugin
+	await fs.writeFile(path.join(projectDir, "vite.config.ts"), [
+		'import { defineConfig } from "vite"',
+		'import react from "@vitejs/plugin-react"',
+		'',
+		'export default defineConfig({',
+		'\tplugins: [react()]',
+		'})',
+		''
+	].join("\n"), "utf-8")
+
+	// Remove any conflicting vite.config.js from the template
+	await fs.rm(path.join(projectDir, "vite.config.js"), { force: true })
+
+	await run("npm install", projectDir)
 }
 
 const MAX_BUILD_REPAIRS = 6
@@ -310,6 +394,67 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 	} catch {
 	}
 
+	// ── Auto-generate App.tsx from orphan components ────────────────────
+	// Trigger if App.tsx is missing OR still contains the unmodified stub
+	let appIsStub = false
+	if (hasAppComponent) {
+		const stubCheck = await fs.readFile(appPath, "utf-8")
+		appIsStub = /^\s*export\s+default\s+function\s+App\s*\(\s*\)\s*\{[\s\S]*?app-root[\s\S]*?Hello[\s\S]*?\}\s*$/m.test(stubCheck)
+			|| (stubCheck.trim().length < 150 && /app-root|>\s*Hello\s*</.test(stubCheck))
+		if (appIsStub) {
+			console.log(`  [normalize] App.tsx still contains stub content — will auto-generate`)
+		}
+	}
+	if (!hasAppComponent || appIsStub) {
+		const componentsDir = path.join(projectDir, "src/components")
+		let componentFiles: string[] = []
+		try {
+			const entries = await fs.readdir(componentsDir, { withFileTypes: true })
+			componentFiles = entries
+				.filter(e => !e.isDirectory() && /\.(tsx|jsx)$/.test(e.name))
+				.map(e => e.name)
+		} catch {
+		}
+
+		if (componentFiles.length > 0) {
+			console.log(`  [normalize] No App.tsx found but ${componentFiles.length} component(s) exist — auto-generating App.tsx`)
+			const imports: string[] = []
+			const renders: string[] = []
+			for (const file of componentFiles) {
+				const componentName = file.replace(/\.(tsx|jsx)$/, "")
+				// Read the file to find the actual exported component name
+				const source = await fs.readFile(path.join(componentsDir, file), "utf-8")
+				const defaultExportMatch = source.match(/export\s+default\s+(?:function|class)\s+(\w+)/)
+				const namedExportMatch = source.match(/export\s+(?:function|class)\s+(\w+)/)
+				const exportName = defaultExportMatch?.[1] || namedExportMatch?.[1] || componentName
+				const isDefault = Boolean(defaultExportMatch) || /export\s+default\s/.test(source)
+
+				if (isDefault) {
+					imports.push(`import ${exportName} from "./components/${componentName}"`)
+				} else {
+					imports.push(`import { ${exportName} } from "./components/${componentName}"`)
+				}
+				renders.push(`\t\t\t<${exportName} />`)
+			}
+
+			const appSource = [
+				...imports,
+				'',
+				'export default function App() {',
+				'\treturn (',
+				'\t\t<div>',
+				...renders,
+				'\t\t</div>',
+				'\t)',
+				'}',
+				''
+			].join("\n")
+
+			await fs.writeFile(appPath, appSource, "utf-8")
+			hasAppComponent = true
+		}
+	}
+
 	if (hasAppComponent) {
 		const appSource = await fs.readFile(appPath, "utf-8")
 		if (/\b(?:createRoot|hydrateRoot)\s*\(|\bReactDOM\.render\s*\(/.test(appSource)) {
@@ -346,7 +491,12 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 		throw new Error("Generated project has no supported entry file in src/")
 	}
 
+	// ── Safety check: reject vanilla template content ───────────────────
 	const entrySource = await fs.readFile(path.join(projectDir, entryPath), "utf-8")
+	if (/setupCounter|Get started|counter\.ts/.test(entrySource)) {
+		throw new Error("Entry file still contains vanilla Vite template content — AI failed to replace it")
+	}
+
 	const mountMatch = entrySource.match(/querySelector(?:<[^>]*>)?\s*\(\s*["']#([^"']+)["']\s*\)|getElementById(?:<[^>]*>)?\s*\(\s*["']([^"']+)["']\s*\)/)
 	const mountId = mountMatch?.[1] || mountMatch?.[2] || "root"
 	const headMatch = indexHtml.match(/<head\b[^>]*>([\s\S]*?)<\/head>/i)
@@ -378,6 +528,19 @@ const installAndBuildPromptProject = async (
 			await normalizeGeneratedProject(projectDir)
 			await runWithOutput("npm install", projectDir)
 			await runWithOutput("npm run build", projectDir)
+
+			// ── Post-build validation: reject boilerplate output ──────
+			const distIndex = path.join(projectDir, "dist", "index.html")
+			try {
+				const distHtml = await fs.readFile(distIndex, "utf-8")
+				if (/Get started|setupCounter|counter\.ts|Edit <code>src\/main/.test(distHtml)) {
+					throw new Error("Build output contains default Vite template content — AI failed to generate the requested application")
+				}
+			} catch (e) {
+				if ((e as Error).message.includes("Vite template")) throw e
+				// dist/index.html not found is already a build failure
+			}
+
 			return
 		} catch (error) {
 			if (attempt === MAX_BUILD_REPAIRS) throw error
