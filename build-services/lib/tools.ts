@@ -12,6 +12,9 @@ let nextProcessId = 1
  * rejecting any traversal outside the sandbox.
  */
 function safePath(projectDir: string, relativePath: string): string {
+	if (!relativePath || typeof relativePath !== "string") {
+		throw new Error(`Invalid path: expected a non-empty string, got ${typeof relativePath} (${JSON.stringify(relativePath)})`)
+	}
 	const resolved = path.resolve(projectDir, relativePath)
 	const root = path.resolve(projectDir)
 	if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {

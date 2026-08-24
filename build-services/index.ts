@@ -18,6 +18,7 @@ const PROMPT_QUEUE = "rwaft:prompt"
 const DEPLOYMENT_STATUS_PREFIX = "rwaft:deployment-status:"
 const UPLOAD_BATCH_SIZE = 8
 const COMMAND_TIMEOUT_MS = Number(process.env.COMMAND_TIMEOUT_MS || 60_000)
+const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 10 * 60_000) // 10 minutes
 
 // ── Shell runner ────────────────────────────────────────────────────────────
 
@@ -337,15 +338,18 @@ ${failureGuidance}
 
 Inspect the relevant files first and make all required changes in one repair pass. Fix every error shown above so both npm install and npm run build succeed. For React JSX files, tsconfig.json must set compilerOptions.jsx to react-jsx and allowImportingTsExtensions to true. Do not leave starter imports to missing assets; replace starter entry code or use only files that exist. Before finishing, use find_file on each changed shared type and entry file to verify imports and exports agree.`
 			const repairOperations = await generateToolCalls(repairPrompt, projectDir)
+			// Fix 5: Don't abort when repair returns zero operations — just retry
 			if (repairOperations.length === 0) {
-				throw new Error(`AI returned no repair operations after project failure\n\n${failure}`)
+				console.warn(`[prompt] AI returned no repair operations (attempt ${attempt + 1}/${MAX_BUILD_REPAIRS}), retrying…`)
+				continue
 			}
 			console.log(`[prompt] Applying ${repairOperations.length} repair operations`)
+			// Fix 6: Repair application failures are non-fatal — continue to next attempt
 			try {
 				await applyOperations(projectDir, repairOperations)
 			} catch (repairError) {
 				const message = repairError instanceof Error ? repairError.message : String(repairError)
-				console.warn(`[prompt] Repair application failed; retrying with AI: ${message}`)
+				console.warn(`[prompt] Repair application partially failed; will re-attempt build: ${message}`)
 			}
 		}
 	}
@@ -375,34 +379,52 @@ const promptWorker = async () => {
 		console.log(`[prompt] Processing ${id}`)
 		const projectDir = path.join(root, id)
 
+		// Fix 7: Per-job timeout — no single job blocks the worker forever
+		const jobController = new AbortController()
+		const jobTimer = setTimeout(() => jobController.abort(), JOB_TIMEOUT_MS)
+
 		try {
-			// 1. Scaffold a fresh Vite + React + TS project
-			console.log(`[prompt] Scaffolding Vite project`)
-			await scaffoldViteProject(projectDir)
+			const jobPromise = (async () => {
+				// 1. Scaffold a fresh Vite + React + TS project
+				console.log(`[prompt] Scaffolding Vite project`)
+				await scaffoldViteProject(projectDir)
 
-			// 2. Call OpenAI to get file operations
-			console.log(`[prompt] Generating tool calls from AI`)
-			const operations = await generateToolCalls(prompt, projectDir)
-			console.log(`[prompt] Received ${operations.length} operations`)
+				// 2. Call AI to get file operations
+				console.log(`[prompt] Generating tool calls from AI`)
+				const operations = await generateToolCalls(prompt, projectDir)
+				console.log(`[prompt] Received ${operations.length} operations`)
 
-			// 4. Install dependencies and build, repairing failures through the AI
-			console.log(`[prompt] Applying file operations`)
-			console.log(`[prompt] Installing dependencies`)
-			console.log(`[prompt] Building project`)
-			await installAndBuildPromptProject(projectDir, prompt, operations)
+				// 3. Install dependencies and build, repairing failures through the AI
+				console.log(`[prompt] Applying file operations`)
+				console.log(`[prompt] Installing dependencies`)
+				console.log(`[prompt] Building project`)
+				await installAndBuildPromptProject(projectDir, prompt, operations)
 
-			// 5. Upload build output to Cloudinary
-			console.log(`[prompt] Uploading to Cloudinary`)
-			await uploadBuildOutput(id, projectDir)
+				// 4. Upload build output to Cloudinary
+				console.log(`[prompt] Uploading to Cloudinary`)
+				await uploadBuildOutput(id, projectDir)
 
-			// 6. Cleanup
-			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: 3600 })
-			await fs.rm(projectDir, { recursive: true, force: true })
-			console.log(`[prompt] ✓ Deployed ${id}`)
+				// 5. Mark ready & cleanup
+				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: 3600 })
+				await fs.rm(projectDir, { recursive: true, force: true })
+				console.log(`[prompt] ✓ Deployed ${id}`)
+			})()
+
+			// Race the job against the timeout
+			await Promise.race([
+				jobPromise,
+				new Promise<never>((_, reject) => {
+					jobController.signal.addEventListener("abort", () =>
+						reject(new Error(`Job ${id} timed out after ${JOB_TIMEOUT_MS / 1000}s`))
+					)
+				})
+			])
 		} catch (error) {
 			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: 3600 }).catch(() => {})
 			console.error(`[prompt] Failed for ${id}:`, error)
 			await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {})
+		} finally {
+			clearTimeout(jobTimer)
 		}
 	}
 }

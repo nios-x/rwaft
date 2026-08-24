@@ -244,6 +244,8 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 	const operations: FileOperation[] = []
 	let iterations = 0
 	const MAX_ITERATIONS = 20
+	let consecutiveReadOnlyIterations = 0
+	const MAX_READ_ONLY_ITERATIONS = 3
 
 	while (iterations < MAX_ITERATIONS) {
 		iterations++
@@ -269,10 +271,28 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 		// Feed the assistant message back so the model maintains conversation context
 		messages.push(message)
 
+		let iterationProducedOperation = false
+
 		for (const call of message.tool_calls) {
-			const args = JSON.parse(call.function.arguments)
+			// Fix 4: Gracefully handle malformed JSON in tool call arguments
+			let args: Record<string, any>
+			try {
+				args = JSON.parse(call.function.arguments)
+			} catch (parseError) {
+				console.warn(`  ⚠ malformed JSON in tool call ${call.function.name}: ${(parseError as Error).message}`)
+				messages.push({
+					role: "tool",
+					tool_call_id: call.id,
+					content: "ERROR: Malformed JSON in function arguments. Please resend with valid JSON."
+				})
+				continue
+			}
+
 			const name = call.function.name
 			let result = "OK"
+
+			// Fix 1: Normalize file_path → path (AI sometimes uses file_path)
+			if (!args.path && args.file_path) args.path = args.file_path
 
 			switch (name) {
 				case "list_files":
@@ -296,33 +316,79 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 						result = `ERROR: ${error instanceof Error ? error.message : String(error)}`
 					}
 					break
+				// Fix 2: Validate required fields before collecting operations
 				case "create_file":
-					operations.push({ tool: "create_file", path: args.path, content: args.content })
+				case "write_file": {
+					if (!args.path || typeof args.path !== "string") {
+						console.warn(`  ⚠ ${name} missing path, skipping`)
+						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
+						break
+					}
+					operations.push({ tool: name as "create_file" | "write_file", path: args.path, content: args.content ?? "" })
+					iterationProducedOperation = true
 					break
-				case "write_file":
-					operations.push({ tool: "write_file", path: args.path, content: args.content })
-					break
+				}
 				case "patch_file":
-					operations.push({ tool: "patch_file", path: args.path, search: args.search, replace: args.replace })
+				case "edit_file": {
+					if (!args.path || typeof args.path !== "string") {
+						console.warn(`  ⚠ ${name} missing path, skipping`)
+						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
+						break
+					}
+					operations.push({ tool: name as "patch_file" | "edit_file", path: args.path, search: args.search ?? "", replace: args.replace ?? "" })
+					iterationProducedOperation = true
 					break
-				case "edit_file":
-					operations.push({ tool: "edit_file", path: args.path, search: args.search, replace: args.replace })
+				}
+				case "replace_file": {
+					if (!args.path || typeof args.path !== "string") {
+						console.warn(`  ⚠ ${name} missing path, skipping`)
+						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
+						break
+					}
+					operations.push({ tool: "replace_file", path: args.path, content: args.content ?? "" })
+					iterationProducedOperation = true
 					break
-				case "replace_file":
-					operations.push({ tool: "replace_file", path: args.path, content: args.content })
-					break
-				case "delete_file":
+				}
+				case "delete_file": {
+					if (!args.path || typeof args.path !== "string") {
+						console.warn(`  ⚠ ${name} missing path, skipping`)
+						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
+						break
+					}
 					operations.push({ tool: "delete_file", path: args.path })
+					iterationProducedOperation = true
 					break
-				case "move_file":
+				}
+				case "move_file": {
+					if (!args.path || typeof args.path !== "string" || !args.to || typeof args.to !== "string") {
+						console.warn(`  ⚠ ${name} missing path or to, skipping`)
+						result = "ERROR: both 'path' and 'to' arguments are required and must be non-empty strings."
+						break
+					}
 					operations.push({ tool: "move_file", path: args.path, to: args.to })
+					iterationProducedOperation = true
 					break
-				case "copy_file":
+				}
+				case "copy_file": {
+					if (!args.path || typeof args.path !== "string" || !args.to || typeof args.to !== "string") {
+						console.warn(`  ⚠ ${name} missing path or to, skipping`)
+						result = "ERROR: both 'path' and 'to' arguments are required and must be non-empty strings."
+						break
+					}
 					operations.push({ tool: "copy_file", path: args.path, to: args.to })
+					iterationProducedOperation = true
 					break
-				case "create_directory":
+				}
+				case "create_directory": {
+					if (!args.path || typeof args.path !== "string") {
+						console.warn(`  ⚠ ${name} missing path, skipping`)
+						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
+						break
+					}
 					operations.push({ tool: "create_directory", path: args.path })
+					iterationProducedOperation = true
 					break
+				}
 			}
 
 			messages.push({
@@ -330,6 +396,21 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				tool_call_id: call.id,
 				content: result
 			})
+		}
+
+		// Fix 3: Track consecutive read-only iterations and nudge the AI
+		if (iterationProducedOperation) {
+			consecutiveReadOnlyIterations = 0
+		} else {
+			consecutiveReadOnlyIterations++
+			if (consecutiveReadOnlyIterations >= MAX_READ_ONLY_ITERATIONS) {
+				console.warn(`  [ai] ${MAX_READ_ONLY_ITERATIONS} consecutive read-only iterations, nudging AI to produce file changes`)
+				messages.push({
+					role: "user",
+					content: "You have spent several iterations only reading files without making changes. You must now produce the required file operations (write_file, edit_file, etc.) or finish. Do not call read_file again unless absolutely necessary."
+				})
+				consecutiveReadOnlyIterations = 0
+			}
 		}
 
 		// If the model indicated it's done (stop or no more tool calls), break
