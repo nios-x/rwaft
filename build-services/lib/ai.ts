@@ -15,10 +15,10 @@ function getGeminiClient(apiKey: string): OpenAI {
 	})
 }
 
-function getOpenRouterClient(): OpenAI {
+function getOpenRouterClientForKey(apiKey: string): OpenAI {
 	return new OpenAI({
 		baseURL: "https://openrouter.ai/api/v1",
-		apiKey: process.env.OPENROUTER_API_KEY || "",
+		apiKey,
 		fetch: globalThis.fetch
 	})
 }
@@ -44,6 +44,11 @@ interface GeminiApiKey {
 	label: string
 }
 
+interface OpenRouterApiKey {
+	key: string
+	label: string
+}
+
 function getGeminiApiKeys(): GeminiApiKey[] {
 	const numberedKeys: GeminiApiKey[] = []
 	for (let index = 9; index >= 1; index--) {
@@ -65,9 +70,37 @@ function getGeminiApiKeys(): GeminiApiKey[] {
 	})
 }
 
+function getOpenRouterApiKeys(): OpenRouterApiKey[] {
+	const entries: OpenRouterApiKey[] = []
+	for (let index = 7; index >= 1; index--) {
+		const key = process.env[`OPENROUTER_API_KEY${index}`]
+		if (key) entries.push({ key, label: `OpenRouter key ${index}` })
+	}
+	if (process.env.OPENROUTER_API_KEY) {
+		entries.unshift({ key: process.env.OPENROUTER_API_KEY, label: "OpenRouter default key" })
+	}
+
+	const seen = new Set<string>()
+	return entries.filter(entry => {
+		if (seen.has(entry.key)) return false
+		seen.add(entry.key)
+		return true
+	})
+}
+
 function getModelChain(): ModelEntry[] {
 	const geminiKeys = getGeminiApiKeys()
 	const chain: ModelEntry[] = []
+
+	// Try OpenRouter first, but move to Gemini after five failed requests.
+	const openRouterModel = process.env.OPENROUTER_MODEL || "z-ai/glm-5.2:free"
+	for (const entry of getOpenRouterApiKeys()) {
+		chain.push({
+			client: () => getOpenRouterClientForKey(entry.key),
+			model: openRouterModel!,
+			provider: entry.label
+		})
+	}
 
 	if (geminiKeys.length > 0) {
 		const start = nextGeminiKey % geminiKeys.length
@@ -85,13 +118,6 @@ function getModelChain(): ModelEntry[] {
 				provider: entry.label
 			})))
 		}
-	}
-
-	// Add OpenRouter fallbacks if key is available
-	if (process.env.OPENROUTER_API_KEY) {
-		chain.push(
-			{ client: getOpenRouterClient, model: process.env.OPENROUTER_MODEL || "google/gemini-3.5-flash-lite", provider: "OpenRouter" }
-		)
 	}
 
 	return chain
@@ -143,6 +169,7 @@ function compactMessages(messages: ChatCompletionMessageParam[]): void {
 // ── Retry helper ────────────────────────────────────────────────────────────
 
 const MAX_RETRIES = parseInt(process.env.AI_MAX_RETRIES || "3", 10)
+const MAX_OPENROUTER_ATTEMPTS = 5
 const RETRY_BASE_MS = 2_000
 const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 60_000)
 
@@ -162,12 +189,17 @@ async function callWithRetry(
 	tools: ChatCompletionTool[],
 	exhaustedEntries: Set<string>
 ) {
+	let openRouterFailures = 0
+
 	for (const entry of modelChain) {
 		const entryId = `${entry.model}:${entry.provider}`
 		if (exhaustedEntries.has(entryId)) continue
+		const isOpenRouter = entry.provider.startsWith("OpenRouter")
+		if (isOpenRouter && openRouterFailures >= MAX_OPENROUTER_ATTEMPTS) continue
 
 		const client = entry.client()
 		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+			if (isOpenRouter && openRouterFailures >= MAX_OPENROUTER_ATTEMPTS) break
 			const controller = new AbortController()
 			const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
 			try {
@@ -184,6 +216,7 @@ async function callWithRetry(
 				const message = timedOut
 					? `request timed out after ${AI_TIMEOUT_MS}ms`
 					: (error as Error).message?.slice(0, 100)
+				if (isOpenRouter) openRouterFailures++
 				console.warn(`  ⚠ ${entry.model} error (${status || "timeout"}): ${message}`)
 
 				if (!timedOut && (status === 429 || !isRetryable(error) || attempt === MAX_RETRIES)) {
