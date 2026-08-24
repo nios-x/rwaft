@@ -111,7 +111,14 @@ app.post("/deploy", async (req, res) => {
     try {
         for (let index = 0; index < fileNames.length; index += UPLOAD_BATCH_SIZE) {
             const batch = fileNames.slice(index, index + UPLOAD_BATCH_SIZE)
-            const batchResults = await Promise.all(batch.map((fileName) => uploadFile(fileName, outputPath, `rwaft/${id}`)))
+            const batchResults = await Promise.all(batch.map(async (fileName) => {
+                try {
+                    return await uploadFile(fileName, outputPath, `rwaft/${id}`)
+                } catch (error) {
+                    const detail = error as { message?: string; http_code?: number }
+                    throw new Error(`Failed to upload ${path.relative(outputPath, fileName)}: ${detail.message ?? String(error)}${detail.http_code ? ` (HTTP ${detail.http_code})` : ""}`)
+                }
+            }))
             uploadResults.push(...batchResults)
         }
     } catch (error) {

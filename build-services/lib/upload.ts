@@ -23,10 +23,19 @@ export async function uploadFile(filename: string, rootPath: string, folder: str
     const uploadFolder = relativeDirectory === '.'
         ? folder
         : `${folder}/${relativeDirectory}`;
+    const publicId = path.basename(filename);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = cloudinary.utils.api_sign_request(
+        { folder: uploadFolder, public_id: publicId, timestamp },
+        apiSecret
+    );
 
     return cloudinary.uploader.upload(filename, {
         folder: uploadFolder,
         resource_type: 'raw',
-        public_id: path.basename(filename)
+        public_id: publicId,
+        timestamp,
+        api_key: apiKey,
+        signature
     });
 };

@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import OpenAI from "openai"
 import type { ChatCompletionTool, ChatCompletionMessageParam } from "openai/resources/chat/completions"
+import { executeToolRequest } from "./tools.ts"
 import "./config.ts"
 
 // ── Client factory ──────────────────────────────────────────────────────────
@@ -89,6 +90,7 @@ function getModelChain(): ModelEntry[] {
 
 const MAX_RETRIES = parseInt(process.env.AI_MAX_RETRIES || "3", 10)
 const RETRY_BASE_MS = 2_000
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 60_000)
 
 async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
 
@@ -108,25 +110,34 @@ async function callWithRetry(
 	for (const entry of modelChain) {
 		const client = entry.client()
 		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+			const controller = new AbortController()
+			const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
 			try {
 				console.log(`  [ai] Calling ${entry.model} via ${entry.provider} (attempt ${attempt})`)
 				const response = await client.chat.completions.create({
 					model: entry.model,
 					messages,
 					tools
-				})
+				}, { signal: controller.signal })
 				return response
 			} catch (error: unknown) {
 				const status = (error as any)?.status
-				console.warn(`  ⚠ ${entry.model} error (${status}): ${(error as Error).message?.slice(0, 100)}`)
+				const timedOut = controller.signal.aborted
+				const message = timedOut
+					? `request timed out after ${AI_TIMEOUT_MS}ms`
+					: (error as Error).message?.slice(0, 100)
+				console.warn(`  ⚠ ${entry.model} error (${status || "timeout"}): ${message}`)
 
-				if (status === 429 || !isRetryable(error) || attempt === MAX_RETRIES) {
+				if (!timedOut && (status === 429 || !isRetryable(error) || attempt === MAX_RETRIES)) {
 					// Non-retryable or exhausted retries → try next model
 					break
 				}
+				if (attempt === MAX_RETRIES) break
 				const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1)
 				console.log(`  [ai] Retrying in ${delay}ms...`)
 				await sleep(delay)
+			} finally {
+				clearTimeout(timer)
 			}
 		}
 		console.log(`  [ai] Model ${entry.model} exhausted, trying next fallback...`)
@@ -139,21 +150,28 @@ async function callWithRetry(
 export type CreateFileOp = { tool: "create_file"; path: string; content: string }
 export type PatchFileOp = { tool: "patch_file"; path: string; search: string; replace: string }
 export type ReplaceFileOp = { tool: "replace_file"; path: string; content: string }
-export type FileOperation = CreateFileOp | PatchFileOp | ReplaceFileOp
+export type WriteFileOp = { tool: "write_file"; path: string; content: string }
+export type EditFileOp = { tool: "edit_file"; path: string; search: string; replace: string }
+export type DeleteFileOp = { tool: "delete_file"; path: string }
+export type MoveFileOp = { tool: "move_file"; path: string; to: string }
+export type CopyFileOp = { tool: "copy_file"; path: string; to: string }
+export type CreateDirectoryOp = { tool: "create_directory"; path: string }
+export type FileOperation = CreateFileOp | PatchFileOp | ReplaceFileOp | WriteFileOp | EditFileOp | DeleteFileOp | MoveFileOp | CopyFileOp | CreateDirectoryOp
 
 // ── System prompt ───────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are a senior frontend engineer. The user will describe a web application.
 You will receive a Vite + React + TypeScript project that has already been scaffolded with the default template.
 
-Your job is to use the provided tools to create and modify files so the project implements what the user asked for.
+Your job is to use the provided filesystem and terminal tools to create and modify files so the project implements what the user asked for.
 
 Rules:
-- Only use the provided tools (find_file, create_file, patch_file, replace_file). Do NOT output code in plain text.
-- Use find_file to read an existing file's content before patching it. This ensures your search strings match exactly.
-- Use patch_file when you need to change a small part of an existing file. The "search" string must match EXACTLY.
-- Use replace_file when you need to rewrite most of an existing file.
-- Use create_file for brand-new files that don't exist yet.
+- Only use the provided tools. Do NOT output code in plain text.
+- Use read_file or find_file to inspect an existing file before editing it.
+- Use write_file for complete file contents, edit_file for exact replacements, and delete_file, move_file, copy_file, or create_directory for filesystem management.
+- Use list_files, search_files, find_symbol, find_references, and get_file_metadata to inspect the workspace.
+- Use run_command or run_script for bounded foreground commands. Use run_background_command for long-running commands, then get_process_output or kill_process.
+- Use set_environment_variable only for non-secret configuration. Never print or expose secrets.
 - All file paths are relative to the project root (e.g. "src/App.tsx", "src/components/Header.tsx").
 - Write complete, production-quality code. No placeholders or TODOs.
 - You may add CSS files, components, assets, and new dependencies (via patch_file on package.json).
@@ -176,68 +194,42 @@ Rules:
 
 // ── Tool definitions ────────────────────────────────────────────────────────
 
-const tools: ChatCompletionTool[] = [
-	{
-		type: "function",
-		function: {
-			name: "find_file",
-			description: "Read an existing file's content. Use this to inspect a file before patching it so your search strings are exact.",
-			parameters: {
-				type: "object",
-				properties: {
-					path: { type: "string", description: "Relative file path from project root (e.g. src/App.tsx)" }
-				},
-				required: ["path"]
-			}
-		}
-	},
-	{
-		type: "function",
-		function: {
-			name: "create_file",
-			description: "Create a new file at the given path with the given content. Use for files that do not exist yet.",
-			parameters: {
-				type: "object",
-				properties: {
-					path: { type: "string", description: "Relative file path from project root (e.g. src/App.tsx)" },
-					content: { type: "string", description: "Full file content to write" }
-				},
-				required: ["path", "content"]
-			}
-		}
-	},
-	{
-		type: "function",
-		function: {
-			name: "patch_file",
-			description: "Find an exact substring in an existing file and replace it. Use for small, targeted edits.",
-			parameters: {
-				type: "object",
-				properties: {
-					path: { type: "string", description: "Relative file path from project root" },
-					search: { type: "string", description: "Exact substring to find (must match character-for-character)" },
-					replace: { type: "string", description: "Replacement string" }
-				},
-				required: ["path", "search", "replace"]
-			}
-		}
-	},
-	{
-		type: "function",
-		function: {
-			name: "replace_file",
-			description: "Overwrite an existing file's entire content. Use when most of the file needs to change.",
-			parameters: {
-				type: "object",
-				properties: {
-					path: { type: "string", description: "Relative file path from project root" },
-					content: { type: "string", description: "New complete file content" }
-				},
-				required: ["path", "content"]
+const toolNames = [
+	"list_files", "read_file", "write_file", "edit_file", "delete_file", "move_file", "copy_file",
+	"create_directory", "search_files", "find_symbol", "find_references", "get_file_metadata",
+	"run_command", "run_background_command", "kill_process", "get_process_output", "open_terminal",
+	"set_environment_variable", "install_package", "run_script"
+] as const
+
+const tools: ChatCompletionTool[] = toolNames.map(name => ({
+	type: "function",
+	function: {
+		name,
+		description: `Use ${name} in the project workspace. Paths must be relative to the project root.`,
+		parameters: {
+			type: "object",
+			properties: {
+				path: { type: "string" },
+				file_path: { type: "string" },
+				to: { type: "string" },
+				content: { type: "string" },
+				search: { type: "string" },
+				replace: { type: "string" },
+				query: { type: "string" },
+				pattern: { type: "string" },
+				symbol: { type: "string" },
+				name: { type: "string" },
+				command: { type: "string" },
+				script: { type: "string" },
+				process_id: { type: "string" },
+				id: { type: "string" },
+				value: { type: "string" },
+				package: { type: "string" },
+				dev: { type: "string" }
 			}
 		}
 	}
-]
+}))
 
 // ── Main generation function ────────────────────────────────────────────────
 
@@ -283,26 +275,53 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 			let result = "OK"
 
 			switch (name) {
-				case "find_file": {
-					// Read-only — return file content to the model
-					const target = path.resolve(projectDir, args.path)
+				case "list_files":
+				case "read_file":
+				case "find_file":
+				case "search_files":
+				case "find_symbol":
+				case "find_references":
+				case "get_file_metadata":
+				case "run_command":
+				case "run_background_command":
+				case "kill_process":
+				case "get_process_output":
+				case "open_terminal":
+				case "set_environment_variable":
+				case "install_package":
+				case "run_script":
 					try {
-						result = await fs.readFile(target, "utf-8")
-						console.log(`  ✓ find    ${args.path}`)
-					} catch {
-						result = `ERROR: file not found — ${args.path}`
-						console.warn(`  ⚠ find    ${args.path} — not found`)
+						result = await executeToolRequest(projectDir, name, args)
+					} catch (error) {
+						result = `ERROR: ${error instanceof Error ? error.message : String(error)}`
 					}
 					break
-				}
 				case "create_file":
 					operations.push({ tool: "create_file", path: args.path, content: args.content })
+					break
+				case "write_file":
+					operations.push({ tool: "write_file", path: args.path, content: args.content })
 					break
 				case "patch_file":
 					operations.push({ tool: "patch_file", path: args.path, search: args.search, replace: args.replace })
 					break
+				case "edit_file":
+					operations.push({ tool: "edit_file", path: args.path, search: args.search, replace: args.replace })
+					break
 				case "replace_file":
 					operations.push({ tool: "replace_file", path: args.path, content: args.content })
+					break
+				case "delete_file":
+					operations.push({ tool: "delete_file", path: args.path })
+					break
+				case "move_file":
+					operations.push({ tool: "move_file", path: args.path, to: args.to })
+					break
+				case "copy_file":
+					operations.push({ tool: "copy_file", path: args.path, to: args.to })
+					break
+				case "create_directory":
+					operations.push({ tool: "create_directory", path: args.path })
 					break
 			}
 

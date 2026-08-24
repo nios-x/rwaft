@@ -17,6 +17,7 @@ const DEPLOY_QUEUE = "rwaft:deploy"
 const PROMPT_QUEUE = "rwaft:prompt"
 const DEPLOYMENT_STATUS_PREFIX = "rwaft:deployment-status:"
 const UPLOAD_BATCH_SIZE = 8
+const COMMAND_TIMEOUT_MS = Number(process.env.COMMAND_TIMEOUT_MS || 60_000)
 
 // ── Shell runner ────────────────────────────────────────────────────────────
 
@@ -29,16 +30,30 @@ const run = (command: string, cwd: string) => new Promise<void>((resolve, reject
 const runWithOutput = (command: string, cwd: string) => new Promise<void>((resolve, reject) => {
 	let output = ""
 	const child = spawn(command, { cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] })
+	let settled = false
 	const collect = (chunk: Buffer) => {
 		const text = chunk.toString()
 		output += text
 		process.stdout.write(text)
 	}
+	const timer = setTimeout(() => {
+		if (settled) return
+		child.kill()
+		reject(new Error(`${command} timed out after ${COMMAND_TIMEOUT_MS}ms\n\n${output.slice(-12_000)}`))
+	}, COMMAND_TIMEOUT_MS)
 
 	child.stdout.on("data", collect)
 	child.stderr.on("data", collect)
-	child.on("error", reject)
+	child.on("error", (error) => {
+		if (settled) return
+		settled = true
+		clearTimeout(timer)
+		reject(error)
+	})
 	child.on("exit", (code) => {
+		if (settled) return
+		settled = true
+		clearTimeout(timer)
 		if (code === 0) {
 			resolve()
 			return
