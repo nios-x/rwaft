@@ -5,20 +5,33 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
-loadEnv({ path: path.join(directory, "..", ".env") })
-
+loadEnv({ path: path.join(directory, "..", ".env"), override: true })
 
 const redisUrl = process.env.REDIS_URL
 
 export const cloudinaryConfig = {
 	cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
 	api_key: process.env.CLOUDINARY_API_KEY,
-	api_secret: process.env.CLOUDINARY_API_SECRET
+	api_secret: process.env.CLOUDINARY_API_SECRET,
+	upload_preset: process.env.CLOUDINARY_UPLOAD_PRESET
 }
-if (!redisUrl || Object.values(cloudinaryConfig).some((value) => !value)) {
+if (!redisUrl || !cloudinaryConfig.cloud_name || (!cloudinaryConfig.api_key && !cloudinaryConfig.upload_preset)) {
 	throw new Error("REDIS_URL and Cloudinary variables are required")
 }
-cloudinary.config(cloudinaryConfig)
+cloudinary.config({
+	cloud_name: cloudinaryConfig.cloud_name,
+	api_key: cloudinaryConfig.api_key,
+	api_secret: cloudinaryConfig.api_secret,
+	secure: true
+})
+
+export const getRawAssetUrl = (publicId: string): string => cloudinary.url(publicId, {
+	type: "upload",
+	resource_type: "raw",
+	secure: true
+})
+
+export { cloudinary }
 
 
 export function createRedisClient() {
@@ -27,7 +40,7 @@ export function createRedisClient() {
 		socket: {
 			reconnectStrategy(retries) {
 				// Exponential backoff: 500ms, 1s, 2s, 4s, ... capped at 30s
-				const delay = Math.min(retries * 500, 30_000)
+				const delay = Math.min(500 * Math.pow(2, retries), 30_000)
 				console.log(`[redis] Reconnecting in ${delay}ms (attempt ${retries})`)
 				return delay
 			},

@@ -3,12 +3,18 @@ import path from "node:path"
 import { spawn } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { createRedisClient } from "./lib/config.ts"
-import { v2 as cloudinary } from "cloudinary"
 import { getAllFileNames } from "./lib/helper.ts"
 import { uploadFile } from "./lib/upload.ts"
 import { generateToolCalls } from "./lib/ai.ts"
 import { applyOperations } from "./lib/tools.ts"
+import { cloudinary, cloudinaryConfig, getRawAssetUrl } from "./lib/config.ts"
 
+console.log("[build-services] Cloudinary config:", {
+	cloud_name: cloudinaryConfig.cloud_name,
+	api_key: cloudinaryConfig.api_key ? `...${cloudinaryConfig.api_key.slice(-4)}` : "MISSING",
+	api_secret: cloudinaryConfig.api_secret ? "SET" : "MISSING",
+	upload_preset: cloudinaryConfig.upload_preset || "NONE"
+})
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(directory, "builds")
@@ -22,6 +28,7 @@ const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 10 * 60_000) // 10 m
 
 const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 30_000)
 const CLOUDINARY_API_TIMEOUT_MS = Number(process.env.CLOUDINARY_API_TIMEOUT_MS || 60_000)
+type FetchResponse = { ok: boolean; status: number; arrayBuffer: () => Promise<ArrayBuffer> }
 
 /** Promise-based timeout race helper. */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -36,8 +43,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 // ── Shell runner ────────────────────────────────────────────────────────────
 
-const run = (command: string, cwd: string) => new Promise<void>((resolve, reject) => {
-	const child = spawn(command, { cwd, shell: true, stdio: "inherit" })
+const run = (command: string, cwd: string, env?: Record<string, string>) => new Promise<void>((resolve, reject) => {
+	const child = spawn(command, { cwd, shell: true, stdio: "inherit", env: { ...process.env, ...env } })
 	let settled = false
 	const timer = setTimeout(() => {
 		if (settled) return
@@ -94,6 +101,18 @@ const runWithOutput = (command: string, cwd: string) => new Promise<void>((resol
 	})
 })
 
+// ── File detection helpers ──────────────────────────────────────────────────
+
+const hasFile = async (dir: string, names: string[]): Promise<boolean> => {
+	for (const name of names) {
+		try {
+			await fs.access(path.join(dir, name))
+			return true
+		} catch { /* not found, try next */ }
+	}
+	return false
+}
+
 // ── Cloudinary helpers ──────────────────────────────────────────────────────
 
 const downloadFile = async (file: { public_id: string, secure_url: string }, project: string, id: string) => {
@@ -103,7 +122,8 @@ const downloadFile = async (file: { public_id: string, secure_url: string }, pro
 	const controller = new AbortController()
 	const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 	try {
-		const response: any = await fetch(file.secure_url, { signal: controller.signal })
+		const response = await fetch(getRawAssetUrl(file.public_id), { signal: controller.signal }) as unknown as FetchResponse
+		if (!response.ok) throw new Error(`Cloudinary returned ${response.status} for ${file.public_id}`)
 		await fs.writeFile(destination, Buffer.from(await response.arrayBuffer()))
 	} finally {
 		clearTimeout(timer)
@@ -190,9 +210,29 @@ const buildFromCloudinary = async (id: string) => {
 		await Promise.all(batch.map((file) => downloadFile(file, projectDir, id)))
 	}
 
-	await run("npm install", projectDir)
-	await run("npm install -D @vitejs/plugin-react", projectDir)
-	await run("npm run build", projectDir)
+	await run("npm install --legacy-peer-deps", projectDir)
+
+	// Detect project type from package.json
+	const pkg = JSON.parse(await fs.readFile(path.join(projectDir, "package.json"), "utf-8"))
+	const allDeps = { ...pkg.dependencies, ...pkg.devDependencies }
+	const isCRA = !!allDeps["react-scripts"]
+
+	// Only install @vitejs/plugin-react if the project uses Vite (not CRA)
+	if (!isCRA) {
+		const hasViteConfig = await hasFile(projectDir, [
+			"vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"
+		])
+		if (hasViteConfig && !allDeps["@vitejs/plugin-react"]) {
+			await run("npm install -D @vitejs/plugin-react --legacy-peer-deps", projectDir)
+		}
+	}
+
+	// CRA builds: disable ESLint plugin (known jest/globals bug) and
+	// set CI=false so warnings don't fail the build
+	const buildEnv = isCRA
+		? { DISABLE_ESLINT_PLUGIN: "true", CI: "false" }
+		: {}
+	await run("npm run build", projectDir, buildEnv)
 
 	return projectDir
 }
@@ -324,7 +364,7 @@ const scaffoldViteProject = async (projectDir: string) => {
 	// Remove any conflicting vite.config.js from the template
 	await fs.rm(path.join(projectDir, "vite.config.js"), { force: true })
 
-	await run("npm install", projectDir)
+	await run("npm install --legacy-peer-deps", projectDir)
 }
 
 const MAX_BUILD_REPAIRS = 6
