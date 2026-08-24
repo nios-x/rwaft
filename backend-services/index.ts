@@ -19,7 +19,7 @@ const DEPLOY_QUEUE = "rwaft:deploy"
 const DEPLOYMENT_STATUS_PREFIX = "rwaft:deployment-status:"
 const redisClient = await getRedisClient()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const deploymentDomain = process.env.DEPLOYMENT_DOMAIN || "localhost:3000"
+const deploymentDomain = process.env.DEPLOYMENT_DOMAIN || "localhost:3001"
 
 
 app.use(corsmiddlewares)

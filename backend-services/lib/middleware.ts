@@ -1,5 +1,5 @@
 export const corsmiddlewares = (req:any, res:any, next:any) => {
-    const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:5173"
+    const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:3001"
     if (req.headers.origin === frontendOrigin) {
         res.setHeader("Access-Control-Allow-Origin", frontendOrigin)
         res.setHeader("Vary", "Origin")
