@@ -86,6 +86,49 @@ function getModelChain(): ModelEntry[] {
 	return chain
 }
 
+// ── Context limits ──────────────────────────────────────────────────────────
+
+const TOOL_RESULT_MAX_CHARS = 6_000
+const CONTEXT_COMPACT_THRESHOLD = 40_000 // bytes before compaction kicks in
+const COMPACT_KEEP_RECENT = 6 // keep this many recent messages at full size
+const COMPACTED_RESULT_MAX = 200 // chars to keep for old tool results
+
+function truncateResult(text: string): string {
+	if (text.length <= TOOL_RESULT_MAX_CHARS) return text
+	const half = Math.floor((TOOL_RESULT_MAX_CHARS - 60) / 2)
+	return `${text.slice(0, half)}\n\n... [truncated ${text.length - TOOL_RESULT_MAX_CHARS} chars] ...\n\n${text.slice(-half)}`
+}
+
+/**
+ * Shrinks old tool-result messages to short summaries when total context
+ * exceeds the threshold. Keeps the system prompt, user prompt, and the
+ * last COMPACT_KEEP_RECENT messages at full size.
+ */
+function compactMessages(messages: ChatCompletionMessageParam[]): void {
+	const totalChars = messages.reduce((sum, m) => {
+		const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")
+		return sum + content.length
+	}, 0)
+
+	if (totalChars < CONTEXT_COMPACT_THRESHOLD) return
+
+	// Never compact: first 2 (system + user) and last COMPACT_KEEP_RECENT
+	const compactEnd = Math.max(2, messages.length - COMPACT_KEEP_RECENT)
+	let compacted = 0
+
+	for (let i = 2; i < compactEnd; i++) {
+		const msg = messages[i] as any
+		if (msg.role === "tool" && typeof msg.content === "string" && msg.content.length > COMPACTED_RESULT_MAX) {
+			msg.content = msg.content.slice(0, COMPACTED_RESULT_MAX) + "... [compacted]"
+			compacted++
+		}
+	}
+
+	if (compacted > 0) {
+		console.log(`  [ai] Compacted ${compacted} old tool results to save context`)
+	}
+}
+
 // ── Retry helper ────────────────────────────────────────────────────────────
 
 const MAX_RETRIES = parseInt(process.env.AI_MAX_RETRIES || "3", 10)
@@ -163,18 +206,17 @@ export type FileOperation = CreateFileOp | PatchFileOp | ReplaceFileOp | WriteFi
 const SYSTEM_PROMPT = `You are a senior frontend engineer. The user will describe a web application.
 You will receive a Vite + React + TypeScript project that has already been scaffolded with the default template.
 
-Your job is to use the provided filesystem and terminal tools to create and modify files so the project implements what the user asked for.
+Your job is to use the provided filesystem tools to create and modify files so the project implements what the user asked for.
 
 Rules:
 - Only use the provided tools. Do NOT output code in plain text.
-- Use read_file or find_file to inspect an existing file before editing it.
-- Use write_file for complete file contents, edit_file for exact replacements, and delete_file, move_file, copy_file, or create_directory for filesystem management.
+- Use read_file to inspect an existing file before editing it.
+- Use write_file for complete file contents, edit_file for exact search/replace, and delete_file, move_file, copy_file, or create_directory for filesystem management.
 - Use list_files, search_files, find_symbol, find_references, and get_file_metadata to inspect the workspace.
-- Use run_command or run_script for bounded foreground commands. Use run_background_command for long-running commands, then get_process_output or kill_process.
-- Use set_environment_variable only for non-secret configuration. Never print or expose secrets.
+- Use run_command to run shell commands (e.g. npm install), and install_package to add npm packages.
 - All file paths are relative to the project root (e.g. "src/App.tsx", "src/components/Header.tsx").
 - Write complete, production-quality code. No placeholders or TODOs.
-- You may add CSS files, components, assets, and new dependencies (via patch_file on package.json).
+- You may add CSS files, components, assets, and new dependencies (via edit_file on package.json or install_package).
 - When using React hooks such as useState or useEffect, import each hook from "react" in the file that uses it.
 - Ensure package.json includes react, react-dom, typescript, vite, and @vitejs/plugin-react when the Vite config imports the React plugin.
 - Use type-only imports for TypeScript types when verbatimModuleSyntax is enabled.
@@ -185,50 +227,96 @@ Rules:
 - Set tsconfig.json compilerOptions.lib to ["ES2020", "DOM", "DOM.Iterable"] and allowImportingTsExtensions to true.
 - Do not add compiler options that may not be supported by the installed TypeScript version, especially erasableSyntaxOnly.
 - Replace the scaffold entry implementation instead of leaving imports for starter assets that do not exist; every imported file must exist.
-- After inspecting a file, implement the required changes immediately. Do not use the remaining tool-call iterations only for repeated file inspection.
+- After inspecting a file, implement the required changes immediately. Do not spend multiple iterations only inspecting files.
 - Keep Vite config syntax consistent with its extension: never use 'import type' or TypeScript annotations in vite.config.js; prefer vite.config.ts for TypeScript config.
 - Ensure the entry file imports the app component and mounts it with ReactDOM before finishing.
-- Before finishing, inspect package.json and every imported module/config file so npm install and npm run build can resolve them.
-- When repairing a failed build, treat the complete diagnostic output as a connected problem. Inspect every named file and its imported types/modules before editing, then fix all reported errors in one coherent pass. Check named versus default exports, relative paths, dependency placement, JSX file extensions, callback and function parameter types, object shapes, union literals, indexed records, asset paths, Vite config, and index.html together. Never hide errors with any, @ts-ignore, or broad casts, and never replace requested functionality with a placeholder.
+- Before finishing, verify package.json and every imported module/config file so npm install and npm run build can resolve them.
+- When repairing a failed build, inspect every named file and its imported types/modules before editing, then fix all reported errors in one coherent pass. Never hide errors with any, @ts-ignore, or broad casts, and never replace requested functionality with a placeholder.
 - Make sure the app compiles and builds cleanly with "npm run build".`
 
 // ── Tool definitions ────────────────────────────────────────────────────────
+// Each tool now declares ONLY the parameters it actually uses, plus required
+// fields. This prevents the AI from sending irrelevant/wrong keys and reduces
+// the tool-definition token overhead sent every iteration.
 
-const toolNames = [
-	"list_files", "read_file", "write_file", "edit_file", "delete_file", "move_file", "copy_file",
-	"create_directory", "search_files", "find_symbol", "find_references", "get_file_metadata",
-	"run_command", "run_background_command", "kill_process", "get_process_output", "open_terminal",
-	"set_environment_variable", "install_package", "run_script"
-] as const
+type ToolSpec = { name: string; description: string; parameters: Record<string, any> }
 
-const tools: ChatCompletionTool[] = toolNames.map(name => ({
-	type: "function",
-	function: {
-		name,
-		description: `Use ${name} in the project workspace. Paths must be relative to the project root.`,
-		parameters: {
-			type: "object",
-			properties: {
-				path: { type: "string" },
-				file_path: { type: "string" },
-				to: { type: "string" },
-				content: { type: "string" },
-				search: { type: "string" },
-				replace: { type: "string" },
-				query: { type: "string" },
-				pattern: { type: "string" },
-				symbol: { type: "string" },
-				name: { type: "string" },
-				command: { type: "string" },
-				script: { type: "string" },
-				process_id: { type: "string" },
-				id: { type: "string" },
-				value: { type: "string" },
-				package: { type: "string" },
-				dev: { type: "string" }
-			}
-		}
+const toolSpecs: ToolSpec[] = [
+	{
+		name: "list_files",
+		description: "List all files in a directory. Path is relative to project root, defaults to '.'.",
+		parameters: { type: "object", properties: { path: { type: "string", description: "Directory path relative to project root" } } }
+	},
+	{
+		name: "read_file",
+		description: "Read the contents of a file. Path is relative to project root.",
+		parameters: { type: "object", properties: { path: { type: "string", description: "File path relative to project root" } }, required: ["path"] }
+	},
+	{
+		name: "write_file",
+		description: "Create or overwrite a file with the given content. Path is relative to project root.",
+		parameters: { type: "object", properties: { path: { type: "string", description: "File path relative to project root" }, content: { type: "string", description: "Complete file content" } }, required: ["path", "content"] }
+	},
+	{
+		name: "edit_file",
+		description: "Replace an exact substring in a file. Use 'search' for the text to find and 'replace' for the replacement.",
+		parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string", description: "Exact text to find" }, replace: { type: "string", description: "Replacement text" } }, required: ["path", "search", "replace"] }
+	},
+	{
+		name: "delete_file",
+		description: "Delete a file or directory.",
+		parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] }
+	},
+	{
+		name: "move_file",
+		description: "Move/rename a file from 'path' to 'to'.",
+		parameters: { type: "object", properties: { path: { type: "string" }, to: { type: "string" } }, required: ["path", "to"] }
+	},
+	{
+		name: "copy_file",
+		description: "Copy a file from 'path' to 'to'.",
+		parameters: { type: "object", properties: { path: { type: "string" }, to: { type: "string" } }, required: ["path", "to"] }
+	},
+	{
+		name: "create_directory",
+		description: "Create a directory (including parents).",
+		parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] }
+	},
+	{
+		name: "search_files",
+		description: "Search for text across all project files.",
+		parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
+	},
+	{
+		name: "find_symbol",
+		description: "Find occurrences of a symbol name across the project.",
+		parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] }
+	},
+	{
+		name: "find_references",
+		description: "Find all references to a symbol.",
+		parameters: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] }
+	},
+	{
+		name: "get_file_metadata",
+		description: "Get metadata (size, type, modified date) for a file.",
+		parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] }
+	},
+	{
+		name: "run_command",
+		description: "Run a shell command in the project directory.",
+		parameters: { type: "object", properties: { command: { type: "string" } }, required: ["command"] }
+	},
+	{
+		name: "install_package",
+		description: "Install an npm package. Set dev to 'true' for devDependencies.",
+		parameters: { type: "object", properties: { package: { type: "string" }, dev: { type: "string", enum: ["true", "false"] } }, required: ["package"] }
 	}
+]
+
+const tools: ChatCompletionTool[] = toolSpecs.map(spec => ({
+	type: "function",
+	function: { name: spec.name, description: spec.description, parameters: spec.parameters }
 }))
 
 // ── Main generation function ────────────────────────────────────────────────
@@ -249,6 +337,9 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 
 	while (iterations < MAX_ITERATIONS) {
 		iterations++
+
+		// Compact old tool results if context is getting too large
+		compactMessages(messages)
 
 		console.log(`  [ai] Iteration ${iterations} — sending ${messages.length} messages`)
 
@@ -288,8 +379,10 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				continue
 			}
 
-			const name = call.function.name
+			const toolName = call.function.name
 			let result = "OK"
+			// Alias for the switch — keep 'name' available for args.name
+			const name = toolName
 
 			// Fix 1: Normalize file_path → path (AI sometimes uses file_path)
 			if (!args.path && args.file_path) args.path = args.file_path
@@ -311,7 +404,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				case "install_package":
 				case "run_script":
 					try {
-						result = await executeToolRequest(projectDir, name, args)
+						result = truncateResult(await executeToolRequest(projectDir, name, args))
 					} catch (error) {
 						result = `ERROR: ${error instanceof Error ? error.message : String(error)}`
 					}

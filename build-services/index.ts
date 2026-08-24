@@ -20,12 +20,43 @@ const UPLOAD_BATCH_SIZE = 8
 const COMMAND_TIMEOUT_MS = Number(process.env.COMMAND_TIMEOUT_MS || 60_000)
 const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 10 * 60_000) // 10 minutes
 
+const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 30_000)
+const CLOUDINARY_API_TIMEOUT_MS = Number(process.env.CLOUDINARY_API_TIMEOUT_MS || 60_000)
+
+/** Promise-based timeout race helper. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+	let timer: ReturnType<typeof setTimeout>
+	return Promise.race([
+		promise,
+		new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+		})
+	]).finally(() => clearTimeout(timer!))
+}
+
 // ── Shell runner ────────────────────────────────────────────────────────────
 
 const run = (command: string, cwd: string) => new Promise<void>((resolve, reject) => {
 	const child = spawn(command, { cwd, shell: true, stdio: "inherit" })
-	child.on("error", reject)
-	child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`${command} failed`)))
+	let settled = false
+	const timer = setTimeout(() => {
+		if (settled) return
+		settled = true
+		child.kill()
+		reject(new Error(`${command} timed out after ${COMMAND_TIMEOUT_MS}ms`))
+	}, COMMAND_TIMEOUT_MS)
+	child.on("error", (error) => {
+		if (settled) return
+		settled = true
+		clearTimeout(timer)
+		reject(error)
+	})
+	child.on("exit", (code) => {
+		if (settled) return
+		settled = true
+		clearTimeout(timer)
+		code === 0 ? resolve() : reject(new Error(`${command} failed with exit code ${code}`))
+	})
 })
 
 const runWithOutput = (command: string, cwd: string) => new Promise<void>((resolve, reject) => {
@@ -69,17 +100,27 @@ const downloadFile = async (file: { public_id: string, secure_url: string }, pro
 	const relative = file.public_id.slice(`rwaft/${id}/`.length)
 	const destination = path.join(project, relative)
 	await fs.mkdir(path.dirname(destination), { recursive: true })
-	const response: any = await fetch(file.secure_url)
-	await fs.writeFile(destination, Buffer.from(await response.arrayBuffer()))
+	const controller = new AbortController()
+	const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+	try {
+		const response: any = await fetch(file.secure_url, { signal: controller.signal })
+		await fs.writeFile(destination, Buffer.from(await response.arrayBuffer()))
+	} finally {
+		clearTimeout(timer)
+	}
 }
 
 const fetchCloudinaryFiles = async (prefix: string) => {
-	const page = await cloudinary.api.resources({
-		type: "upload",
-		resource_type: "raw",
-		prefix,
-		max_results: 500
-	})
+	const page = await withTimeout(
+		cloudinary.api.resources({
+			type: "upload",
+			resource_type: "raw",
+			prefix,
+			max_results: 500
+		}),
+		CLOUDINARY_API_TIMEOUT_MS,
+		`cloudinary.api.resources(${prefix})`
+	)
 	return page.resources as { public_id: string; secure_url: string }[]
 }
 
@@ -88,10 +129,14 @@ const removeCloudinaryFiles = async (prefix: string) => {
 	const publicIds = files.map((file) => file.public_id)
 
 	for (let i = 0; i < publicIds.length; i += 100) {
-		await cloudinary.api.delete_resources(publicIds.slice(i, i + 100), {
-			type: "upload",
-			resource_type: "raw"
-		})
+		await withTimeout(
+			cloudinary.api.delete_resources(publicIds.slice(i, i + 100), {
+				type: "upload",
+				resource_type: "raw"
+			}),
+			CLOUDINARY_API_TIMEOUT_MS,
+			`cloudinary.api.delete_resources`
+		)
 	}
 }
 
@@ -115,7 +160,13 @@ const uploadBuildOutput = async (id: string, projectDir: string) => {
 
 	for (let i = 0; i < fileNames.length; i += UPLOAD_BATCH_SIZE) {
 		const batch = fileNames.slice(i, i + UPLOAD_BATCH_SIZE)
-		await Promise.all(batch.map((file) => uploadFile(file, outputPath, `rwaft-dist/${id}`)))
+		await Promise.all(batch.map((file) =>
+			withTimeout(
+				uploadFile(file, outputPath, `rwaft-dist/${id}`),
+				CLOUDINARY_API_TIMEOUT_MS,
+				`upload ${path.basename(file)}`
+			)
+		))
 	}
 }
 
@@ -158,18 +209,26 @@ const deployWorker = async () => {
 		const id = item.element
 		console.log(`[deploy] Building ${id}`)
 
+		const jobTimer = setTimeout(() => {}, JOB_TIMEOUT_MS)
 		try {
-			const projectDir = await buildFromCloudinary(id)
-			console.log(`[deploy] Built ${id}`)
+			await withTimeout((async () => {
+				const projectDir = await buildFromCloudinary(id)
+				console.log(`[deploy] Built ${id}`)
 
-			await uploadBuildOutput(id, projectDir)
-			console.log(`[deploy] Uploaded ${id}`)
-			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: 3600 })
+				await uploadBuildOutput(id, projectDir)
+				console.log(`[deploy] Uploaded ${id}`)
+				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: 3600 })
 
-			await cleanup(id, projectDir)
+				await cleanup(id, projectDir)
+				console.log(`[deploy] ✓ Deployed ${id}`)
+			})(), JOB_TIMEOUT_MS, `deploy job ${id}`)
 		} catch (error) {
 			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: 3600 }).catch(() => {})
 			console.error(`[deploy] Failed for ${id}:`, error)
+			const projectDir = path.join(root, id)
+			await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {})
+		} finally {
+			clearTimeout(jobTimer)
 		}
 	}
 }
@@ -441,13 +500,22 @@ process.on("unhandledRejection", (reason) => {
 
 await fs.mkdir(root, { recursive: true })
 
+/** Auto-restart a worker with exponential backoff (max 30s). */
+async function runWorkerForever(name: string, worker: () => Promise<void>) {
+	let failures = 0
+	while (true) {
+		try {
+			await worker()
+		} catch (error) {
+			failures++
+			const delay = Math.min(failures * 2_000, 30_000)
+			console.error(`[${name}] Worker crashed (attempt ${failures}), restarting in ${delay}ms:`, error)
+			await new Promise(r => setTimeout(r, delay))
+		}
+	}
+}
+
 await Promise.all([
-	deployWorker().catch(error => {
-		console.error("[deploy] Worker crashed:", error)
-		process.exit(1)
-	}),
-	promptWorker().catch(error => {
-		console.error("[prompt] Worker crashed:", error)
-		process.exit(1)
-	})
+	runWorkerForever("deploy", deployWorker),
+	runWorkerForever("prompt", promptWorker)
 ])

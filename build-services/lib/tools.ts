@@ -4,7 +4,9 @@ import { spawn, type ChildProcess } from "node:child_process"
 import type { FileOperation } from "./ai.ts"
 
 const COMMAND_TIMEOUT_MS = Number(process.env.COMMAND_TIMEOUT_MS || 60_000)
-const backgroundProcesses = new Map<number, { child: ChildProcess; output: string }>()
+const MAX_WALK_DEPTH = 10
+const MAX_WALK_FILES = 2_000
+const backgroundProcesses = new Map<number, { child: ChildProcess; output: string; startedAt: number }>()
 let nextProcessId = 1
 
 /**
@@ -23,13 +25,25 @@ function safePath(projectDir: string, relativePath: string): string {
 	return resolved
 }
 
-async function walkFiles(directory: string): Promise<string[]> {
+async function walkFiles(directory: string, depth = 0): Promise<string[]> {
+	if (depth > MAX_WALK_DEPTH) return []
 	const results: string[] = []
-	for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+	let entries
+	try {
+		entries = await fs.readdir(directory, { withFileTypes: true })
+	} catch {
+		return []
+	}
+	for (const entry of entries) {
+		if (results.length >= MAX_WALK_FILES) break
 		if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue
 		const target = path.join(directory, entry.name)
-		if (entry.isDirectory()) results.push(...await walkFiles(target))
-		else results.push(target)
+		if (entry.isDirectory()) {
+			const subFiles = await walkFiles(target, depth + 1)
+			results.push(...subFiles)
+		} else {
+			results.push(target)
+		}
 	}
 	return results
 }
@@ -53,6 +67,12 @@ async function searchProject(projectDir: string, query: string, symbolOnly = fal
 const outputLimit = (output: string) => output.slice(-12_000)
 
 async function runCommand(projectDir: string, command: string, background = false): Promise<string> {
+	// Block dangerous commands the AI should never run
+	const dangerous = /\b(rm\s+-rf\s+\/|format|shutdown|reboot|del\s+\/[sq]|rmdir\s+\/s)\b/i
+	if (dangerous.test(command)) {
+		return `ERROR: Command blocked for safety: ${command}`
+	}
+
 	return new Promise((resolve, reject) => {
 		const child = spawn(command, { cwd: projectDir, shell: true, stdio: ["ignore", "pipe", "pipe"] })
 		let output = ""
@@ -61,19 +81,34 @@ async function runCommand(projectDir: string, command: string, background = fals
 		child.stderr.on("data", collect)
 		if (background) {
 			const processId = nextProcessId++
-			backgroundProcesses.set(processId, { child, output })
-			child.stdout.on("data", () => { const processState = backgroundProcesses.get(processId); if (processState) processState.output = output })
-			child.stderr.on("data", () => { const processState = backgroundProcesses.get(processId); if (processState) processState.output = output })
-			child.on("exit", code => { const processState = backgroundProcesses.get(processId); if (processState) processState.output += `\nProcess exited with code ${code}` })
+			backgroundProcesses.set(processId, { child, output, startedAt: Date.now() })
+			child.stdout.on("data", () => { const ps = backgroundProcesses.get(processId); if (ps) ps.output = output })
+			child.stderr.on("data", () => { const ps = backgroundProcesses.get(processId); if (ps) ps.output = output })
+			child.on("exit", code => {
+				const ps = backgroundProcesses.get(processId)
+				if (ps) ps.output += `\nProcess exited with code ${code}`
+				// Auto-cleanup after 5 minutes
+				setTimeout(() => backgroundProcesses.delete(processId), 5 * 60_000)
+			})
 			resolve(`Started background process ${processId}`)
 			return
 		}
+		let settled = false
 		const timer = setTimeout(() => {
+			if (settled) return
+			settled = true
 			child.kill()
 			reject(new Error(`${command} timed out after ${COMMAND_TIMEOUT_MS}ms\n\n${outputLimit(output)}`))
 		}, COMMAND_TIMEOUT_MS)
-		child.on("error", (error) => { clearTimeout(timer); reject(error) })
+		child.on("error", (error) => {
+			if (settled) return
+			settled = true
+			clearTimeout(timer)
+			reject(error)
+		})
 		child.on("exit", (code) => {
+			if (settled) return
+			settled = true
 			clearTimeout(timer)
 			if (code === 0) resolve(outputLimit(output))
 			else reject(new Error(`${command} failed with exit code ${code}\n\n${outputLimit(output)}`))
