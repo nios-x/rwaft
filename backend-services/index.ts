@@ -4,10 +4,9 @@ import { simpleGit } from 'simple-git';
 import { genId, getAllFileNames } from "./lib/utils.ts"
 import { uploadFile } from "./lib/upload.ts"
 import { fileURLToPath } from "node:url"
-import { v2 as cloudinary } from "cloudinary"
 import path from "path"
 import "dotenv/config";
-import "./lib/cloudinary.ts";
+import { getRawAssetUrl } from "./lib/cloudinary.ts";
 import { getRedisClient } from "./lib/redis.ts";
 import { corsmiddlewares } from "./lib/middleware.ts";
 
@@ -26,11 +25,7 @@ app.use(corsmiddlewares)
 app.use(express.json())
 
 const sendCloudinaryFile = async (id: string, filePath: string, res: express.Response) => {
-    const url = cloudinary.url(`rwaft-dist/${id}/${filePath}`, {
-        type: "upload",
-        resource_type: "raw",
-        secure: true
-    })
+    const url = getRawAssetUrl(`rwaft-dist/${id}/${filePath}`)
     const response: any = await fetch(url)
     if (!response.ok) throw new Error(`Cloudinary returned ${response.status}`)
 

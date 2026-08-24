@@ -3,6 +3,9 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "test:prompt": "node test-prompt.mjs"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },

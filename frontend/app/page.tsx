@@ -3,8 +3,6 @@
 import { useState } from "react"
 import type { FormEvent } from "react"
 
-const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:3000"
-
 type DeployMode = "github" | "prompt"
 
 export default function Home() {
@@ -27,7 +25,7 @@ export default function Home() {
         ? { url: repositoryUrl.trim() }
         : { prompt: promptText.trim() }
 
-      const response = await fetch(`${backendUrl}${endpoint}`, {
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
