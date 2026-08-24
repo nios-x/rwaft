@@ -93,7 +93,7 @@ function getModelChain(): ModelEntry[] {
 	const chain: ModelEntry[] = []
 
 	// Try OpenRouter first, but move to Gemini after five failed requests.
-	const openRouterModel = process.env.OPENROUTER_MODEL || "z-ai/glm-5.2:free"
+	const openRouterModel = process.env.OPENROUTER_MODEL || "nvidia/nemotron-3.5-lightning:free"
 	for (const entry of getOpenRouterApiKeys()) {
 		chain.push({
 			client: () => getOpenRouterClientForKey(entry.key),
@@ -169,7 +169,7 @@ function compactMessages(messages: ChatCompletionMessageParam[]): void {
 // ── Retry helper ────────────────────────────────────────────────────────────
 
 const MAX_RETRIES = parseInt(process.env.AI_MAX_RETRIES || "3", 10)
-const MAX_OPENROUTER_ATTEMPTS = 5
+const MAX_OPENROUTER_ATTEMPTS = 7
 const RETRY_BASE_MS = 2_000
 const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 60_000)
 
@@ -181,6 +181,17 @@ function isRetryable(error: unknown): boolean {
 		return status === 429 || status === 503 || status === 500 || status === 502
 	}
 	return false
+}
+
+function getErrorResponse(error: unknown): string {
+	if (!error || typeof error !== "object" || !("error" in error)) return ""
+	const response = (error as { error?: unknown }).error
+	if (response === undefined) return ""
+	try {
+		return typeof response === "string" ? response : JSON.stringify(response)
+	} catch {
+		return "[unserializable provider response]"
+	}
 }
 
 async function callWithRetry(
@@ -216,8 +227,13 @@ async function callWithRetry(
 				const message = timedOut
 					? `request timed out after ${AI_TIMEOUT_MS}ms`
 					: (error as Error).message?.slice(0, 100)
+				const errorResponse = getErrorResponse(error)
 				if (isOpenRouter) openRouterFailures++
 				console.warn(`  ⚠ ${entry.model} error (${status || "timeout"}): ${message}`)
+				if (errorResponse) console.warn(`  [ai] Provider response: ${errorResponse}`)
+				if (isOpenRouter && openRouterFailures >= MAX_OPENROUTER_ATTEMPTS) {
+					console.warn(`  [ai] OpenRouter reached ${MAX_OPENROUTER_ATTEMPTS} failed requests; switching to Gemini`)
+				}
 
 				if (!timedOut && (status === 429 || !isRetryable(error) || attempt === MAX_RETRIES)) {
 					// Non-retryable or exhausted retries → try next model
