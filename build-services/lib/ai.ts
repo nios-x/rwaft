@@ -257,6 +257,12 @@ async function callWithRetry(
 
 export type CreateFileOp = { tool: "create_file"; path: string; content: string }
 export type PatchFileOp = { tool: "patch_file"; path: string; search: string; replace: string }
+export type MultiPatchChunk = { search: string; replace: string }
+export type MultiPatchFileOp = {
+	tool: "multi_patch_file" | "multi_edit_file" | "patch_multiple" | "multi_patch" | "batch_patch"
+	path: string
+	patches: MultiPatchChunk[]
+}
 export type ReplaceFileOp = { tool: "replace_file"; path: string; content: string }
 export type WriteFileOp = { tool: "write_file"; path: string; content: string }
 export type EditFileOp = { tool: "edit_file"; path: string; search: string; replace: string }
@@ -264,7 +270,7 @@ export type DeleteFileOp = { tool: "delete_file"; path: string }
 export type MoveFileOp = { tool: "move_file"; path: string; to: string }
 export type CopyFileOp = { tool: "copy_file"; path: string; to: string }
 export type CreateDirectoryOp = { tool: "create_directory"; path: string }
-export type FileOperation = CreateFileOp | PatchFileOp | ReplaceFileOp | WriteFileOp | EditFileOp | DeleteFileOp | MoveFileOp | CopyFileOp | CreateDirectoryOp
+export type FileOperation = CreateFileOp | PatchFileOp | MultiPatchFileOp | ReplaceFileOp | WriteFileOp | EditFileOp | DeleteFileOp | MoveFileOp | CopyFileOp | CreateDirectoryOp
 
 // ── System prompt ───────────────────────────────────────────────────────────
 
@@ -293,7 +299,7 @@ CRITICAL RULES — read these first:
 General rules:
 - Only use the provided tools. Do NOT output code in plain text.
 - Use read_file to inspect an existing file before editing it.
-- Use write_file for complete file contents, edit_file for exact search/replace, and delete_file, move_file, copy_file, or create_directory for filesystem management.
+- Use write_file for complete file contents, edit_file for exact search/replace, multi_patch_file for applying multiple search/replace patches in a file at once, and delete_file, move_file, copy_file, or create_directory for filesystem management.
 - Use list_files, search_files, find_symbol, find_references, and get_file_metadata to inspect the workspace.
 - Use run_command to run shell commands (e.g. npm install), and install_package to add npm packages.
 - All file paths are relative to the project root (e.g. "src/App.tsx", "src/components/Header.tsx").
@@ -343,6 +349,29 @@ const toolSpecs: ToolSpec[] = [
 		name: "edit_file",
 		description: "Replace an exact substring in a file. Use 'search' for the text to find and 'replace' for the replacement.",
 		parameters: { type: "object", properties: { path: { type: "string" }, search: { type: "string", description: "Exact text to find" }, replace: { type: "string", description: "Replacement text" } }, required: ["path", "search", "replace"] }
+	},
+	{
+		name: "multi_patch_file",
+		description: "Apply multiple exact search/replace patches to a file in a single tool call. Patches are applied sequentially.",
+		parameters: {
+			type: "object",
+			properties: {
+				path: { type: "string", description: "File path relative to project root" },
+				patches: {
+					type: "array",
+					description: "Array of patch chunks to apply sequentially",
+					items: {
+						type: "object",
+						properties: {
+							search: { type: "string", description: "Exact text to find" },
+							replace: { type: "string", description: "Replacement text" }
+						},
+						required: ["search", "replace"]
+					}
+				}
+			},
+			required: ["path", "patches"]
+		}
 	},
 	{
 		name: "delete_file",
@@ -513,6 +542,51 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 					}
 					operations.push({ tool: name as "patch_file" | "edit_file", path: args.path, search: args.search ?? "", replace: args.replace ?? "" })
 					iterationProducedOperation = true
+					break
+				}
+				case "multi_patch_file":
+				case "multi_edit_file":
+				case "patch_multiple":
+				case "multi_patch":
+				case "batch_patch": {
+					if (!args.path || typeof args.path !== "string") {
+						console.warn(`  ⚠ ${name} missing path, skipping`)
+						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
+						break
+					}
+					let rawPatches = args.patches || args.edits || args.chunks || args.replacements || args.changes
+					if (typeof rawPatches === "string") {
+						try { rawPatches = JSON.parse(rawPatches) } catch { rawPatches = [] }
+					}
+					if (!Array.isArray(rawPatches) || rawPatches.length === 0) {
+						console.warn(`  ⚠ ${name} missing or invalid patches array, skipping`)
+						result = "ERROR: patches argument is required and must be a non-empty array of { search, replace } objects."
+						break
+					}
+
+					const parsedPatches: MultiPatchChunk[] = []
+					for (const p of rawPatches) {
+						if (p && typeof p === "object") {
+							const search = p.search ?? p.old_str ?? p.old ?? p.find ?? p.target
+							const replace = p.replace ?? p.new_str ?? p.new ?? p.replacement ?? ""
+							if (typeof search === "string" && search.length > 0) {
+								parsedPatches.push({ search, replace: String(replace) })
+							}
+						}
+					}
+
+					if (parsedPatches.length === 0) {
+						result = "ERROR: No valid search/replace patches found in the patches array."
+						break
+					}
+
+					operations.push({
+						tool: "multi_patch_file",
+						path: args.path,
+						patches: parsedPatches
+					})
+					iterationProducedOperation = true
+					result = `OK: Staged ${parsedPatches.length} patches for ${args.path}`
 					break
 				}
 				case "replace_file": {

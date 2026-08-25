@@ -6,7 +6,7 @@ import { createRedisClient } from "./lib/config.ts"
 import { getAllFileNames } from "./lib/helper.ts"
 import { uploadFile } from "./lib/upload.ts"
 import { generateToolCalls } from "./lib/ai.ts"
-import { applyOperations } from "./lib/tools.ts"
+import { applyOperations, releaseJobState } from "./lib/tools.ts"
 import { cloudinary, cloudinaryConfig, getRawAssetUrl } from "./lib/config.ts"
 
 console.log("[build-services] Cloudinary config:", {
@@ -40,7 +40,24 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 		})
 	]).finally(() => clearTimeout(timer!))
 }
-
+// Disable jest-worker parallelism in CRA's Terser plugin.
+// react-scripts' bundled TerserPlugin uses jest-worker's NodeThreadsWorker,
+// which crashes ("Unexpected response from worker: undefined") on Node
+// versions newer than react-scripts was built against. No CRA env var
+// exists for this, so patch the generated webpack config directly.
+const disableCraParallelMinification = async (projectDir: string) => {
+	const webpackConfigPath = path.join(projectDir, "node_modules/react-scripts/config/webpack.config.js")
+	try {
+		const config = await fs.readFile(webpackConfigPath, "utf-8")
+		const patched = config.replace(/parallel:\s*true/g, "parallel: false")
+		if (patched !== config) {
+			await fs.writeFile(webpackConfigPath, patched, "utf-8")
+			console.log("  [build] Disabled parallel Terser minification (jest-worker workaround)")
+		}
+	} catch (error) {
+		console.warn("  [build] Could not patch react-scripts webpack config:", (error as Error).message)
+	}
+}
 // ── Shell runner ────────────────────────────────────────────────────────────
 
 const run = (command: string, cwd: string, env?: Record<string, string>) => new Promise<void>((resolve, reject) => {
@@ -212,26 +229,19 @@ const buildFromCloudinary = async (id: string) => {
 
 	await run("npm install --legacy-peer-deps", projectDir)
 
-	// Detect project type from package.json
 	const pkg = JSON.parse(await fs.readFile(path.join(projectDir, "package.json"), "utf-8"))
 	const allDeps = { ...pkg.dependencies, ...pkg.devDependencies }
 	const isCRA = !!allDeps["react-scripts"]
 
-	// Only install @vitejs/plugin-react if the project uses Vite (not CRA)
-	if (!isCRA) {
-		const hasViteConfig = await hasFile(projectDir, [
-			"vite.config.ts", "vite.config.js", "vite.config.mts", "vite.config.mjs"
-		])
-		if (hasViteConfig && !allDeps["@vitejs/plugin-react"]) {
-			await run("npm install -D @vitejs/plugin-react --legacy-peer-deps", projectDir)
-		}
+	if (isCRA) {
+		await disableCraParallelMinification(projectDir)
 	}
 
-	// CRA builds: disable ESLint plugin (known jest/globals bug) and
+	// CRA builds: disable ESLint plugin (known jest/globals bug), disable sourcemap generation to prevent jest-worker crashes on Node 20+, and
 	// set CI=false so warnings don't fail the build
-	const buildEnv = isCRA
-		? { DISABLE_ESLINT_PLUGIN: "true", CI: "false" }
-		: {}
+	const buildEnv: Record<string, string> | undefined = isCRA
+		? { DISABLE_ESLINT_PLUGIN: "true", CI: "false", GENERATE_SOURCEMAP: "false" }
+		: undefined
 	await run("npm run build", projectDir, buildEnv)
 
 	return projectDir
@@ -249,10 +259,10 @@ const deployWorker = async () => {
 		const id = item.element
 		console.log(`[deploy] Building ${id}`)
 
-		const jobTimer = setTimeout(() => {}, JOB_TIMEOUT_MS)
+		const projectDir = path.join(root, id)
 		try {
 			await withTimeout((async () => {
-				const projectDir = await buildFromCloudinary(id)
+				await buildFromCloudinary(id)
 				console.log(`[deploy] Built ${id}`)
 
 				await uploadBuildOutput(id, projectDir)
@@ -263,12 +273,11 @@ const deployWorker = async () => {
 				console.log(`[deploy] ✓ Deployed ${id}`)
 			})(), JOB_TIMEOUT_MS, `deploy job ${id}`)
 		} catch (error) {
-			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: 3600 }).catch(() => {})
+			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: 3600 }).catch(() => { })
 			console.error(`[deploy] Failed for ${id}:`, error)
-			const projectDir = path.join(root, id)
-			await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {})
+			await fs.rm(projectDir, { recursive: true, force: true }).catch(() => { })
 		} finally {
-			clearTimeout(jobTimer)
+			releaseJobState(projectDir)
 		}
 	}
 }
@@ -682,10 +691,11 @@ const promptWorker = async () => {
 				})
 			])
 		} catch (error) {
-			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: 3600 }).catch(() => {})
+			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: 3600 }).catch(() => { })
 			console.error(`[prompt] Failed for ${id}:`, error)
-			await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {})
+			await fs.rm(projectDir, { recursive: true, force: true }).catch(() => { })
 		} finally {
+			releaseJobState(projectDir)
 			clearTimeout(jobTimer)
 		}
 	}

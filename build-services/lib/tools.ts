@@ -6,8 +6,39 @@ import type { FileOperation } from "./ai.ts"
 const COMMAND_TIMEOUT_MS = Number(process.env.COMMAND_TIMEOUT_MS || 60_000)
 const MAX_WALK_DEPTH = 10
 const MAX_WALK_FILES = 2_000
-const backgroundProcesses = new Map<number, { child: ChildProcess; output: string; startedAt: number }>()
+
+// Background processes and env overlays are scoped per-project (per job),
+// not global — so one job can never read, kill, or leak env into another's.
+type ProcessState = { child: ChildProcess; output: string; startedAt: number }
+const backgroundProcesses = new Map<string, Map<number, ProcessState>>()
+const projectEnvOverlays = new Map<string, Record<string, string>>()
 let nextProcessId = 1
+
+const jobLabel = (projectDir: string) => path.basename(projectDir)
+const log = (projectDir: string, message: string) => console.log(`[job ${jobLabel(projectDir)}] ${message}`)
+const warn = (projectDir: string, message: string) => console.warn(`[job ${jobLabel(projectDir)}] ${message}`)
+
+function getEnvOverlay(projectDir: string): Record<string, string> {
+	let overlay = projectEnvOverlays.get(projectDir)
+	if (!overlay) {
+		overlay = {}
+		projectEnvOverlays.set(projectDir, overlay)
+	}
+	return overlay
+}
+
+/** Call when a job (deploy or prompt) finishes — kills any stray background
+ *  processes and drops the env overlay so nothing survives into the next job. */
+export function releaseJobState(projectDir: string): void {
+	const processes = backgroundProcesses.get(projectDir)
+	if (processes) {
+		for (const { child } of processes.values()) {
+			try { child.kill() } catch { /* already exited */ }
+		}
+		backgroundProcesses.delete(projectDir)
+	}
+	projectEnvOverlays.delete(projectDir)
+}
 
 /**
  * Resolves a relative file path against the project root,
@@ -67,28 +98,39 @@ async function searchProject(projectDir: string, query: string, symbolOnly = fal
 const outputLimit = (output: string) => output.slice(-12_000)
 
 async function runCommand(projectDir: string, command: string, background = false): Promise<string> {
-	// Block dangerous commands the AI should never run
+	// Block dangerous commands the AI should never run.
+	// NOTE: this is a denylist on a single shell string — it's a speed bump,
+	// not a security boundary (chaining, curl|bash, env exfiltration, etc.
+	// all slip past it). Real safety here requires running commands in an
+	// isolated sandbox, which is a separate infra piece, not a regex fix.
 	const dangerous = /\b(rm\s+-rf\s+\/|format|shutdown|reboot|del\s+\/[sq]|rmdir\s+\/s)\b/i
 	if (dangerous.test(command)) {
 		return `ERROR: Command blocked for safety: ${command}`
 	}
 
+	const env = { ...process.env, ...getEnvOverlay(projectDir) }
+
 	return new Promise((resolve, reject) => {
-		const child = spawn(command, { cwd: projectDir, shell: true, stdio: ["ignore", "pipe", "pipe"] })
+		const child = spawn(command, { cwd: projectDir, shell: true, stdio: ["ignore", "pipe", "pipe"], env })
 		let output = ""
 		const collect = (chunk: Buffer) => { output = outputLimit(output + chunk.toString()) }
 		child.stdout.on("data", collect)
 		child.stderr.on("data", collect)
 		if (background) {
 			const processId = nextProcessId++
-			backgroundProcesses.set(processId, { child, output, startedAt: Date.now() })
-			child.stdout.on("data", () => { const ps = backgroundProcesses.get(processId); if (ps) ps.output = output })
-			child.stderr.on("data", () => { const ps = backgroundProcesses.get(processId); if (ps) ps.output = output })
+			let processes = backgroundProcesses.get(projectDir)
+			if (!processes) {
+				processes = new Map()
+				backgroundProcesses.set(projectDir, processes)
+			}
+			processes.set(processId, { child, output, startedAt: Date.now() })
+			child.stdout.on("data", () => { const ps = processes!.get(processId); if (ps) ps.output = output })
+			child.stderr.on("data", () => { const ps = processes!.get(processId); if (ps) ps.output = output })
 			child.on("exit", code => {
-				const ps = backgroundProcesses.get(processId)
+				const ps = processes!.get(processId)
 				if (ps) ps.output += `\nProcess exited with code ${code}`
 				// Auto-cleanup after 5 minutes
-				setTimeout(() => backgroundProcesses.delete(processId), 5 * 60_000)
+				setTimeout(() => processes!.delete(processId), 5 * 60_000)
 			})
 			resolve(`Started background process ${processId}`)
 			return
@@ -146,22 +188,27 @@ export async function executeToolRequest(projectDir: string, name: string, args:
 			return runCommand(projectDir, requiredArg(args, "command"), true)
 		case "get_process_output": {
 			const processId = Number(args.process_id || args.id)
-			const processState = backgroundProcesses.get(processId)
+			const processState = backgroundProcesses.get(projectDir)?.get(processId)
 			if (!processState) return "Process not found"
 			return outputLimit(processState.output || "No output yet")
 		}
 		case "kill_process": {
 			const processId = Number(args.process_id || args.id)
-			const processState = backgroundProcesses.get(processId)
+			const processes = backgroundProcesses.get(projectDir)
+			const processState = processes?.get(processId)
 			if (!processState) return "Process not found or already exited"
 			processState.child.kill()
-			backgroundProcesses.delete(processId)
+			processes!.delete(processId)
 			return `Killed process ${processId}`
 		}
 		case "open_terminal": return "Terminal commands run in the project workspace; use run_command to execute one"
-		case "set_environment_variable":
-			process.env[requiredArg(args, "name")] = args.value || ""
-			return `Set environment variable ${args.name}`
+		case "set_environment_variable": {
+			// Scoped to this project's spawned commands only — never mutates
+			// the worker process's own env, so it can't leak into the next job.
+			const envName = requiredArg(args, "name")
+			getEnvOverlay(projectDir)[envName] = args.value || ""
+			return `Set environment variable ${envName} for this project`
+		}
 		case "install_package":
 			return runCommand(projectDir, `npm install ${args.package || args.name}${args.dev === "true" ? " --save-dev" : ""}`)
 		default: throw new Error(`Unsupported tool: ${name}`)
@@ -172,27 +219,72 @@ async function createFile(projectDir: string, filePath: string, content: string)
 	const target = safePath(projectDir, filePath)
 	await fs.mkdir(path.dirname(target), { recursive: true })
 	await fs.writeFile(target, content, "utf-8")
-	console.log(`  ✓ create  ${filePath}`)
+	log(projectDir, `✓ create  ${filePath}`)
+}
+
+/** Replaces the first occurrence of `search` with `replace` as literal text.
+ *  Unlike String.prototype.replace(searchStr, replaceStr), this never
+ *  interprets $&, $1, $$, etc. in `replace` as regex backreference tokens. */
+function replaceOnce(source: string, search: string, replace: string): string {
+	const index = source.indexOf(search)
+	if (index === -1) return source
+	return source.slice(0, index) + replace + source.slice(index + search.length)
+}
+
+function countOccurrences(source: string, search: string): number {
+	if (!search) return 0
+	let count = 0
+	let index = 0
+	while ((index = source.indexOf(search, index)) !== -1) {
+		count++
+		index += search.length
+	}
+	return count
 }
 
 async function patchFile(projectDir: string, filePath: string, search: string, replace: string): Promise<void> {
 	const target = safePath(projectDir, filePath)
 	const original = await fs.readFile(target, "utf-8")
 
-	if (!original.includes(search)) {
+	const occurrences = countOccurrences(original, search)
+	if (occurrences === 0) {
 		throw new Error(`Patch search string not found in ${filePath}`)
 	}
+	if (occurrences > 1) {
+		throw new Error(`Patch search string is ambiguous in ${filePath}: matches ${occurrences} locations, expected exactly 1. Include more surrounding context to make it unique.`)
+	}
 
-	const patched = original.replace(search, replace)
+	const patched = replaceOnce(original, search, replace)
 	await fs.writeFile(target, patched, "utf-8")
-	console.log(`  ✓ patch   ${filePath}`)
+	log(projectDir, `✓ patch   ${filePath}`)
+}
+
+async function multiPatchFile(projectDir: string, filePath: string, patches: Array<{ search: string; replace: string }>): Promise<void> {
+	const target = safePath(projectDir, filePath)
+	let content = await fs.readFile(target, "utf-8")
+
+	for (let i = 0; i < patches.length; i++) {
+		const patch = patches[i]
+		if (!patch || !patch.search) continue
+		const occurrences = countOccurrences(content, patch.search)
+		if (occurrences === 0) {
+			throw new Error(`Multi-patch chunk ${i + 1}/${patches.length} search string not found in ${filePath}`)
+		}
+		if (occurrences > 1) {
+			throw new Error(`Multi-patch chunk ${i + 1}/${patches.length} search string is ambiguous in ${filePath}: matches ${occurrences} locations, expected exactly 1.`)
+		}
+		content = replaceOnce(content, patch.search, patch.replace)
+	}
+
+	await fs.writeFile(target, content, "utf-8")
+	log(projectDir, `✓ multi_patch ${filePath} (${patches.length} patches)`)
 }
 
 async function replaceFile(projectDir: string, filePath: string, content: string): Promise<void> {
 	const target = safePath(projectDir, filePath)
 	await fs.mkdir(path.dirname(target), { recursive: true })
 	await fs.writeFile(target, content, "utf-8")
-	console.log(`  ✓ replace ${filePath}`)
+	log(projectDir, `✓ replace ${filePath}`)
 }
 
 async function deleteFile(projectDir: string, filePath: string): Promise<void> {
@@ -220,6 +312,12 @@ export async function executeOperation(projectDir: string, operation: FileOperat
 			return createFile(projectDir, operation.path, operation.content)
 		case "patch_file":
 			return patchFile(projectDir, operation.path, operation.search, operation.replace)
+		case "multi_patch_file":
+		case "multi_edit_file":
+		case "patch_multiple":
+		case "multi_patch":
+		case "batch_patch":
+			return multiPatchFile(projectDir, operation.path, operation.patches)
 		case "replace_file":
 			return replaceFile(projectDir, operation.path, operation.content)
 		case "write_file":
@@ -235,7 +333,10 @@ export async function executeOperation(projectDir: string, operation: FileOperat
 		case "create_directory":
 			return fs.mkdir(safePath(projectDir, operation.path), { recursive: true }).then(() => undefined)
 		default:
-			console.warn(`  ⚠ unknown tool: ${(operation as any).tool}, skipping`)
+			// A hallucinated/unsupported tool name is a failure, not a no-op —
+			// silently skipping it let the repair loop believe the edit
+			// succeeded while the file was never touched.
+			throw new Error(`Unknown tool: ${(operation as any).tool}`)
 	}
 }
 
@@ -250,7 +351,7 @@ export async function applyOperations(projectDir: string, operations: FileOperat
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error)
 			errors.push(message)
-			console.warn(`  ⚠ ${operation.tool} ${operation.path} — ${message}`)
+			warn(projectDir, `⚠ ${operation.tool} ${operation.path} — ${message}`)
 		}
 	}
 
