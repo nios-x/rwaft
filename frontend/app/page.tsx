@@ -20,7 +20,10 @@ export default function Home() {
     setIsDeploying(true)
 
     try {
-      const endpoint = mode === "github" ? "/deploy" : "/prompt"
+      const backendUrl = (
+        process.env.NEXT_PUBLIC_BACKEND_URL || "https://rwaft.onrender.com"
+      ).replace(/\/+$/, "")
+      const endpoint = mode === "github" ? `${backendUrl}/deploy` : `${backendUrl}/prompt`
       const payload = mode === "github"
         ? { url: repositoryUrl.trim() }
         : { prompt: promptText.trim() }
