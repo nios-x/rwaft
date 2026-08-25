@@ -1,5 +1,5 @@
 export const corsmiddlewares = (req: any, res: any, next: any) => {
-    const configuredOrigins = (process.env.FRONTEND_ORIGIN || "http://localhost:3001")
+    const configuredOrigins = (process.env.FRONTEND_ORIGIN || "http://localhost:3001,https://rwaft.vercel.app,*")
         .split(",")
         .map((o: string) => o.trim())
     const reqOrigin = req.headers.origin

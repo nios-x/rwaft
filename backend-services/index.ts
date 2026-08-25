@@ -48,6 +48,26 @@ const sendCloudinaryFile = async (id: string, filePath: string, res: express.Res
 }
 
 
+app.get(["/health", "/healthz"], async (_req, res) => {
+    try {
+        const ping = await redisClient.ping()
+        res.status(200).json({
+            status: "healthy",
+            service: "backend",
+            redis: ping === "PONG" ? "connected" : "unknown",
+            timestamp: new Date().toISOString()
+        })
+    } catch (error) {
+        res.status(200).json({
+            status: "degraded",
+            service: "backend",
+            redis: "disconnected",
+            error: (error as Error).message,
+            timestamp: new Date().toISOString()
+        })
+    }
+})
+
 app.get("/{*splat}", async (req, res) => {
     const parts = Array.isArray(req.params.splat)
         ? req.params.splat
