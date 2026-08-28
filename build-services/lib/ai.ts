@@ -3,6 +3,7 @@ import path from "path"
 import OpenAI from "openai"
 import type { ChatCompletionTool, ChatCompletionMessageParam } from "openai/resources/chat/completions"
 import { executeToolRequest } from "./tools.ts"
+import { jobLog } from "./joblog.ts"
 import "./config.ts"
 
 // ── Client factory ──────────────────────────────────────────────────────────
@@ -162,7 +163,7 @@ function compactMessages(messages: ChatCompletionMessageParam[]): void {
 	}
 
 	if (compacted > 0) {
-		console.log(`  [ai] Compacted ${compacted} old tool results to save context`)
+		jobLog(`  [ai] Compacted ${compacted} old tool results to save context`)
 	}
 }
 
@@ -214,7 +215,7 @@ async function callWithRetry(
 			const controller = new AbortController()
 			const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
 			try {
-				console.log(`  [ai] Calling ${entry.model} via ${entry.provider} (attempt ${attempt})`)
+				jobLog(`  [ai] Calling ${entry.model} via ${entry.provider} (attempt ${attempt})`)
 				const response = await client.chat.completions.create({
 					model: entry.model,
 					messages,
@@ -229,10 +230,10 @@ async function callWithRetry(
 					: (error as Error).message?.slice(0, 100)
 				const errorResponse = getErrorResponse(error)
 				if (isOpenRouter) openRouterFailures++
-				console.warn(`  ⚠ ${entry.model} error (${status || "timeout"}): ${message}`)
-				if (errorResponse) console.warn(`  [ai] Provider response: ${errorResponse}`)
+				jobLog(`  ⚠ ${entry.model} error (${status || "timeout"}): ${message}`, "warn")
+				if (errorResponse) jobLog(`  [ai] Provider response: ${errorResponse}`, "warn")
 				if (isOpenRouter && openRouterFailures >= MAX_OPENROUTER_ATTEMPTS) {
-					console.warn(`  [ai] OpenRouter reached ${MAX_OPENROUTER_ATTEMPTS} failed requests; switching to Gemini`)
+					jobLog(`  [ai] OpenRouter reached ${MAX_OPENROUTER_ATTEMPTS} failed requests; switching to Gemini`, "warn")
 				}
 
 				if (!timedOut && (status === 429 || !isRetryable(error) || attempt === MAX_RETRIES)) {
@@ -241,14 +242,14 @@ async function callWithRetry(
 				}
 				if (attempt === MAX_RETRIES) break
 				const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1)
-				console.log(`  [ai] Retrying in ${delay}ms...`)
+				jobLog(`  [ai] Retrying in ${delay}ms...`)
 				await sleep(delay)
 			} finally {
 				clearTimeout(timer)
 			}
 		}
 		exhaustedEntries.add(entryId)
-		console.log(`  [ai] Model ${entry.model} exhausted, trying next fallback...`)
+		jobLog(`  [ai] Model ${entry.model} exhausted, trying next fallback...`)
 	}
 	throw new Error("All AI models exhausted — no successful response")
 }
@@ -453,8 +454,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 		// Compact old tool results if context is getting too large
 		compactMessages(messages)
 
-		console.log(`  [ai] Iteration ${iterations} — sending ${messages.length} messages`)
-
+		jobLog(`  [ai] Iteration ${iterations} — sending ${messages.length} messages`)
 		const response = await callWithRetry(modelChain, messages, tools, exhaustedEntries)
 
 		const choice = response.choices[0]
@@ -463,10 +463,10 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 		const message = choice.message
 
 		// Diagnostic logging
-		console.log(`  [ai] finish_reason: ${choice.finish_reason}`)
-		console.log(`  [ai] tool_calls: ${message.tool_calls?.length ?? 0}`)
+		jobLog(`  [ai] finish_reason: ${choice.finish_reason}`)
+		jobLog(`  [ai] tool_calls: ${message.tool_calls?.length ?? 0}`)
 		if (message.content) {
-			console.log(`  [ai] text response: ${message.content.slice(0, 200)}`)
+			jobLog(`  [ai] text response: ${message.content.slice(0, 200)}`)
 		}
 
 		if (!message.tool_calls?.length) break
@@ -482,7 +482,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 			try {
 				args = JSON.parse(call.function.arguments)
 			} catch (parseError) {
-				console.warn(`  ⚠ malformed JSON in tool call ${call.function.name}: ${(parseError as Error).message}`)
+				jobLog(`  ⚠ malformed JSON in tool call ${call.function.name}: ${(parseError as Error).message}`, "warn")
 				messages.push({
 					role: "tool",
 					tool_call_id: call.id,
@@ -525,7 +525,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				case "create_file":
 				case "write_file": {
 					if (!args.path || typeof args.path !== "string") {
-						console.warn(`  ⚠ ${name} missing path, skipping`)
+						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
 						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
 						break
 					}
@@ -536,7 +536,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				case "patch_file":
 				case "edit_file": {
 					if (!args.path || typeof args.path !== "string") {
-						console.warn(`  ⚠ ${name} missing path, skipping`)
+						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
 						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
 						break
 					}
@@ -550,7 +550,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				case "multi_patch":
 				case "batch_patch": {
 					if (!args.path || typeof args.path !== "string") {
-						console.warn(`  ⚠ ${name} missing path, skipping`)
+						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
 						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
 						break
 					}
@@ -559,7 +559,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 						try { rawPatches = JSON.parse(rawPatches) } catch { rawPatches = [] }
 					}
 					if (!Array.isArray(rawPatches) || rawPatches.length === 0) {
-						console.warn(`  ⚠ ${name} missing or invalid patches array, skipping`)
+						jobLog(`  ⚠ ${name} missing or invalid patches array, skipping`, "warn")
 						result = "ERROR: patches argument is required and must be a non-empty array of { search, replace } objects."
 						break
 					}
@@ -591,7 +591,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				}
 				case "replace_file": {
 					if (!args.path || typeof args.path !== "string") {
-						console.warn(`  ⚠ ${name} missing path, skipping`)
+						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
 						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
 						break
 					}
@@ -601,7 +601,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				}
 				case "delete_file": {
 					if (!args.path || typeof args.path !== "string") {
-						console.warn(`  ⚠ ${name} missing path, skipping`)
+						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
 						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
 						break
 					}
@@ -611,7 +611,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				}
 				case "move_file": {
 					if (!args.path || typeof args.path !== "string" || !args.to || typeof args.to !== "string") {
-						console.warn(`  ⚠ ${name} missing path or to, skipping`)
+						jobLog(`  ⚠ ${name} missing path or to, skipping`, "warn")
 						result = "ERROR: both 'path' and 'to' arguments are required and must be non-empty strings."
 						break
 					}
@@ -621,7 +621,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				}
 				case "copy_file": {
 					if (!args.path || typeof args.path !== "string" || !args.to || typeof args.to !== "string") {
-						console.warn(`  ⚠ ${name} missing path or to, skipping`)
+						jobLog(`  ⚠ ${name} missing path or to, skipping`, "warn")
 						result = "ERROR: both 'path' and 'to' arguments are required and must be non-empty strings."
 						break
 					}
@@ -631,7 +631,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 				}
 				case "create_directory": {
 					if (!args.path || typeof args.path !== "string") {
-						console.warn(`  ⚠ ${name} missing path, skipping`)
+						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
 						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
 						break
 					}
@@ -654,7 +654,7 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 		} else {
 			consecutiveReadOnlyIterations++
 			if (consecutiveReadOnlyIterations >= MAX_READ_ONLY_ITERATIONS) {
-				console.warn(`  [ai] ${MAX_READ_ONLY_ITERATIONS} consecutive read-only iterations, nudging AI to produce file changes`)
+				jobLog(`  [ai] ${MAX_READ_ONLY_ITERATIONS} consecutive read-only iterations, nudging AI to produce file changes`, "warn")
 				messages.push({
 					role: "user",
 					content: "You have spent several iterations only reading files without making changes. You must now produce the required file operations (write_file, edit_file, etc.) or finish. Do not call read_file again unless absolutely necessary."

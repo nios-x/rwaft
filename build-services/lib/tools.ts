@@ -2,8 +2,9 @@ import fs from "fs/promises"
 import path from "path"
 import { spawn, type ChildProcess } from "node:child_process"
 import type { FileOperation } from "./ai.ts"
+import { jobLog } from "./joblog.ts"
+import { COMMAND_TIMEOUT_MS } from "./run.ts"
 
-const COMMAND_TIMEOUT_MS = Number(process.env.COMMAND_TIMEOUT_MS || 60_000)
 const MAX_WALK_DEPTH = 10
 const MAX_WALK_FILES = 2_000
 
@@ -14,9 +15,19 @@ const backgroundProcesses = new Map<string, Map<number, ProcessState>>()
 const projectEnvOverlays = new Map<string, Record<string, string>>()
 let nextProcessId = 1
 
-const jobLabel = (projectDir: string) => path.basename(projectDir)
-const log = (projectDir: string, message: string) => console.log(`[job ${jobLabel(projectDir)}] ${message}`)
-const warn = (projectDir: string, message: string) => console.warn(`[job ${jobLabel(projectDir)}] ${message}`)
+// File operations are streamed to the requesting user's log channel, so the
+// browser console shows the same edit-by-edit trace the container log does.
+const log = (_projectDir: string, message: string) => jobLog(message)
+const warn = (_projectDir: string, message: string) => jobLog(message, "warn")
+
+/** Signals a child and everything it spawned, not just the shell wrapper. */
+function killProcessTree(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM"): void {
+	if (!child.pid) return
+	try {
+		if (process.platform === "win32") spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" })
+		else process.kill(-child.pid, signal)
+	} catch { /* already exited */ }
+}
 
 function getEnvOverlay(projectDir: string): Record<string, string> {
 	let overlay = projectEnvOverlays.get(projectDir)
@@ -33,7 +44,7 @@ export function releaseJobState(projectDir: string): void {
 	const processes = backgroundProcesses.get(projectDir)
 	if (processes) {
 		for (const { child } of processes.values()) {
-			try { child.kill() } catch { /* already exited */ }
+			killProcessTree(child, "SIGKILL")
 		}
 		backgroundProcesses.delete(projectDir)
 	}
@@ -111,7 +122,23 @@ async function runCommand(projectDir: string, command: string, background = fals
 	const env = { ...process.env, ...getEnvOverlay(projectDir) }
 
 	return new Promise((resolve, reject) => {
-		const child = spawn(command, { cwd: projectDir, shell: true, stdio: ["ignore", "pipe", "pipe"], env })
+		// `detached` puts the command in its own process group so a timeout can
+		// signal the whole tree. Killing only the shell leaves npm/vite running,
+		// which then corrupts the workspace the retry is trying to reuse.
+		const child = spawn(command, {
+			cwd: projectDir,
+			shell: true,
+			stdio: ["ignore", "pipe", "pipe"],
+			detached: process.platform !== "win32",
+			env
+		})
+		const killTree = (signal: NodeJS.Signals) => {
+			if (!child.pid) return
+			try {
+				if (process.platform === "win32") spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" })
+				else process.kill(-child.pid, signal)
+			} catch { /* already dead */ }
+		}
 		let output = ""
 		const collect = (chunk: Buffer) => { output = outputLimit(output + chunk.toString()) }
 		child.stdout.on("data", collect)
@@ -139,7 +166,8 @@ async function runCommand(projectDir: string, command: string, background = fals
 		const timer = setTimeout(() => {
 			if (settled) return
 			settled = true
-			child.kill()
+			killTree("SIGTERM")
+			setTimeout(() => killTree("SIGKILL"), 5_000).unref()
 			reject(new Error(`${command} timed out after ${COMMAND_TIMEOUT_MS}ms\n\n${outputLimit(output)}`))
 		}, COMMAND_TIMEOUT_MS)
 		child.on("error", (error) => {
@@ -197,7 +225,7 @@ export async function executeToolRequest(projectDir: string, name: string, args:
 			const processes = backgroundProcesses.get(projectDir)
 			const processState = processes?.get(processId)
 			if (!processState) return "Process not found or already exited"
-			processState.child.kill()
+			killProcessTree(processState.child)
 			processes!.delete(processId)
 			return `Killed process ${processId}`
 		}

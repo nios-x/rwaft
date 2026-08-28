@@ -1,0 +1,116 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Creates three resources: the API (a web service), the build worker (a
+# background worker), and the Redis instance both share.
+#
+# NOTE: Render renamed managed Redis to "Key Value". If your account rejects
+# `type: keyvalue`, change the two marked lines to `redis` (the older name for
+# the same resource) and redeploy.
+#
+# Secrets are declared with `sync: false`, which makes Render prompt for them on
+# first deploy instead of storing them in this file.
+
+services:
+  # ── API ──────────────────────────────────────────────────────────────────
+  - type: web
+    name: rwaft-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile.api
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue # <- change to `redis` on older Render accounts
+          name: rwaft-redis
+          property: connectionString
+
+      # Public origin of THIS service. Used to build deployment URLs, so it must
+      # be the externally reachable URL, not the internal one.
+      - key: PUBLIC_BASE_URL
+        sync: false
+      # Comma-separated exact origins allowed to call this API from a browser,
+      # e.g. https://rwaft.vercel.app. There is no wildcard default in production.
+      - key: FRONTEND_ORIGIN
+        sync: false
+
+      # Deployment URLs default to <PUBLIC_BASE_URL>/<id>/, which works on a
+      # plain *.onrender.com hostname. Only set these two once you have a custom
+      # domain with a wildcard DNS record AND a wildcard TLS certificate —
+      # *.onrender.com provides neither.
+      # - key: DEPLOYMENT_DOMAIN
+      #   value: rwaft.example.com
+      # - key: DEPLOYMENT_WILDCARD
+      #   value: "true"
+
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+
+      # Per-hour caps per user/IP. Both endpoints start real builds, so these
+      # are the difference between a demo and someone else's free build farm.
+      - key: DEPLOY_RATE_LIMIT
+        value: "5"
+      - key: PROMPT_RATE_LIMIT
+        value: "3"
+
+  # ── Build worker ─────────────────────────────────────────────────────────
+  - type: worker
+    name: rwaft-worker
+    runtime: docker
+    # Builds are CPU- and memory-hungry; the free/starter tiers get OOM-killed
+    # part way through a real npm install.
+    plan: standard
+    dockerfilePath: ./Dockerfile.worker
+    dockerContext: .
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue # <- change to `redis` on older Render accounts
+          name: rwaft-redis
+          property: connectionString
+
+      - key: BUILD_ROOT
+        value: /tmp/rwaft-builds
+
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+
+      # At least one AI provider key is required for the /prompt flow.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+
+      # Installing and building a real React app takes minutes. The old 60s
+      # timeout killed npm mid-download, which is what corrupted node_modules.
+      - key: INSTALL_TIMEOUT_MS
+        value: "600000"
+      - key: BUILD_TIMEOUT_MS
+        value: "600000"
+      - key: JOB_TIMEOUT_MS
+        value: "900000"
+
+  # ── Redis ────────────────────────────────────────────────────────────────
+  - type: keyvalue # <- change to `redis` on older Render accounts
+    name: rwaft-redis
+    plan: starter
+    # Both services reach Redis over Render's private network.
+    ipAllowList: []
+    # Queues and log history must survive a restart; without this Render evicts
+    # keys under memory pressure and in-flight jobs disappear.
+    maxmemoryPolicy: noeviction

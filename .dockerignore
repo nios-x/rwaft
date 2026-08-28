@@ -1,11 +1,19 @@
+# Never bake dependencies or secrets into an image.
 node_modules
 */node_modules
+.env
+.env.*
+!.env.example
+
 .git
 .github
 .next
 frontend
+
+# Build scratch space and staging output are runtime-only.
 build-services/builds
 backend-services/outputs
-.env
-.env.*
 *.log
+
+README.md
+*/README.md

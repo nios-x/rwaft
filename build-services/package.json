@@ -3,25 +3,22 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "node --watch index.ts",
-    "start": "node index.ts"
+    "dev": "bun --watch index.ts",
+    "start": "bun index.ts",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@vitejs/plugin-react": "^6.1.0",
-    "typescript": "^7.0.2",
-    "vite": "^8.2.2"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "cloudinary": "^2.10.1",
     "dotenv": "^17.4.2",
     "openai": "^4.86.2",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
     "redis": "^6.2.1"
   }
 }

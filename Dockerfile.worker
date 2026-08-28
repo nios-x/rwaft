@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+#
+# rwaft build worker — build from the repository root:
+#   docker build -f Dockerfile.worker -t rwaft-worker .
+#
+# Runs the deploy and prompt queues: clone/scaffold a project, npm install,
+# npm run build, upload the output. Stateless apart from scratch space in
+# BUILD_ROOT, so it scales horizontally — every replica pulls from the same
+# Redis queues.
+
+FROM oven/bun:1-debian
+
+# The worker shells out to npm to install and build *user* projects, so it needs
+# a real Node toolchain in addition to Bun.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    ca-certificates \
+    tini \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+COPY build-services/package.json build-services/bun.lock* ./build-services/
+WORKDIR /app/build-services
+RUN bun install --frozen-lockfile
+
+WORKDIR /app
+COPY build-services ./build-services
+
+# User projects are built here rather than inside /app: node_modules trees run to
+# hundreds of megabytes and the application directory on a PaaS instance is
+# small. Declaring it a volume also keeps heavy build I/O off the image layer.
+ENV BUILD_ROOT=/tmp/rwaft-builds
+RUN mkdir -p /tmp/rwaft-builds && chown -R bun:bun /app /tmp/rwaft-builds
+USER bun
+VOLUME ["/tmp/rwaft-builds"]
+
+# Only used when the host requires an open port (e.g. a Render web service);
+# as a background worker the app leaves PORT unset and binds nothing.
+EXPOSE 3000
+
+WORKDIR /app/build-services
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["bun", "index.ts"]

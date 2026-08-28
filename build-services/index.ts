@@ -1,13 +1,31 @@
-import fs from "fs/promises"
+import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
-import { spawn } from "node:child_process"
-import { fileURLToPath } from "node:url"
-import { createRedisClient } from "./lib/config.ts"
+import http from "node:http"
+import {
+	cloudinary,
+	cloudinaryConfig,
+	createRedisClient,
+	getRawAssetUrl,
+	DEPLOY_QUEUE,
+	PROMPT_QUEUE,
+	DEPLOY_PROCESSING,
+	PROMPT_PROCESSING,
+	DEPLOYMENT_STATUS_PREFIX
+} from "./lib/config.ts"
 import { getAllFileNames } from "./lib/helper.ts"
 import { uploadFile } from "./lib/upload.ts"
 import { generateToolCalls } from "./lib/ai.ts"
 import { applyOperations, releaseJobState } from "./lib/tools.ts"
-import { cloudinary, cloudinaryConfig, getRawAssetUrl } from "./lib/config.ts"
+import {
+	runWithJobContext,
+	jobLog,
+	jobStatus,
+	flushLogs,
+	closeLogPublisher,
+	type JobKind
+} from "./lib/joblog.ts"
+import { run, installDependencies, buildProject } from "./lib/run.ts"
 
 console.log("[build-services] Cloudinary config:", {
 	cloud_name: cloudinaryConfig.cloud_name,
@@ -16,19 +34,42 @@ console.log("[build-services] Cloudinary config:", {
 	upload_preset: cloudinaryConfig.upload_preset || "NONE"
 })
 
-const directory = path.dirname(fileURLToPath(import.meta.url))
-const root = path.join(directory, "builds")
+/**
+ * Build scratch space. Defaults to the OS temp dir rather than a folder inside
+ * the deployed source tree: on Render the application directory is small, and
+ * writing multi-hundred-megabyte node_modules trees into it is what exhausts
+ * the container disk mid-build.
+ */
+const root = process.env.BUILD_ROOT || path.join(os.tmpdir(), "rwaft-builds")
 
-const DEPLOY_QUEUE = "rwaft:deploy"
-const PROMPT_QUEUE = "rwaft:prompt"
-const DEPLOYMENT_STATUS_PREFIX = "rwaft:deployment-status:"
-const UPLOAD_BATCH_SIZE = 8
-const COMMAND_TIMEOUT_MS = Number(process.env.COMMAND_TIMEOUT_MS || 60_000)
-const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 10 * 60_000) // 10 minutes
-
+const UPLOAD_BATCH_SIZE = Number(process.env.UPLOAD_BATCH_SIZE || 8)
+const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 15 * 60_000)
 const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 30_000)
 const CLOUDINARY_API_TIMEOUT_MS = Number(process.env.CLOUDINARY_API_TIMEOUT_MS || 60_000)
+const STATUS_TTL_SECONDS = Number(process.env.STATUS_TTL_SECONDS || 24 * 60 * 60)
+/** How long BLMOVE parks before looping, so shutdown stays responsive. */
+const QUEUE_BLOCK_SECONDS = Number(process.env.QUEUE_BLOCK_SECONDS || 5)
+/** Abandon a build directory older than this during periodic sweeps. */
+const STALE_BUILD_MS = Number(process.env.STALE_BUILD_MS || 60 * 60_000)
+
 type FetchResponse = { ok: boolean; status: number; arrayBuffer: () => Promise<ArrayBuffer> }
+
+interface JobPayload {
+	id: string
+	userId: string
+	url?: string
+	prompt?: string
+	deploymentUrl?: string
+	/**
+	 * Path the built site's assets will be served from ("/" for wildcard
+	 * subdomain hosting, "/<id>/" for path-based hosting). Bundlers bake
+	 * absolute asset URLs into index.html at build time, so this has to be
+	 * applied during the build, not at serve time.
+	 */
+	assetBase?: string
+}
+
+let shuttingDown = false
 
 /** Promise-based timeout race helper. */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -40,6 +81,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 		})
 	]).finally(() => clearTimeout(timer!))
 }
+
 // Disable jest-worker parallelism in CRA's Terser plugin.
 // react-scripts' bundled TerserPlugin uses jest-worker's NodeThreadsWorker,
 // which crashes ("Unexpected response from worker: undefined") on Node
@@ -52,82 +94,11 @@ const disableCraParallelMinification = async (projectDir: string) => {
 		const patched = config.replace(/parallel:\s*true/g, "parallel: false")
 		if (patched !== config) {
 			await fs.writeFile(webpackConfigPath, patched, "utf-8")
-			console.log("  [build] Disabled parallel Terser minification (jest-worker workaround)")
+			jobLog("Disabled parallel Terser minification (jest-worker workaround)")
 		}
 	} catch (error) {
-		console.warn("  [build] Could not patch react-scripts webpack config:", (error as Error).message)
+		jobLog(`Could not patch react-scripts webpack config: ${(error as Error).message}`, "warn")
 	}
-}
-// ── Shell runner ────────────────────────────────────────────────────────────
-
-const run = (command: string, cwd: string, env?: Record<string, string>) => new Promise<void>((resolve, reject) => {
-	const child = spawn(command, { cwd, shell: true, stdio: "inherit", env: { ...process.env, ...env } })
-	let settled = false
-	const timer = setTimeout(() => {
-		if (settled) return
-		settled = true
-		child.kill()
-		reject(new Error(`${command} timed out after ${COMMAND_TIMEOUT_MS}ms`))
-	}, COMMAND_TIMEOUT_MS)
-	child.on("error", (error) => {
-		if (settled) return
-		settled = true
-		clearTimeout(timer)
-		reject(error)
-	})
-	child.on("exit", (code) => {
-		if (settled) return
-		settled = true
-		clearTimeout(timer)
-		code === 0 ? resolve() : reject(new Error(`${command} failed with exit code ${code}`))
-	})
-})
-
-const runWithOutput = (command: string, cwd: string) => new Promise<void>((resolve, reject) => {
-	let output = ""
-	const child = spawn(command, { cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] })
-	let settled = false
-	const collect = (chunk: Buffer) => {
-		const text = chunk.toString()
-		output += text
-		process.stdout.write(text)
-	}
-	const timer = setTimeout(() => {
-		if (settled) return
-		child.kill()
-		reject(new Error(`${command} timed out after ${COMMAND_TIMEOUT_MS}ms\n\n${output.slice(-12_000)}`))
-	}, COMMAND_TIMEOUT_MS)
-
-	child.stdout.on("data", collect)
-	child.stderr.on("data", collect)
-	child.on("error", (error) => {
-		if (settled) return
-		settled = true
-		clearTimeout(timer)
-		reject(error)
-	})
-	child.on("exit", (code) => {
-		if (settled) return
-		settled = true
-		clearTimeout(timer)
-		if (code === 0) {
-			resolve()
-			return
-		}
-		reject(new Error(`${command} failed\n\n${output.slice(-12_000)}`))
-	})
-})
-
-// ── File detection helpers ──────────────────────────────────────────────────
-
-const hasFile = async (dir: string, names: string[]): Promise<boolean> => {
-	for (const name of names) {
-		try {
-			await fs.access(path.join(dir, name))
-			return true
-		} catch { /* not found, try next */ }
-	}
-	return false
 }
 
 // ── Cloudinary helpers ──────────────────────────────────────────────────────
@@ -194,6 +165,7 @@ const findBuildOutput = async (projectDir: string): Promise<string> => {
 const uploadBuildOutput = async (id: string, projectDir: string) => {
 	const outputPath = await findBuildOutput(projectDir)
 	const fileNames = await getAllFileNames(outputPath)
+	jobLog(`Uploading ${fileNames.length} build artifacts...`)
 
 	for (let i = 0; i < fileNames.length; i += UPLOAD_BATCH_SIZE) {
 		const batch = fileNames.slice(i, i + UPLOAD_BATCH_SIZE)
@@ -205,6 +177,7 @@ const uploadBuildOutput = async (id: string, projectDir: string) => {
 			)
 		))
 	}
+	jobLog(`Uploaded ${fileNames.length} artifacts`, "success")
 }
 
 const cleanup = async (id: string, projectDir: string) => {
@@ -212,91 +185,89 @@ const cleanup = async (id: string, projectDir: string) => {
 	await fs.rm(projectDir, { recursive: true, force: true })
 }
 
-// ── Worker: rwaft:deploy (git clone → build → upload) ───────────────────────
+// ── Deploy flow: Cloudinary source -> build -> upload ───────────────────────
 
-const buildFromCloudinary = async (id: string) => {
+const buildFromCloudinary = async (id: string, assetBase: string) => {
 	const projectDir = path.join(root, id)
 	await fs.rm(projectDir, { recursive: true, force: true })
 	await fs.mkdir(projectDir, { recursive: true })
 
-	// Download source files from Cloudinary
+	jobLog("Fetching repository files...")
 	const files = await fetchCloudinaryFiles(`rwaft/${id}`)
+	if (files.length === 0) {
+		throw new Error("No source files were staged for this deployment")
+	}
 	const batchSize = 8
 	for (let i = 0; i < files.length; i += batchSize) {
 		const batch = files.slice(i, i + batchSize)
 		await Promise.all(batch.map((file) => downloadFile(file, projectDir, id)))
 	}
+	jobLog(`Fetched ${files.length} source files`, "success")
 
-	await run("npm install --legacy-peer-deps", projectDir)
+	await installDependencies(projectDir, "--legacy-peer-deps")
 
-	const pkg = JSON.parse(await fs.readFile(path.join(projectDir, "package.json"), "utf-8"))
-	const allDeps = { ...pkg.dependencies, ...pkg.devDependencies }
-	const isCRA = !!allDeps["react-scripts"]
-
-	if (isCRA) {
-		await disableCraParallelMinification(projectDir)
+	let pkg: any = {}
+	try {
+		pkg = JSON.parse(await fs.readFile(path.join(projectDir, "package.json"), "utf-8"))
+	} catch {
+		throw new Error("Repository has no readable package.json at its root")
+	}
+	if (!pkg.scripts?.build) {
+		throw new Error('Repository package.json has no "build" script')
 	}
 
-	// CRA builds: disable ESLint plugin (known jest/globals bug), disable sourcemap generation to prevent jest-worker crashes on Node 20+, and
-	// set CI=false so warnings don't fail the build
-	const buildEnv: Record<string, string> | undefined = isCRA
-		? { DISABLE_ESLINT_PLUGIN: "true", CI: "false", GENERATE_SOURCEMAP: "false" }
-		: undefined
-	await run("npm run build", projectDir, buildEnv)
+	const allDeps = { ...pkg.dependencies, ...pkg.devDependencies }
+	const isCRA = !!allDeps["react-scripts"]
+	const isVite = !!allDeps["vite"]
+	if (isCRA) await disableCraParallelMinification(projectDir)
 
+	// Apply the deployment's asset base. Without this, a site hosted under
+	// /<id>/ requests its bundles from /assets/... and renders a blank page.
+	let buildEnv: Record<string, string> | undefined
+	let buildArgs = ""
+	if (isCRA) {
+		// CRA: disable the ESLint plugin (known jest/globals bug), skip sourcemaps
+		// (jest-worker crashes on modern Node), and stop warnings failing the build.
+		buildEnv = {
+			DISABLE_ESLINT_PLUGIN: "true",
+			CI: "false",
+			GENERATE_SOURCEMAP: "false",
+			// CRA expects no trailing slash.
+			PUBLIC_URL: assetBase.replace(/\/+$/, "") || "/"
+		}
+	} else if (isVite) {
+		buildArgs = `--base=${assetBase}`
+	} else if (assetBase !== "/") {
+		jobLog(
+			"This project uses a bundler other than Vite or CRA, so the asset base path could not be set automatically. " +
+			"If the deployed page loads blank, configure the bundler to emit relative asset URLs.",
+			"warn"
+		)
+	}
+
+	await buildProject(projectDir, buildEnv, buildArgs)
 	return projectDir
 }
 
-const deployWorker = async () => {
-	const redis = createRedisClient()
-	await redis.connect()
-	console.log(`[deploy] Listening on ${DEPLOY_QUEUE}`)
+// ── Prompt flow: scaffold -> AI -> build -> upload ──────────────────────────
 
-	while (true) {
-		const item = await redis.blPop(DEPLOY_QUEUE, 0)
-		if (!item) continue
-
-		const id = item.element
-		console.log(`[deploy] Building ${id}`)
-
-		const projectDir = path.join(root, id)
-		try {
-			await withTimeout((async () => {
-				await buildFromCloudinary(id)
-				console.log(`[deploy] Built ${id}`)
-
-				await uploadBuildOutput(id, projectDir)
-				console.log(`[deploy] Uploaded ${id}`)
-				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: 3600 })
-
-				await cleanup(id, projectDir)
-				console.log(`[deploy] ✓ Deployed ${id}`)
-			})(), JOB_TIMEOUT_MS, `deploy job ${id}`)
-		} catch (error) {
-			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: 3600 }).catch(() => { })
-			console.error(`[deploy] Failed for ${id}:`, error)
-			await fs.rm(projectDir, { recursive: true, force: true }).catch(() => { })
-		} finally {
-			releaseJobState(projectDir)
-		}
-	}
-}
-
-// ── Worker: rwaft:prompt (AI → scaffold → build → upload) ───────────────────
-
-const TEMPLATE_REPO = "https://github.com/nios-x/vite-template"
+const TEMPLATE_REPO = process.env.TEMPLATE_REPO || "https://github.com/nios-x/vite-template"
 
 const scaffoldViteProject = async (projectDir: string) => {
 	await fs.rm(projectDir, { recursive: true, force: true })
-	await run(`git clone ${TEMPLATE_REPO} ${projectDir}`, root)
+	await fs.mkdir(root, { recursive: true })
+	jobLog("Scaffolding a fresh Vite + React + TypeScript project...")
+	await run(`git clone --depth 1 ${TEMPLATE_REPO} ${JSON.stringify(projectDir)}`, {
+		cwd: root,
+		timeoutMs: 120_000
+	})
+	await fs.rm(path.join(projectDir, ".git"), { recursive: true, force: true })
 
-	// ── Convert vanilla TS template → React + TS ────────────────────────
-	// 1. Remove vanilla starter files that conflict with React
+	// ── Convert vanilla TS template -> React + TS ───────────────────────
 	for (const file of ["src/main.ts", "src/counter.ts", "src/style.css"]) {
 		await fs.rm(path.join(projectDir, file), { force: true })
 	}
 
-	// 2. Add React dependencies to package.json
 	const pkgPath = path.join(projectDir, "package.json")
 	const pkg = JSON.parse(await fs.readFile(pkgPath, "utf-8"))
 	pkg.dependencies = {
@@ -312,7 +283,6 @@ const scaffoldViteProject = async (projectDir: string) => {
 	}
 	await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2), "utf-8")
 
-	// 3. Create React entry point
 	await fs.writeFile(path.join(projectDir, "src/main.tsx"), [
 		'import { StrictMode } from "react"',
 		'import { createRoot } from "react-dom/client"',
@@ -327,7 +297,6 @@ const scaffoldViteProject = async (projectDir: string) => {
 		''
 	].join("\n"), "utf-8")
 
-	// 4. Create App stub for the AI to replace
 	await fs.writeFile(path.join(projectDir, "src/App.tsx"), [
 		'export default function App() {',
 		'\treturn <div id="app-root">Hello</div>',
@@ -335,14 +304,12 @@ const scaffoldViteProject = async (projectDir: string) => {
 		''
 	].join("\n"), "utf-8")
 
-	// 5. Create minimal CSS reset
 	await fs.writeFile(path.join(projectDir, "src/index.css"), [
 		'*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }',
 		'body { font-family: system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }',
 		''
 	].join("\n"), "utf-8")
 
-	// 6. Rewrite index.html to use React entry
 	await fs.writeFile(path.join(projectDir, "index.html"), [
 		'<!doctype html>',
 		'<html lang="en">',
@@ -359,7 +326,6 @@ const scaffoldViteProject = async (projectDir: string) => {
 		''
 	].join("\n"), "utf-8")
 
-	// 7. Create vite.config.ts with React plugin
 	await fs.writeFile(path.join(projectDir, "vite.config.ts"), [
 		'import { defineConfig } from "vite"',
 		'import react from "@vitejs/plugin-react"',
@@ -370,13 +336,12 @@ const scaffoldViteProject = async (projectDir: string) => {
 		''
 	].join("\n"), "utf-8")
 
-	// Remove any conflicting vite.config.js from the template
 	await fs.rm(path.join(projectDir, "vite.config.js"), { force: true })
 
-	await run("npm install --legacy-peer-deps", projectDir)
+	await installDependencies(projectDir, "--legacy-peer-deps")
 }
 
-const MAX_BUILD_REPAIRS = 6
+const MAX_BUILD_REPAIRS = Number(process.env.MAX_BUILD_REPAIRS || 6)
 
 const describeBuildFailure = (failure: string) => {
 	const guidance: string[] = []
@@ -429,8 +394,7 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 	try {
 		await fs.access(viteConfigTs)
 		await fs.rm(viteConfigJs, { force: true })
-	} catch {
-	}
+	} catch { /* no TS config; leave whatever exists */ }
 
 	const indexPath = path.join(projectDir, "index.html")
 	let indexHtml = await fs.readFile(indexPath, "utf-8")
@@ -440,18 +404,16 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 	try {
 		await fs.access(appPath)
 		hasAppComponent = true
-	} catch {
-	}
+	} catch { /* no App.tsx yet */ }
 
 	// ── Auto-generate App.tsx from orphan components ────────────────────
-	// Trigger if App.tsx is missing OR still contains the unmodified stub
 	let appIsStub = false
 	if (hasAppComponent) {
 		const stubCheck = await fs.readFile(appPath, "utf-8")
 		appIsStub = /^\s*export\s+default\s+function\s+App\s*\(\s*\)\s*\{[\s\S]*?app-root[\s\S]*?Hello[\s\S]*?\}\s*$/m.test(stubCheck)
 			|| (stubCheck.trim().length < 150 && /app-root|>\s*Hello\s*</.test(stubCheck))
 		if (appIsStub) {
-			console.log(`  [normalize] App.tsx still contains stub content — will auto-generate`)
+			jobLog("App.tsx still contains stub content - auto-generating from components")
 		}
 	}
 	if (!hasAppComponent || appIsStub) {
@@ -462,16 +424,14 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 			componentFiles = entries
 				.filter(e => !e.isDirectory() && /\.(tsx|jsx)$/.test(e.name))
 				.map(e => e.name)
-		} catch {
-		}
+		} catch { /* no components directory */ }
 
 		if (componentFiles.length > 0) {
-			console.log(`  [normalize] No App.tsx found but ${componentFiles.length} component(s) exist — auto-generating App.tsx`)
+			jobLog(`Auto-generating App.tsx from ${componentFiles.length} component(s)`)
 			const imports: string[] = []
 			const renders: string[] = []
 			for (const file of componentFiles) {
 				const componentName = file.replace(/\.(tsx|jsx)$/, "")
-				// Read the file to find the actual exported component name
 				const source = await fs.readFile(path.join(componentsDir, file), "utf-8")
 				const defaultExportMatch = source.match(/export\s+default\s+(?:function|class)\s+(\w+)/)
 				const namedExportMatch = source.match(/export\s+(?:function|class)\s+(\w+)/)
@@ -486,7 +446,7 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 				renders.push(`\t\t\t<${exportName} />`)
 			}
 
-			const appSource = [
+			await fs.writeFile(appPath, [
 				...imports,
 				'',
 				'export default function App() {',
@@ -497,9 +457,7 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 				'\t)',
 				'}',
 				''
-			].join("\n")
-
-			await fs.writeFile(appPath, appSource, "utf-8")
+			].join("\n"), "utf-8")
 			hasAppComponent = true
 		}
 	}
@@ -515,15 +473,10 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 			await fs.rm(path.join(projectDir, alternateEntry), { force: true })
 		}
 	}
+
 	const entryCandidates = [
-		"src/main.tsx",
-		"src/main.ts",
-		"src/index.tsx",
-		"src/index.ts",
-		"src/main.jsx",
-		"src/main.js",
-		"src/index.jsx",
-		"src/index.js"
+		"src/main.tsx", "src/main.ts", "src/index.tsx", "src/index.ts",
+		"src/main.jsx", "src/main.js", "src/index.jsx", "src/index.js"
 	]
 
 	let entryPath: string | undefined
@@ -532,18 +485,16 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 			await fs.access(path.join(projectDir, candidate))
 			entryPath = candidate
 			break
-		} catch {
-		}
+		} catch { /* try next */ }
 	}
 
 	if (!entryPath) {
 		throw new Error("Generated project has no supported entry file in src/")
 	}
 
-	// ── Safety check: reject vanilla template content ───────────────────
 	const entrySource = await fs.readFile(path.join(projectDir, entryPath), "utf-8")
 	if (/setupCounter|Get started|counter\.ts/.test(entrySource)) {
-		throw new Error("Entry file still contains vanilla Vite template content — AI failed to replace it")
+		throw new Error("Entry file still contains vanilla Vite template content - AI failed to replace it")
 	}
 
 	const mountMatch = entrySource.match(/querySelector(?:<[^>]*>)?\s*\(\s*["']#([^"']+)["']\s*\)|getElementById(?:<[^>]*>)?\s*\(\s*["']([^"']+)["']\s*\)/)
@@ -567,7 +518,8 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 const installAndBuildPromptProject = async (
 	projectDir: string,
 	prompt: string,
-	initialOperations: Awaited<ReturnType<typeof generateToolCalls>>
+	initialOperations: Awaited<ReturnType<typeof generateToolCalls>>,
+	assetBase: string
 ) => {
 	for (let attempt = 0; attempt <= MAX_BUILD_REPAIRS; attempt++) {
 		try {
@@ -575,19 +527,20 @@ const installAndBuildPromptProject = async (
 				await applyOperations(projectDir, initialOperations)
 			}
 			await normalizeGeneratedProject(projectDir)
-			await runWithOutput("npm install", projectDir)
-			await runWithOutput("npm run build", projectDir)
+			await installDependencies(projectDir)
+			// The scaffold is always Vite, so --base is always the right lever.
+			await buildProject(projectDir, undefined, `--base=${assetBase}`)
 
-			// ── Post-build validation: reject boilerplate output ──────
+			// ── Post-build validation: reject boilerplate output ─────────
 			const distIndex = path.join(projectDir, "dist", "index.html")
 			try {
 				const distHtml = await fs.readFile(distIndex, "utf-8")
 				if (/Get started|setupCounter|counter\.ts|Edit <code>src\/main/.test(distHtml)) {
-					throw new Error("Build output contains default Vite template content — AI failed to generate the requested application")
+					throw new Error("Build output contains default Vite template content - AI failed to generate the requested application")
 				}
 			} catch (e) {
 				if ((e as Error).message.includes("Vite template")) throw e
-				// dist/index.html not found is already a build failure
+				// A missing dist/index.html already surfaced as a build failure.
 			}
 
 			return
@@ -595,7 +548,7 @@ const installAndBuildPromptProject = async (
 			if (attempt === MAX_BUILD_REPAIRS) throw error
 
 			const failure = error instanceof Error ? error.message : String(error)
-			console.warn(`[prompt] Project step failed, asking AI for repair (${attempt + 1}/${MAX_BUILD_REPAIRS})`)
+			jobLog(`Build step failed - asking the AI to repair (${attempt + 1}/${MAX_BUILD_REPAIRS})`, "warn")
 			const failureGuidance = describeBuildFailure(failure)
 			const repairPrompt = `A project step failed. Fix the project using the file tools.
 
@@ -609,117 +562,229 @@ ${failureGuidance}
 
 Inspect the relevant files first and make all required changes in one repair pass. Fix every error shown above so both npm install and npm run build succeed. For React JSX files, tsconfig.json must set compilerOptions.jsx to react-jsx and allowImportingTsExtensions to true. Do not leave starter imports to missing assets; replace starter entry code or use only files that exist. Before finishing, use find_file on each changed shared type and entry file to verify imports and exports agree.`
 			const repairOperations = await generateToolCalls(repairPrompt, projectDir)
-			// Fix 5: Don't abort when repair returns zero operations — just retry
 			if (repairOperations.length === 0) {
-				console.warn(`[prompt] AI returned no repair operations (attempt ${attempt + 1}/${MAX_BUILD_REPAIRS}), retrying…`)
+				jobLog(`AI returned no repair operations (attempt ${attempt + 1}/${MAX_BUILD_REPAIRS}), retrying...`, "warn")
 				continue
 			}
-			console.log(`[prompt] Applying ${repairOperations.length} repair operations`)
-			// Fix 6: Repair application failures are non-fatal — continue to next attempt
+			jobLog(`Applying ${repairOperations.length} repair operations`)
 			try {
 				await applyOperations(projectDir, repairOperations)
 			} catch (repairError) {
 				const message = repairError instanceof Error ? repairError.message : String(repairError)
-				console.warn(`[prompt] Repair application partially failed; will re-attempt build: ${message}`)
+				jobLog(`Repair application partially failed; re-attempting build: ${message}`, "warn")
 			}
 		}
 	}
 }
 
-const promptWorker = async () => {
+// ── Reliable queue plumbing ─────────────────────────────────────────────────
+
+type RedisLike = ReturnType<typeof createRedisClient>
+
+/**
+ * BLMOVE via sendCommand: atomically pops from the pending queue and records the
+ * job on a processing list. If the worker dies mid-build the entry survives
+ * there and is recovered at next boot, instead of vanishing with the process.
+ *
+ * sendCommand is used rather than the typed helper because its argument shape
+ * has drifted across node-redis majors; the raw command has not.
+ */
+async function claimJob(redis: RedisLike, queue: string, processing: string): Promise<string | null> {
+	const reply = await redis.sendCommand([
+		"BLMOVE", queue, processing, "LEFT", "RIGHT", String(QUEUE_BLOCK_SECONDS)
+	])
+	if (reply === null || reply === undefined) return null
+	return typeof reply === "string" ? reply : String(reply)
+}
+
+/** Requeues anything abandoned by a previously crashed worker. */
+async function recoverOrphanedJobs(redis: RedisLike, queue: string, processing: string, label: string) {
+	const orphans = await redis.lRange(processing, 0, -1)
+	if (orphans.length === 0) return
+	console.log(`[${label}] Recovering ${orphans.length} interrupted job(s) from a previous run`)
+	for (const raw of orphans) {
+		await redis.lPush(queue, raw)
+		await redis.lRem(processing, 1, raw)
+	}
+}
+
+/** Deletes build directories left behind by crashes. */
+async function sweepStaleBuilds() {
+	let entries
+	try {
+		entries = await fs.readdir(root, { withFileTypes: true })
+	} catch { return }
+	const now = Date.now()
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue
+		const target = path.join(root, entry.name)
+		try {
+			const stat = await fs.stat(target)
+			if (now - stat.mtimeMs > STALE_BUILD_MS) {
+				await fs.rm(target, { recursive: true, force: true })
+				console.log(`[sweep] Removed stale build directory ${entry.name}`)
+			}
+		} catch { /* raced with a running job; ignore */ }
+	}
+}
+
+function parsePayload(raw: string, label: string): JobPayload | null {
+	try {
+		const parsed = JSON.parse(raw)
+		if (!parsed?.id || typeof parsed.id !== "string") throw new Error("missing id")
+		return {
+			id: parsed.id,
+			// Anonymous submissions still get a channel, keyed by the job itself.
+			userId: typeof parsed.userId === "string" && parsed.userId ? parsed.userId : `anon-${parsed.id}`,
+			url: parsed.url,
+			prompt: parsed.prompt,
+			deploymentUrl: parsed.deploymentUrl,
+			assetBase: typeof parsed.assetBase === "string" ? parsed.assetBase : `/${parsed.id}/`
+		}
+	} catch (error) {
+		console.error(`[${label}] Discarding malformed payload: ${(error as Error).message}`)
+		return null
+	}
+}
+
+/**
+ * Shared job pump: claim -> run inside a per-user log context -> ack.
+ * `handler` throws to mark the job failed.
+ */
+async function pump(
+	label: string,
+	kind: JobKind,
+	queue: string,
+	processing: string,
+	handler: (payload: JobPayload) => Promise<void>
+) {
 	const redis = createRedisClient()
 	await redis.connect()
-	console.log(`[prompt] Listening on ${PROMPT_QUEUE}`)
+	await recoverOrphanedJobs(redis, queue, processing, label)
+	console.log(`[${label}] Listening on ${queue}`)
 
-	while (true) {
-		const item = await redis.blPop(PROMPT_QUEUE, 0)
-		if (!item) continue
-
-		let id: string
-		let prompt: string
-
+	while (!shuttingDown) {
+		let raw: string | null = null
 		try {
-			const payload = JSON.parse(item.element)
-			id = payload.id
-			prompt = payload.prompt
-		} catch {
-			console.error("[prompt] Invalid JSON payload, skipping")
+			raw = await claimJob(redis, queue, processing)
+		} catch (error) {
+			if (shuttingDown) break
+			console.error(`[${label}] Queue read failed, backing off:`, (error as Error).message)
+			await new Promise(r => setTimeout(r, 2_000))
+			continue
+		}
+		if (!raw) continue
+
+		const payload = parsePayload(raw, label)
+		if (!payload) {
+			await redis.lRem(processing, 1, raw).catch(() => { })
 			continue
 		}
 
-		console.log(`[prompt] Processing ${id}`)
+		const { id, userId } = payload
 		const projectDir = path.join(root, id)
 
-		// Fix 7: Per-job timeout — no single job blocks the worker forever
-		const jobController = new AbortController()
-		const jobTimer = setTimeout(() => jobController.abort(), JOB_TIMEOUT_MS)
+		await runWithJobContext({ jobId: id, userId, kind }, async () => {
+			try {
+				jobStatus("building")
+				jobLog(`Starting ${kind} job ${id}`)
+				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "building", { EX: STATUS_TTL_SECONDS })
 
-		try {
-			const jobPromise = (async () => {
-				// 1. Scaffold a fresh Vite + React + TS project
-				console.log(`[prompt] Scaffolding Vite project`)
-				await scaffoldViteProject(projectDir)
+				await withTimeout(handler(payload), JOB_TIMEOUT_MS, `${kind} job ${id}`)
 
-				// 2. Call AI to get file operations
-				console.log(`[prompt] Generating tool calls from AI`)
-				const operations = await generateToolCalls(prompt, projectDir)
-				console.log(`[prompt] Received ${operations.length} operations`)
-
-				// 3. Install dependencies and build, repairing failures through the AI
-				console.log(`[prompt] Applying file operations`)
-				console.log(`[prompt] Installing dependencies`)
-				console.log(`[prompt] Building project`)
-				await installAndBuildPromptProject(projectDir, prompt, operations)
-
-				// 4. Upload build output to Cloudinary
-				console.log(`[prompt] Uploading to Cloudinary`)
-				await uploadBuildOutput(id, projectDir)
-
-				// 5. Mark ready & cleanup
-				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: 3600 })
-				await fs.rm(projectDir, { recursive: true, force: true })
-				console.log(`[prompt] ✓ Deployed ${id}`)
-			})()
-
-			// Race the job against the timeout
-			await Promise.race([
-				jobPromise,
-				new Promise<never>((_, reject) => {
-					jobController.signal.addEventListener("abort", () =>
-						reject(new Error(`Job ${id} timed out after ${JOB_TIMEOUT_MS / 1000}s`))
-					)
-				})
-			])
-		} catch (error) {
-			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: 3600 }).catch(() => { })
-			console.error(`[prompt] Failed for ${id}:`, error)
-			await fs.rm(projectDir, { recursive: true, force: true }).catch(() => { })
-		} finally {
-			releaseJobState(projectDir)
-			clearTimeout(jobTimer)
-		}
+				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: STATUS_TTL_SECONDS })
+				jobLog(`Deployment ${id} is live`, "success")
+				jobStatus("ready", { url: payload.deploymentUrl })
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error)
+				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: STATUS_TTL_SECONDS }).catch(() => { })
+				jobLog(`Deployment ${id} failed: ${message}`, "error")
+				jobStatus("failed", { error: message })
+			} finally {
+				releaseJobState(projectDir)
+				await fs.rm(projectDir, { recursive: true, force: true }).catch(() => { })
+				// Ack last: until this runs, a crash leaves the job recoverable.
+				await redis.lRem(processing, 1, raw!).catch(() => { })
+				await flushLogs()
+			}
+		})
 	}
+
+	await redis.quit().catch(() => { })
+}
+
+const deployWorker = () => pump("deploy", "deploy", DEPLOY_QUEUE, DEPLOY_PROCESSING, async (payload) => {
+	const projectDir = path.join(root, payload.id)
+	await buildFromCloudinary(payload.id, payload.assetBase || `/${payload.id}/`)
+	await uploadBuildOutput(payload.id, projectDir)
+	await cleanup(payload.id, projectDir)
+})
+
+const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESSING, async (payload) => {
+	if (!payload.prompt) throw new Error("Prompt job carried no prompt text")
+	const projectDir = path.join(root, payload.id)
+
+	await scaffoldViteProject(projectDir)
+
+	jobLog("Asking the AI to write your application...")
+	const operations = await generateToolCalls(payload.prompt, projectDir)
+	jobLog(`AI produced ${operations.length} file operations`)
+
+	await installAndBuildPromptProject(
+		projectDir,
+		payload.prompt,
+		operations,
+		payload.assetBase || `/${payload.id}/`
+	)
+	await uploadBuildOutput(payload.id, projectDir)
+})
+
+// ── Health probe ────────────────────────────────────────────────────────────
+
+/**
+ * A tiny HTTP listener so the worker can also run on hosts that require an open
+ * port (Render web services). Skipped entirely when PORT is unset, which is the
+ * normal case for a background worker.
+ */
+function startHealthServer() {
+	const port = Number(process.env.PORT || 0)
+	if (!port) return undefined
+	const server = http.createServer((req, res) => {
+		if (req.url === "/health" || req.url === "/healthz") {
+			res.writeHead(200, { "Content-Type": "application/json" })
+			res.end(JSON.stringify({ status: shuttingDown ? "draining" : "healthy", service: "worker" }))
+			return
+		}
+		res.writeHead(404).end()
+	})
+	server.listen(port, "0.0.0.0", () => console.log(`[worker] Health probe on port ${port}`))
+	return server
 }
 
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 
-// Prevent stray errors (like Redis ECONNRESET) from crashing the process
 process.on("uncaughtException", (error) => {
-	console.error("[process] Uncaught exception:", error.message)
+	console.error("[process] Uncaught exception:", error)
 })
 process.on("unhandledRejection", (reason) => {
 	console.error("[process] Unhandled rejection:", reason)
 })
 
 await fs.mkdir(root, { recursive: true })
+await sweepStaleBuilds()
+const sweepTimer = setInterval(() => { sweepStaleBuilds().catch(() => { }) }, STALE_BUILD_MS)
+const healthServer = startHealthServer()
 
 /** Auto-restart a worker with exponential backoff (max 30s). */
 async function runWorkerForever(name: string, worker: () => Promise<void>) {
 	let failures = 0
-	while (true) {
+	while (!shuttingDown) {
 		try {
 			await worker()
+			if (shuttingDown) break
+			failures = 0
 		} catch (error) {
+			if (shuttingDown) break
 			failures++
 			const delay = Math.min(failures * 2_000, 30_000)
 			console.error(`[${name}] Worker crashed (attempt ${failures}), restarting in ${delay}ms:`, error)
@@ -727,6 +792,25 @@ async function runWorkerForever(name: string, worker: () => Promise<void>) {
 		}
 	}
 }
+
+let shutdownStarted = false
+const shutdown = async (signal: string) => {
+	if (shutdownStarted) return
+	shutdownStarted = true
+	shuttingDown = true
+	console.log(`[worker] ${signal} received - finishing current job, then exiting`)
+	clearInterval(sweepTimer)
+	healthServer?.close()
+	// Give the in-flight job a bounded window to finish and flush its logs.
+	setTimeout(() => {
+		console.warn("[worker] Shutdown grace period elapsed, forcing exit")
+		process.exit(0)
+	}, Number(process.env.SHUTDOWN_GRACE_MS || 25_000)).unref()
+	await closeLogPublisher().catch(() => { })
+}
+
+process.on("SIGTERM", () => { void shutdown("SIGTERM") })
+process.on("SIGINT", () => { void shutdown("SIGINT") })
 
 await Promise.all([
 	runWorkerForever("deploy", deployWorker),

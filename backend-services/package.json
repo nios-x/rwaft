@@ -3,17 +3,21 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
+    "dev": "bun --watch index.ts",
+    "start": "bun index.ts",
+    "typecheck": "tsc --noEmit",
     "test:prompt": "node test-prompt.mjs"
   },
   "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+    "@types/bun": "latest",
+    "@types/express": "^5.0.6",
+    "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@types/express": "^5.0.6",
     "cloudinary": "^2.10.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
