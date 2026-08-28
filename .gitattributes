@@ -1,0 +1,6 @@
+# Shell scripts run inside Linux containers. A CRLF checkout on Windows would
+# break the shebang ("/bin/bash^M: bad interpreter"), so pin them to LF.
+*.sh text eol=lf
+Dockerfile* text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
