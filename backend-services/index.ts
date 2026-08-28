@@ -405,16 +405,26 @@ app.get("/{*splat}", async (req, res) => {
 	const parts: string[] = (Array.isArray(splat) ? splat : [splat])
 		.filter((part): part is string => typeof part === "string" && part.length > 0)
 
-	// Subdomain routing only applies when wildcard hosting is actually enabled.
-	const hostnameId = req.hostname.split(".")[0] || ""
-	const deploymentId = USE_WILDCARD_SUBDOMAINS && isDeploymentId(hostnameId)
-		? hostnameId
-		: parts.shift()
+	// Subdomain routing only applies when wildcard hosting is enabled AND the
+	// request actually arrived on the wildcard domain. The API is reachable on
+	// its own hostname too, where the id still comes from the path.
+	const hostname = req.hostname.toLowerCase()
+	const onDeploymentDomain =
+		USE_WILDCARD_SUBDOMAINS && hostname.endsWith(`.${DEPLOYMENT_DOMAIN.toLowerCase()}`)
+	const label = hostname.split(".")[0] || ""
+	const hostnameId = onDeploymentDomain && isDeploymentId(label) ? label : ""
+	const deploymentId = hostnameId || parts.shift()
 
 	if (!deploymentId || !isDeploymentId(deploymentId)) {
 		res.status(404).json({ status: "Deployment not found" })
 		return
 	}
+
+	// Deployments built before wildcard hosting was switched on have `/<id>/`
+	// baked into their asset URLs, so on a subdomain they request
+	// `<id>.domain/<id>/assets/*`. Dropping the redundant prefix keeps those
+	// older builds serving instead of 404ing every asset.
+	if (hostnameId && parts[0] === hostnameId) parts.shift()
 
 	let deploymentStatus: string | null = null
 	try {

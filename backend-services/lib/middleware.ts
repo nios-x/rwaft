@@ -42,10 +42,24 @@ export function isOriginAllowed(origin: string | undefined): boolean {
 
 export const corsmiddlewares = (req: Request, res: Response, next: NextFunction) => {
 	const origin = req.headers.origin
+	const allowed = isOriginAllowed(origin)
 
-	if (origin && isOriginAllowed(origin)) {
+	if (origin && !allowed) {
+		// Without this the rejection is invisible: the browser only reports a
+		// missing Access-Control-Allow-Origin header, never which origin the
+		// server refused or what it would have accepted. Logged for preflight
+		// too, which is where the failure usually shows up first.
+		console.warn(
+			`[cors] rejected origin ${origin}; FRONTEND_ORIGIN allows ${allowedOrigins.join(", ") || "(nothing)"}`
+		)
+	}
+
+	// Vary belongs on every response, not just allowed ones: a cache holding
+	// the 403 must not replay it for an origin that is allowed.
+	res.setHeader("Vary", "Origin")
+
+	if (origin && allowed) {
 		res.setHeader("Access-Control-Allow-Origin", origin)
-		res.setHeader("Vary", "Origin")
 	}
 
 	res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
@@ -59,7 +73,7 @@ export const corsmiddlewares = (req: Request, res: Response, next: NextFunction)
 		return
 	}
 
-	if (origin && !isOriginAllowed(origin)) {
+	if (origin && !allowed) {
 		res.status(403).json({ status: "failed", message: "Origin not allowed" })
 		return
 	}

@@ -29,23 +29,24 @@ services:
           name: rwaft-redis
           property: connectionString
 
-      # Public origin of THIS service. Used to build deployment URLs, so it must
-      # be the externally reachable URL, not the internal one.
+      # Public origin of THIS service -- the API hostname the frontend talks to.
       - key: PUBLIC_BASE_URL
-        sync: false
-      # Comma-separated exact origins allowed to call this API from a browser,
-      # e.g. https://rwaft.vercel.app. There is no wildcard default in production.
+        value: https://rwaft.onrender.com
+      # Comma-separated exact origins allowed to call this API from a browser.
+      # There is no wildcard default in production: unset means every browser
+      # request is refused with 403 and no Access-Control-Allow-Origin header.
       - key: FRONTEND_ORIGIN
-        sync: false
+        value: https://rwaft.vercel.app
 
-      # Deployment URLs default to <PUBLIC_BASE_URL>/<id>/, which works on a
-      # plain *.onrender.com hostname. Only set these two once you have a custom
-      # domain with a wildcard DNS record AND a wildcard TLS certificate —
-      # *.onrender.com provides neither.
-      # - key: DEPLOYMENT_DOMAIN
-      #   value: rwaft.example.com
-      # - key: DEPLOYMENT_WILDCARD
-      #   value: "true"
+      # User-facing deployments are served from <id>.soumyajaiswal.me. That
+      # needs a wildcard DNS record for *.soumyajaiswal.me pointing at this
+      # service AND *.soumyajaiswal.me added as a custom domain here, so Render
+      # issues the wildcard certificate. The API itself stays on
+      # rwaft.onrender.com.
+      - key: DEPLOYMENT_DOMAIN
+        value: soumyajaiswal.me
+      - key: DEPLOYMENT_WILDCARD
+        value: "true"
 
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
