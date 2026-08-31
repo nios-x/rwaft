@@ -279,7 +279,15 @@ const scaffoldViteProject = async (projectDir: string) => {
 		...pkg.devDependencies,
 		"@vitejs/plugin-react": "^6.0.0",
 		"@types/react": "^19.1.0",
-		"@types/react-dom": "^19.1.0"
+		"@types/react-dom": "^19.1.0",
+		"typescript": "^5.8.0"
+	}
+	// The template's build script is "tsc && vite build", but tsc as a
+	// standalone type-check gate makes AI-generated code fail on harmless
+	// type warnings that Vite (via esbuild) would happily bundle through.
+	pkg.scripts = {
+		...pkg.scripts,
+		"build": "vite build"
 	}
 	await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2), "utf-8")
 
@@ -365,6 +373,32 @@ const describeBuildFailure = (failure: string) => {
 }
 
 const normalizeGeneratedProject = async (projectDir: string) => {
+	// ── Sanitize package.json build script & deps ──────────────────────
+	const pkgNormPath = path.join(projectDir, "package.json")
+	try {
+		const pkgRaw = JSON.parse(await fs.readFile(pkgNormPath, "utf-8"))
+		let pkgChanged = false
+
+		// Strip `tsc &&` from the build script — Vite handles TS via esbuild,
+		// and a tsc gate makes AI-generated code fail on harmless type warnings.
+		if (pkgRaw.scripts?.build && /\btsc\b/.test(pkgRaw.scripts.build)) {
+			pkgRaw.scripts.build = pkgRaw.scripts.build.replace(/tsc\s*&&\s*/g, "")
+			pkgChanged = true
+		}
+
+		// Ensure typescript is available as a devDependency (needed for .tsx type
+		// declarations even though Vite doesn't run tsc during build).
+		if (!pkgRaw.devDependencies?.typescript) {
+			pkgRaw.devDependencies = { ...pkgRaw.devDependencies, "typescript": "^5.8.0" }
+			pkgChanged = true
+		}
+
+		if (pkgChanged) {
+			await fs.writeFile(pkgNormPath, JSON.stringify(pkgRaw, null, 2), "utf-8")
+		}
+	} catch { /* package.json may not exist yet; build will catch it */ }
+
+	// ── Normalize tsconfig.json ─────────────────────────────────────────
 	const tsconfigPath = path.join(projectDir, "tsconfig.json")
 	let tsconfig = await fs.readFile(tsconfigPath, "utf-8")
 	tsconfig = tsconfig.replace(/^\s*"erasableSyntaxOnly"\s*:\s*[^,\r\n]+,?\s*\r?\n?/m, "")

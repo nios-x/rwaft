@@ -446,7 +446,9 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 	let iterations = 0
 	const MAX_ITERATIONS = 20
 	let consecutiveReadOnlyIterations = 0
-	const MAX_READ_ONLY_ITERATIONS = 3
+	const MAX_READ_ONLY_ITERATIONS = 2
+	let totalNudges = 0
+	const MAX_TOTAL_NUDGES = 3
 
 	while (iterations < MAX_ITERATIONS) {
 		iterations++
@@ -654,7 +656,12 @@ export async function generateToolCalls(prompt: string, projectDir: string): Pro
 		} else {
 			consecutiveReadOnlyIterations++
 			if (consecutiveReadOnlyIterations >= MAX_READ_ONLY_ITERATIONS) {
-				jobLog(`  [ai] ${MAX_READ_ONLY_ITERATIONS} consecutive read-only iterations, nudging AI to produce file changes`, "warn")
+				totalNudges++
+				if (totalNudges >= MAX_TOTAL_NUDGES) {
+					jobLog(`  [ai] AI unable to produce file changes after ${MAX_TOTAL_NUDGES} nudges, ending iteration`, "warn")
+					break
+				}
+				jobLog(`  [ai] ${MAX_READ_ONLY_ITERATIONS} consecutive read-only iterations, nudging AI to produce file changes (nudge ${totalNudges}/${MAX_TOTAL_NUDGES})`, "warn")
 				messages.push({
 					role: "user",
 					content: "You have spent several iterations only reading files without making changes. You must now produce the required file operations (write_file, edit_file, etc.) or finish. Do not call read_file again unless absolutely necessary."
