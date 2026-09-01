@@ -32,6 +32,18 @@ const KILL_GRACE_MS = 5_000
 /** Cap retained output so a chatty build cannot exhaust worker memory. */
 const OUTPUT_LIMIT = 12_000
 
+const ANSI_PATTERN = new RegExp(String.raw`[\u001B\u009B][[\]()#;?]*(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><]`, "g")
+
+/**
+ * Vite's error frames colour every single character individually, so raw build
+ * output reaches the browser log and the AI repair prompt as a wall of escape
+ * codes with the actual message shredded between them. Stripping them keeps the
+ * failure text readable for both.
+ */
+function stripAnsi(text: string): string {
+	return text.replace(ANSI_PATTERN, "")
+}
+
 export interface RunOptions {
 	cwd: string
 	env?: Record<string, string>
@@ -78,7 +90,7 @@ export function run(command: string, options: RunOptions): Promise<RunResult> {
 		let killTimer: ReturnType<typeof setTimeout> | undefined
 
 		const collect = (chunk: Buffer, level: "info" | "warn") => {
-			const text = chunk.toString()
+			const text = stripAnsi(chunk.toString())
 			output = (output + text).slice(-OUTPUT_LIMIT)
 			if (stream) jobOutput(text, level)
 		}

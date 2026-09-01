@@ -238,7 +238,10 @@ export async function executeToolRequest(projectDir: string, name: string, args:
 			return `Set environment variable ${envName} for this project`
 		}
 		case "install_package":
-			return runCommand(projectDir, `npm install ${args.package || args.name}${args.dev === "true" ? " --save-dev" : ""}`)
+			// --legacy-peer-deps matches how the pipeline installs; without it the
+			// React 19 / plugin-react peer graph makes the AI's own installs
+			// ERESOLVE and leaves the package undeclared.
+			return runCommand(projectDir, `npm install ${args.package || args.name}${args.dev === "true" ? " --save-dev" : ""} --legacy-peer-deps --no-audit --no-fund`)
 		default: throw new Error(`Unsupported tool: ${name}`)
 	}
 }

@@ -26,6 +26,14 @@ import {
 	type JobKind
 } from "./lib/joblog.ts"
 import { run, installDependencies, buildProject } from "./lib/run.ts"
+import {
+	RUNTIME_DEPENDENCIES,
+	BUILD_DEPENDENCIES,
+	ensureProjectDependencies,
+	ensureModulesResolvable,
+	repairMissingDependencies,
+	findUndeclaredImports
+} from "./lib/deps.ts"
 
 console.log("[build-services] Cloudinary config:", {
 	cloud_name: cloudinaryConfig.cloud_name,
@@ -270,18 +278,10 @@ const scaffoldViteProject = async (projectDir: string) => {
 
 	const pkgPath = path.join(projectDir, "package.json")
 	const pkg = JSON.parse(await fs.readFile(pkgPath, "utf-8"))
-	pkg.dependencies = {
-		...pkg.dependencies,
-		react: "^19.1.0",
-		"react-dom": "^19.1.0"
-	}
-	pkg.devDependencies = {
-		...pkg.devDependencies,
-		"@vitejs/plugin-react": "^6.0.0",
-		"@types/react": "^19.1.0",
-		"@types/react-dom": "^19.1.0",
-		"typescript": "^5.8.0"
-	}
+	// Versions come from lib/deps.ts so the scaffold and the pre-install
+	// reconciliation can never disagree about what the toolchain is.
+	pkg.dependencies = { ...pkg.dependencies, ...RUNTIME_DEPENDENCIES }
+	pkg.devDependencies = { ...pkg.devDependencies, ...BUILD_DEPENDENCIES }
 	// The template's build script is "tsc && vite build", but tsc as a
 	// standalone type-check gate makes AI-generated code fail on harmless
 	// type warnings that Vite (via esbuild) would happily bundle through.
@@ -350,6 +350,21 @@ const scaffoldViteProject = async (projectDir: string) => {
 }
 
 const MAX_BUILD_REPAIRS = Number(process.env.MAX_BUILD_REPAIRS || 6)
+/** Ceiling on npm-only repair rounds, so a resolver loop cannot spin forever. */
+const MAX_DEPENDENCY_REPAIRS = Number(process.env.MAX_DEPENDENCY_REPAIRS || 3)
+
+/**
+ * Collapses the volatile parts of a build failure (temp paths, Vite's
+ * per-build config timestamp, line/column drift) so two runs of the same
+ * unchanged error compare equal.
+ */
+const failureSignature = (failure: string) =>
+	failure
+		.replace(/timestamp-[\w-]+\.mjs/g, "timestamp.mjs")
+		.replace(/\/tmp\/[\w./-]+/g, "<path>")
+		.replace(/\d+/g, "#")
+		.replace(/\s+/g, " ")
+		.trim()
 
 const describeBuildFailure = (failure: string) => {
 	const guidance: string[] = []
@@ -374,29 +389,20 @@ const describeBuildFailure = (failure: string) => {
 
 const normalizeGeneratedProject = async (projectDir: string) => {
 	// ── Sanitize package.json build script & deps ──────────────────────
-	const pkgNormPath = path.join(projectDir, "package.json")
-	try {
-		const pkgRaw = JSON.parse(await fs.readFile(pkgNormPath, "utf-8"))
-		let pkgChanged = false
+	// The AI is free to rewrite package.json, and when it does it routinely
+	// drops the toolchain it was told is "already installed". npm then prunes
+	// those packages from node_modules, and every subsequent build fails to
+	// resolve them — a state no amount of AI repair recovers from, because each
+	// repair round reinstalls from the same truncated manifest. Re-assert the
+	// contract here, before every install.
+	await ensureProjectDependencies(projectDir)
 
-		// Strip `tsc &&` from the build script — Vite handles TS via esbuild,
-		// and a tsc gate makes AI-generated code fail on harmless type warnings.
-		if (pkgRaw.scripts?.build && /\btsc\b/.test(pkgRaw.scripts.build)) {
-			pkgRaw.scripts.build = pkgRaw.scripts.build.replace(/tsc\s*&&\s*/g, "")
-			pkgChanged = true
-		}
-
-		// Ensure typescript is available as a devDependency (needed for .tsx type
-		// declarations even though Vite doesn't run tsc during build).
-		if (!pkgRaw.devDependencies?.typescript) {
-			pkgRaw.devDependencies = { ...pkgRaw.devDependencies, "typescript": "^5.8.0" }
-			pkgChanged = true
-		}
-
-		if (pkgChanged) {
-			await fs.writeFile(pkgNormPath, JSON.stringify(pkgRaw, null, 2), "utf-8")
-		}
-	} catch { /* package.json may not exist yet; build will catch it */ }
+	// Surfaced early because the build only reports the first unresolved import,
+	// so without this the log makes a five-package omission look like one.
+	const undeclared = await findUndeclaredImports(projectDir)
+	if (undeclared.length > 0) {
+		jobLog(`Imported but not declared in package.json: ${undeclared.join(", ")}`, "warn")
+	}
 
 	// ── Normalize tsconfig.json ─────────────────────────────────────────
 	const tsconfigPath = path.join(projectDir, "tsconfig.json")
@@ -425,10 +431,34 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 	const viteConfigTs = path.join(projectDir, "vite.config.ts")
 	const viteConfigJs = path.join(projectDir, "vite.config.js")
 
+	let hasViteConfig = false
 	try {
 		await fs.access(viteConfigTs)
+		hasViteConfig = true
 		await fs.rm(viteConfigJs, { force: true })
-	} catch { /* no TS config; leave whatever exists */ }
+	} catch { /* no TS config; a JS one may still exist */ }
+
+	if (!hasViteConfig) {
+		try {
+			await fs.access(viteConfigJs)
+			hasViteConfig = true
+		} catch { /* neither exists */ }
+	}
+
+	// Vite defaults to no React plugin, so a project that lost its config
+	// builds JSX-free output or fails outright. Restore the scaffold's config.
+	if (!hasViteConfig) {
+		jobLog("Vite config is missing - restoring the scaffold configuration", "warn")
+		await fs.writeFile(viteConfigTs, [
+			'import { defineConfig } from "vite"',
+			'import react from "@vitejs/plugin-react"',
+			'',
+			'export default defineConfig({',
+			'\tplugins: [react()]',
+			'})',
+			''
+		].join("\n"), "utf-8")
+	}
 
 	const indexPath = path.join(projectDir, "index.html")
 	let indexHtml = await fs.readFile(indexPath, "utf-8")
@@ -555,13 +585,24 @@ const installAndBuildPromptProject = async (
 	initialOperations: Awaited<ReturnType<typeof generateToolCalls>>,
 	assetBase: string
 ) => {
+	// Deterministic dependency repairs don't consume an AI attempt: they cost a
+	// single npm call, and burning a model round-trip (plus free-tier quota) on
+	// "install the package the error just named" is pure waste.
+	let deterministicRepairs = 0
+	let appliedInitialOperations = false
+	let unrepairedFailure: string | undefined
+
 	for (let attempt = 0; attempt <= MAX_BUILD_REPAIRS; attempt++) {
 		try {
-			if (attempt === 0) {
+			if (!appliedInitialOperations) {
+				appliedInitialOperations = true
 				await applyOperations(projectDir, initialOperations)
 			}
 			await normalizeGeneratedProject(projectDir)
-			await installDependencies(projectDir)
+			await installDependencies(projectDir, "--legacy-peer-deps")
+			// npm reporting "up to date" only means node_modules matches
+			// package.json — it is not proof the toolchain is actually there.
+			await ensureModulesResolvable(projectDir)
 			// The scaffold is always Vite, so --base is always the right lever.
 			await buildProject(projectDir, undefined, `--base=${assetBase}`)
 
@@ -579,9 +620,32 @@ const installAndBuildPromptProject = async (
 
 			return
 		} catch (error) {
+			const failure = error instanceof Error ? error.message : String(error)
+
+			// Fix what the error itself names before spending a model call on it.
+			if (deterministicRepairs < MAX_DEPENDENCY_REPAIRS) {
+				const installed = await repairMissingDependencies(projectDir, failure)
+				if (installed.length > 0) {
+					deterministicRepairs++
+					jobLog(`Installed ${installed.join(", ")} - rebuilding without an AI repair pass`, "success")
+					// This round fixed something without the model, so it must not
+					// count against the AI repair budget.
+					attempt--
+					continue
+				}
+			}
+
 			if (attempt === MAX_BUILD_REPAIRS) throw error
 
-			const failure = error instanceof Error ? error.message : String(error)
+			// Two identical failures with no AI edits in between means the model
+			// is only reading files. Further rounds cannot change the outcome and
+			// just burn the provider's daily quota.
+			if (unrepairedFailure && failureSignature(unrepairedFailure) === failureSignature(failure)) {
+				throw new Error(
+					`${failure}\n\nThe AI made no changes across two repair attempts, so this failure cannot be resolved automatically.`
+				)
+			}
+
 			jobLog(`Build step failed - asking the AI to repair (${attempt + 1}/${MAX_BUILD_REPAIRS})`, "warn")
 			const failureGuidance = describeBuildFailure(failure)
 			const repairPrompt = `A project step failed. Fix the project using the file tools.
@@ -597,9 +661,14 @@ ${failureGuidance}
 Inspect the relevant files first and make all required changes in one repair pass. Fix every error shown above so both npm install and npm run build succeed. For React JSX files, tsconfig.json must set compilerOptions.jsx to react-jsx and allowImportingTsExtensions to true. Do not leave starter imports to missing assets; replace starter entry code or use only files that exist. Before finishing, use find_file on each changed shared type and entry file to verify imports and exports agree.`
 			const repairOperations = await generateToolCalls(repairPrompt, projectDir)
 			if (repairOperations.length === 0) {
+				// The model may still have changed the workspace through
+				// run_command/install_package, so retry once and let the next
+				// failure signature decide whether this is a genuine standstill.
+				unrepairedFailure = failure
 				jobLog(`AI returned no repair operations (attempt ${attempt + 1}/${MAX_BUILD_REPAIRS}), retrying...`, "warn")
 				continue
 			}
+			unrepairedFailure = undefined
 			jobLog(`Applying ${repairOperations.length} repair operations`)
 			try {
 				await applyOperations(projectDir, repairOperations)
