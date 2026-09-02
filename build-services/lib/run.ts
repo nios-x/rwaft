@@ -26,6 +26,28 @@ export const INSTALL_TIMEOUT_MS = Number(process.env.INSTALL_TIMEOUT_MS || 10 * 
 /** Bundling is CPU-bound and also slow on small instances. */
 export const BUILD_TIMEOUT_MS = Number(process.env.BUILD_TIMEOUT_MS || 10 * 60_000)
 
+/**
+ * npm configuration forced onto every child process we spawn.
+ *
+ * The worker containers set NODE_ENV=production, and npm's `omit` config
+ * defaults to "dev" whenever that is set — so a plain `npm install` installs
+ * ONLY `dependencies` and silently skips every devDependency. That is fatal
+ * for the projects we build: vite, @vitejs/plugin-react and typescript all
+ * live in devDependencies, so the tree comes back without a bundler and every
+ * build fails to resolve its own config imports. Worse, npm still reports
+ * "added N packages" / "up to date", so nothing in the log says dev deps were
+ * dropped.
+ *
+ * Passing --include=dev on our own commands fixes our own commands. Setting it
+ * in the environment also covers the ones we do not write: `npm install` typed
+ * by the AI into run_command, and any npm the build script shells out to.
+ * NODE_ENV itself is deliberately left alone — Vite reads it during the build.
+ */
+export const NPM_ENV: Record<string, string> = {
+	npm_config_include: "dev",
+	npm_config_omit: ""
+}
+
 const IS_WINDOWS = process.platform === "win32"
 /** Grace period between SIGTERM and SIGKILL. */
 const KILL_GRACE_MS = 5_000
@@ -82,7 +104,8 @@ export function run(command: string, options: RunOptions): Promise<RunResult> {
 			stdio: ["ignore", "pipe", "pipe"],
 			// Detach so the child gets its own process group we can signal as a unit.
 			detached: !IS_WINDOWS,
-			env: { ...process.env, ...env }
+			// NPM_ENV first so an explicit caller override still wins.
+			env: { ...process.env, ...NPM_ENV, ...env }
 		})
 
 		let output = ""
@@ -149,6 +172,10 @@ export function run(command: string, options: RunOptions): Promise<RunResult> {
  */
 export async function installDependencies(projectDir: string, extraFlags = ""): Promise<void> {
 	const flags = [
+		// Belt and braces with NPM_ENV: --include=dev overrides the omit=dev that
+		// NODE_ENV=production hands npm, so devDependencies (the whole toolchain)
+		// are actually installed. See NPM_ENV above for why this matters.
+		"--include=dev",
 		"--no-audit",
 		"--no-fund",
 		"--no-progress",

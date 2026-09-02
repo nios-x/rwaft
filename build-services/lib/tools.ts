@@ -3,7 +3,7 @@ import path from "path"
 import { spawn, type ChildProcess } from "node:child_process"
 import type { FileOperation } from "./ai.ts"
 import { jobLog } from "./joblog.ts"
-import { COMMAND_TIMEOUT_MS } from "./run.ts"
+import { COMMAND_TIMEOUT_MS, NPM_ENV } from "./run.ts"
 
 const MAX_WALK_DEPTH = 10
 const MAX_WALK_FILES = 2_000
@@ -119,7 +119,10 @@ async function runCommand(projectDir: string, command: string, background = fals
 		return `ERROR: Command blocked for safety: ${command}`
 	}
 
-	const env = { ...process.env, ...getEnvOverlay(projectDir) }
+	// NPM_ENV keeps devDependencies installable under the worker's
+	// NODE_ENV=production, including for a bare `npm install` the AI types here.
+	// The project overlay is applied last so set_environment_variable still wins.
+	const env = { ...process.env, ...NPM_ENV, ...getEnvOverlay(projectDir) }
 
 	return new Promise((resolve, reject) => {
 		// `detached` puts the command in its own process group so a timeout can
@@ -238,10 +241,12 @@ export async function executeToolRequest(projectDir: string, name: string, args:
 			return `Set environment variable ${envName} for this project`
 		}
 		case "install_package":
-			// --legacy-peer-deps matches how the pipeline installs; without it the
-			// React 19 / plugin-react peer graph makes the AI's own installs
-			// ERESOLVE and leaves the package undeclared.
-			return runCommand(projectDir, `npm install ${args.package || args.name}${args.dev === "true" ? " --save-dev" : ""} --legacy-peer-deps --no-audit --no-fund`)
+			// --include=dev because the worker runs with NODE_ENV=production, where
+			// npm omits devDependencies by default: without it a --save-dev install
+			// updates package.json and installs nothing. --legacy-peer-deps matches
+			// how the pipeline installs, so the React 19 peer graph cannot ERESOLVE
+			// the AI's own installs.
+			return runCommand(projectDir, `npm install ${args.package || args.name}${args.dev === "true" ? " --save-dev" : ""} --include=dev --legacy-peer-deps --no-audit --no-fund`)
 		default: throw new Error(`Unsupported tool: ${name}`)
 	}
 }

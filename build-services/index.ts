@@ -279,9 +279,21 @@ const scaffoldViteProject = async (projectDir: string) => {
 	const pkgPath = path.join(projectDir, "package.json")
 	const pkg = JSON.parse(await fs.readFile(pkgPath, "utf-8"))
 	// Versions come from lib/deps.ts so the scaffold and the pre-install
-	// reconciliation can never disagree about what the toolchain is.
-	pkg.dependencies = { ...pkg.dependencies, ...RUNTIME_DEPENDENCIES }
-	pkg.devDependencies = { ...pkg.devDependencies, ...BUILD_DEPENDENCIES }
+	// reconciliation can never disagree about what the toolchain is — but they
+	// only ADD. The template is a known-good, installable set that the author
+	// maintains; spreading our defaults over it silently re-pinned versions it
+	// had already chosen (its typescript ~6.0.2 became ^5.8.0 on every build).
+	// Whatever the template declares, the template keeps.
+	pkg.dependencies = { ...pkg.dependencies }
+	pkg.devDependencies = { ...pkg.devDependencies }
+	const addMissing = (target: Record<string, string>, additions: Record<string, string>) => {
+		for (const [name, version] of Object.entries(additions)) {
+			if (pkg.dependencies[name] || pkg.devDependencies[name]) continue
+			target[name] = version
+		}
+	}
+	addMissing(pkg.dependencies, RUNTIME_DEPENDENCIES)
+	addMissing(pkg.devDependencies, BUILD_DEPENDENCIES)
 	// The template's build script is "tsc && vite build", but tsc as a
 	// standalone type-check gate makes AI-generated code fail on harmless
 	// type warnings that Vite (via esbuild) would happily bundle through.
@@ -390,11 +402,10 @@ const describeBuildFailure = (failure: string) => {
 const normalizeGeneratedProject = async (projectDir: string) => {
 	// ── Sanitize package.json build script & deps ──────────────────────
 	// The AI is free to rewrite package.json, and when it does it routinely
-	// drops the toolchain it was told is "already installed". npm then prunes
-	// those packages from node_modules, and every subsequent build fails to
-	// resolve them — a state no amount of AI repair recovers from, because each
-	// repair round reinstalls from the same truncated manifest. Re-assert the
-	// contract here, before every install.
+	// drops the toolchain it was told is "already installed". Every subsequent
+	// build then fails to resolve it — a state no amount of AI repair recovers
+	// from, because each repair round reinstalls from the same truncated
+	// manifest. Re-assert the contract here, before every install.
 	await ensureProjectDependencies(projectDir)
 
 	// Surfaced early because the build only reports the first unresolved import,
@@ -423,7 +434,10 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 		tsconfig = `${tsconfig.slice(0, openingBrace + 1)}\n    "${name}": ${value},${tsconfig.slice(openingBrace + 1)}`
 	}
 	setCompilerOption("jsx", '"react-jsx"')
-	setCompilerOption("lib", '["ES2020", "DOM", "DOM.Iterable"]')
+	// DOM.Iterable is what React code actually needs on top of the template's
+	// own lib list. The ES level stays where the template put it — dropping it
+	// to ES2020 took away .at(), Object.hasOwn and structuredClone for no reason.
+	setCompilerOption("lib", '["ES2023", "DOM", "DOM.Iterable"]')
 	setCompilerOption("allowImportingTsExtensions", "true")
 	setCompilerOption("noEmit", "true")
 	await fs.writeFile(tsconfigPath, tsconfig, "utf-8")

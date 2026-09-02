@@ -6,22 +6,24 @@ import { run, INSTALL_TIMEOUT_MS } from "./run.ts"
 /**
  * Dependency reconciliation for AI-generated projects.
  *
- * The AI owns package.json (it can write_file over it), and while implementing
- * an app it regularly rewrites the manifest wholesale — dropping the scaffold's
- * toolchain devDependencies in the process. `npm install` then *prunes* those
- * packages out of node_modules and cheerfully reports "up to date", after which
- * every build fails with
+ * Two separate things put a build into the state where it can never resolve
+ * '@vitejs/plugin-react', and both are handled here:
  *
- *   Could not resolve '@vitejs/plugin-react' in vite.config.ts
+ * 1. The environment. The worker containers set NODE_ENV=production, and npm
+ *    defaults `omit` to "dev" when it sees that — so devDependencies are never
+ *    installed at all, and an explicit `npm install vite --save-dev` updates
+ *    package.json, prints "up to date", and installs nothing. Every install
+ *    issued from this file therefore passes --include=dev.
  *
- * and stays failed: each repair round re-runs the same install against the same
- * truncated manifest, so the tree never comes back. That is what burns all six
- * repair attempts (and the free-tier rate limit) without progress.
+ * 2. The AI. It owns package.json and can rewrite the manifest wholesale,
+ *    dropping the toolchain it was told is "already installed".
  *
- * The fix is to stop treating the toolchain as AI-owned. These packages are
+ * Either way the failure is self-sustaining: each repair round reinstalls from
+ * the same broken premise, so the tree never comes back and the model burns
+ * every repair attempt (and the provider's daily quota) on a problem that was
+ * never its to solve. The toolchain is treated as ours, not the AI's:
  * re-asserted before every install, verified in node_modules after it, and
- * repaired straight from the build's own error text — none of which depends on
- * the model behaving.
+ * repaired straight from the build's own error text.
  */
 
 /** Runtime packages the scaffold guarantees. Kept in sync with the scaffold. */
@@ -59,7 +61,11 @@ const VALID_PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9-._]*\/)?[a-z0-9][a-z0-9-._]*$/
 /** Cap on speculative installs so a hallucination spree cannot stall a build. */
 const MAX_AUTO_INSTALL = 12
 
-const INSTALL_FLAGS = "--legacy-peer-deps --no-audit --no-fund --no-progress --loglevel=warn"
+// --include=dev is mandatory: the worker sets NODE_ENV=production, which makes
+// npm default to omit=dev and silently skip every devDependency — including the
+// bundler. Without it `npm install vite --save-dev` writes package.json, reports
+// "up to date", and installs nothing.
+const INSTALL_FLAGS = "--include=dev --legacy-peer-deps --no-audit --no-fund --no-progress --loglevel=warn"
 
 /**
  * Reduces an import specifier to the package that provides it, or null when it
@@ -259,8 +265,9 @@ async function installPackages(projectDir: string, specs: string[], dev: boolean
 
 /**
  * Post-install verification. `npm install` reporting "up to date" is not proof
- * that the tree is usable — it only means node_modules matches package.json,
- * which is exactly the state that produced the unresolvable-plugin loop.
+ * that the tree is usable: under an omit=dev default it reports exactly that
+ * while installing none of the toolchain, which is the state that produced the
+ * unresolvable-plugin loop.
  */
 export async function ensureModulesResolvable(projectDir: string): Promise<void> {
 	const missing: string[] = []
