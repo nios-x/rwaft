@@ -1,3 +1,4 @@
+<img width="5227" height="2127" alt="Untitled-2026-07-16-0001 (2)" src="https://github.com/user-attachments/assets/13c924b7-89db-4b4e-8211-322070584f6f" />
 <div align="center">
 
 # 🚀 Rwaft
@@ -20,7 +21,7 @@
 The platform is engineered around an **event-driven, queue-based microservices architecture** that decouples frontend user interactions, API ingress, worker sandboxes, and CDN asset delivery.
 
 ---
-<img width="5227" height="2127" alt="Untitled-2026-07-16-0001 (1)" src="https://github.com/user-attachments/assets/a9dc3cd9-688d-4f2e-8056-d160eadbc965" />
+<img width="5227" height="2127" alt="Untitled-2026-07-16-0001 (2)" src="https://github.com/user-attachments/assets/a8b143d8-2686-4478-8517-020a6bc1a6c8" />
 <?xml version="1.0" standalone="no"?>
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
 
