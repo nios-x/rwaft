@@ -1,4 +1,4 @@
-<img width="5227" height="2127" alt="Untitled-2026-07-16-0001 (2)" src="https://github.com/user-attachments/assets/13c924b7-89db-4b4e-8211-322070584f6f" />
+
 <div align="center">
 
 # 🚀 Rwaft
