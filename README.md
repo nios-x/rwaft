@@ -1,5 +1,9 @@
-# Rwaft 🚀
-### Autonomous Distributed Web Deployment & AI Application Generation Platform
+
+<div align="center">
+
+# 🚀 Rwaft
+
+**Autonomous Distributed Web Deployment & AI Application Generation Platform**
 
 [![Architecture: Distributed Microservices](https://img.shields.io/badge/Architecture-Event--Driven%20Microservices-blue.svg)](#-system-architecture)
 [![Runtime: Bun & Node.js](https://img.shields.io/badge/Runtime-Bun%20%7C%20Node.js%2020-f472b6.svg)](https://bun.sh)
@@ -8,6 +12,8 @@
 [![AI Engine: Gemini / OpenRouter](https://img.shields.io/badge/AI%20Engine-Gemini%20%2F%20OpenRouter-10b981.svg)](https://ai.google.dev)
 [![Frontend: Next.js 16](https://img.shields.io/badge/Frontend-Next.js%2016%20(App%20Router)-black.svg)](https://nextjs.org)
 
+</div>
+
 **Rwaft** is an end-to-end cloud platform and build orchestration system designed to deploy production web applications from two distinct sources:
 1. **Public Git Repositories** (React, Vite, Create React App).
 2. **Natural Language Prompts** via an autonomous, multi-turn AI coding engine featuring a closed-loop build verification and repair cycle.
@@ -15,6 +21,10 @@
 The platform is engineered around an **event-driven, queue-based microservices architecture** that decouples frontend user interactions, API ingress, worker sandboxes, and CDN asset delivery.
 
 ---
+<img width="5227" height="2127" alt="Untitled-2026-07-16-0001 (2)" src="https://github.com/user-attachments/assets/a8b143d8-2686-4478-8517-020a6bc1a6c8" />
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+
 
 ## 📑 Table of Contents
 
