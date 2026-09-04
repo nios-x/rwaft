@@ -134,8 +134,16 @@ const sendCloudinaryFile = async (id: string, filePath: string, res: Response) =
 		"Cache-Control",
 		extension === "html" ? "no-cache" : "public, max-age=31536000, immutable"
 	)
+	// Only forward the upstream length when the upstream body was not encoded.
+	// `fetch` transparently decodes gzip/br, so Cloudinary's content-length
+	// describes the COMPRESSED bytes while the body streamed below is the
+	// decompressed ones. Copying it made Node stop writing at the compressed
+	// size, truncating every text asset mid-file (a 643-byte index.html was
+	// served as its 290 brotli bytes). Without the header Node uses chunked
+	// encoding, which is correct for a proxied stream of unknown length.
+	const encoded = Boolean(response.headers.get("content-encoding"))
 	const length = response.headers.get("content-length")
-	if (length) res.setHeader("Content-Length", length)
+	if (length && !encoded) res.setHeader("Content-Length", length)
 
 	if (!response.body) {
 		res.end()
