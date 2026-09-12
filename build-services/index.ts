@@ -347,9 +347,19 @@ const scaffoldViteProject = async (projectDir: string) => {
 		''
 	].join("\n"), "utf-8")
 
+	// The template's Tailwind entry lives in src/style.css, which the React
+	// conversion above deletes. main.tsx imports ./index.css, so the v4 import
+	// has to be re-established here — without it the plugin runs, emits nothing,
+	// and every utility class in the generated app is inert.
+	//
+	// No font-family here on purpose: Tailwind preflight already sets one from
+	// --default-font-family, and a hard-coded body rule would quietly outrank
+	// whatever the generated app declares in @theme.
 	await fs.writeFile(path.join(projectDir, "src/index.css"), [
+		'@import "tailwindcss";',
+		'',
 		'*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }',
-		'body { font-family: system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; }',
+		'body { -webkit-font-smoothing: antialiased; }',
 		''
 	].join("\n"), "utf-8")
 
@@ -369,12 +379,17 @@ const scaffoldViteProject = async (projectDir: string) => {
 		''
 	].join("\n"), "utf-8")
 
+	// Overwriting the template's config is what adds plugin-react — but the
+	// template also registered @tailwindcss/vite there, so it has to be carried
+	// over rather than dropped. Tailwind fails silently when it is missing: the
+	// build stays green and the page ships unstyled.
 	await fs.writeFile(path.join(projectDir, "vite.config.ts"), [
 		'import { defineConfig } from "vite"',
 		'import react from "@vitejs/plugin-react"',
+		'import tailwindcss from "@tailwindcss/vite"',
 		'',
 		'export default defineConfig({',
-		'\tplugins: [react()]',
+		'\tplugins: [react(), tailwindcss()]',
 		'})',
 		''
 	].join("\n"), "utf-8")
@@ -878,7 +893,11 @@ const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESS
 	await scaffoldViteProject(projectDir)
 
 	jobLog("Asking the AI to write your application...")
-	const operations = await generateToolCalls(payload.prompt, projectDir)
+	// The design skill rides along with the first pass only: it shapes what
+	// gets written, and a later repair pass is about making it compile.
+	const operations = await generateToolCalls(payload.prompt, projectDir, {
+		skills: ["frontend-design", "tailwind-design-system"]
+	})
 	jobLog(`AI produced ${operations.length} file operations`)
 
 	await installAndBuildPromptProject(

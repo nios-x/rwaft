@@ -4,6 +4,7 @@ import OpenAI from "openai"
 import type { ChatCompletionTool, ChatCompletionMessageParam } from "openai/resources/chat/completions"
 import { executeToolRequest } from "./tools.ts"
 import { jobLog } from "./joblog.ts"
+import { composeSystemPrompt } from "./skills.ts"
 import "./config.ts"
 
 // ── Client factory ──────────────────────────────────────────────────────────
@@ -127,7 +128,16 @@ function getModelChain(): ModelEntry[] {
 // ── Context limits ──────────────────────────────────────────────────────────
 
 const TOOL_RESULT_MAX_CHARS = 6_000
-const CONTEXT_COMPACT_THRESHOLD = 40_000 // bytes before compaction kicks in
+/**
+ * Chars of CONVERSATION (everything after the system and user messages) to
+ * allow before old tool results get squeezed.
+ *
+ * Deliberately measured without the fixed prefix. The system prompt grows
+ * every time a skill is attached to a pass — a threshold on total context
+ * would silently convert that growth into a smaller working budget, and the
+ * model would start losing files it had already read after two reads.
+ */
+const CONVERSATION_COMPACT_BUDGET = 36_000
 const COMPACT_KEEP_RECENT = 6 // keep this many recent messages at full size
 const COMPACTED_RESULT_MAX = 200 // chars to keep for old tool results
 
@@ -138,17 +148,17 @@ function truncateResult(text: string): string {
 }
 
 /**
- * Shrinks old tool-result messages to short summaries when total context
- * exceeds the threshold. Keeps the system prompt, user prompt, and the
+ * Shrinks old tool-result messages to short summaries once the conversation
+ * outgrows its budget. Keeps the system prompt, user prompt, and the
  * last COMPACT_KEEP_RECENT messages at full size.
  */
 function compactMessages(messages: ChatCompletionMessageParam[]): void {
-	const totalChars = messages.reduce((sum, m) => {
+	const conversationChars = messages.slice(2).reduce((sum, m) => {
 		const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")
 		return sum + content.length
 	}, 0)
 
-	if (totalChars < CONTEXT_COMPACT_THRESHOLD) return
+	if (conversationChars < CONVERSATION_COMPACT_BUDGET) return
 
 	// Never compact: first 2 (system + user) and last COMPACT_KEEP_RECENT
 	const compactEnd = Math.max(2, messages.length - COMPACT_KEEP_RECENT)
@@ -306,7 +316,9 @@ General rules:
 - All file paths are relative to the project root (e.g. "src/App.tsx", "src/components/Header.tsx").
 - Write complete, production-quality code. No placeholders or TODOs.
 - You may add CSS files, components, assets, and new dependencies (via edit_file on package.json or install_package).
-- Do NOT use Tailwind CSS. Tailwind is NOT installed. Write all styles using plain CSS (vanilla CSS) in .css files. Do not use @apply, @tailwind, @theme, or any Tailwind directives.
+- Tailwind CSS v4 IS installed and wired up: vite.config.ts registers tailwindcss() from @tailwindcss/vite, and src/index.css starts with an @import of "tailwindcss". Style with Tailwind utility classes, plain CSS, or both.
+- Keep that wiring intact. If you rewrite vite.config.ts, keep BOTH react() and tailwindcss(); if you rewrite src/index.css, keep the @import on the first line. Dropping either does not fail the build — it emits no Tailwind CSS and ships an unstyled page.
+- This is Tailwind v4, which is configured in CSS, not JavaScript. Do NOT create tailwind.config.js/ts, and do NOT use the v3 directives @tailwind base/components/utilities. Declare theme tokens with @theme inside src/index.css.
 - Do NOT use the NodeJS namespace (e.g. NodeJS.Timeout). Use ReturnType<typeof setTimeout> or number for timer types instead.
 - When using React hooks such as useState or useEffect, import each hook from "react" in the file that uses it.
 - Ensure package.json includes react, react-dom, typescript, vite, and @vitejs/plugin-react when the Vite config imports the React plugin.
@@ -433,11 +445,21 @@ const tools: ChatCompletionTool[] = toolSpecs.map(spec => ({
 
 // ── Main generation function ────────────────────────────────────────────────
 
-export async function generateToolCalls(prompt: string, projectDir: string): Promise<FileOperation[]> {
+export interface GenerateOptions {
+	/**
+	 * Skill files (build-services/skills/<name>.md) to append to the system
+	 * prompt for this pass. Left empty by default so a repair conversation
+	 * carries only the rules it needs.
+	 */
+	skills?: string[]
+}
+
+export async function generateToolCalls(prompt: string, projectDir: string, options: GenerateOptions = {}): Promise<FileOperation[]> {
 	const modelChain = getModelChain()
+	const systemPrompt = await composeSystemPrompt(SYSTEM_PROMPT, options.skills ?? [])
 
 	const messages: ChatCompletionMessageParam[] = [
-		{ role: "system", content: SYSTEM_PROMPT },
+		{ role: "system", content: systemPrompt },
 		{ role: "user", content: prompt }
 	]
 

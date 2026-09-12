@@ -38,7 +38,13 @@ export const BUILD_DEPENDENCIES: Record<string, string> = {
 	"@vitejs/plugin-react": "^6.0.0",
 	"@types/react": "^19.1.0",
 	"@types/react-dom": "^19.1.0",
-	"typescript": "^5.8.0"
+	"typescript": "^5.8.0",
+	// Tailwind v4 ships as a Vite plugin, and the scaffold's vite.config.ts
+	// imports it — so it is toolchain, not an optional styling choice. The
+	// template declares both already; these entries only matter when the AI
+	// rewrites package.json and drops them.
+	"tailwindcss": "^4.3.3",
+	"@tailwindcss/vite": "^4.3.3"
 }
 
 /**
@@ -46,7 +52,16 @@ export const BUILD_DEPENDENCIES: Record<string, string> = {
  * load its config. A missing @types/* only degrades editor types; a missing
  * plugin-react is a hard build failure, so only the latter kind is verified.
  */
-const CRITICAL_MODULES = ["vite", "@vitejs/plugin-react", "react", "react-dom"]
+const CRITICAL_MODULES = [
+	"vite",
+	"@vitejs/plugin-react",
+	"react",
+	"react-dom",
+	// vite.config.ts imports @tailwindcss/vite, which in turn loads tailwindcss:
+	// either one missing stops the config from loading at all.
+	"@tailwindcss/vite",
+	"tailwindcss"
+]
 
 const NODE_BUILTINS = new Set([
 	"assert", "buffer", "child_process", "cluster", "console", "crypto", "dns",
