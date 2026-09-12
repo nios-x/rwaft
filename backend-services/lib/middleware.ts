@@ -41,13 +41,25 @@ export function isOriginAllowed(origin: string | undefined): boolean {
 }
 
 /**
- * The origin this request was addressed to.
+ * Whether the request was addressed to the very origin it claims to come from.
  *
- * `trust proxy` is enabled on the app, so `protocol` and `host` describe the
- * original client request rather than the platform's internal hop. Both include
- * the port when it is non-default, exactly as an Origin header does.
+ * Resolving "this server's own origin" behind a proxy chain is the fiddly part.
+ * `req.host` honours X-Forwarded-Host when `trust proxy` is set, which is what
+ * the deployment router already relies on, while `req.get("host")` is the raw
+ * Host header the platform may have rewritten on its way in. Either one
+ * describes an origin this server genuinely answers on, so a match against
+ * either is same-origin. Checking only the raw header silently failed whenever
+ * the platform rewrote it.
+ *
+ * Both forms keep the port when it is non-default, exactly as an Origin header
+ * does, so the comparison stays exact rather than fuzzy.
  */
-const requestOrigin = (req: Request): string => `${req.protocol}://${req.get("host")}`
+const isSameOrigin = (req: Request, origin: string): boolean => {
+	const proto = req.protocol
+	return [req.host, req.get("host")]
+		.filter((host): host is string => Boolean(host))
+		.some((host) => origin === `${proto}://${host}`)
+}
 
 export const corsmiddlewares = (req: Request, res: Response, next: NextFunction) => {
 	const origin = req.headers.origin
@@ -61,7 +73,7 @@ export const corsmiddlewares = (req: Request, res: Response, next: NextFunction)
 	// hostname. Gating those on FRONTEND_ORIGIN 403'd every asset of every
 	// deployed site: the HTML loaded (navigations send no Origin) and then
 	// rendered blank, while curl and server-to-server checks saw only 200s.
-	const sameOrigin = Boolean(origin) && origin === requestOrigin(req)
+	const sameOrigin = origin !== undefined && isSameOrigin(req, origin)
 	const allowed = sameOrigin || isOriginAllowed(origin)
 
 	if (origin && !allowed) {
