@@ -40,9 +40,29 @@ export function isOriginAllowed(origin: string | undefined): boolean {
 	return allowedOrigins.includes(origin.replace(/\/+$/, ""))
 }
 
+/**
+ * The origin this request was addressed to.
+ *
+ * `trust proxy` is enabled on the app, so `protocol` and `host` describe the
+ * original client request rather than the platform's internal hop. Both include
+ * the port when it is non-default, exactly as an Origin header does.
+ */
+const requestOrigin = (req: Request): string => `${req.protocol}://${req.get("host")}`
+
 export const corsmiddlewares = (req: Request, res: Response, next: NextFunction) => {
 	const origin = req.headers.origin
-	const allowed = isOriginAllowed(origin)
+	// A same-origin request is not what the allowlist defends against: only a
+	// page this server itself served can send it, and it could have fetched the
+	// same URL with no Origin header at all.
+	//
+	// This is load-bearing for deployed sites. Vite marks its bundles
+	// `crossorigin` and module scripts are always fetched in CORS mode, so a
+	// deployed site's own CSS and JS arrive carrying an Origin header of its own
+	// hostname. Gating those on FRONTEND_ORIGIN 403'd every asset of every
+	// deployed site: the HTML loaded (navigations send no Origin) and then
+	// rendered blank, while curl and server-to-server checks saw only 200s.
+	const sameOrigin = Boolean(origin) && origin === requestOrigin(req)
+	const allowed = sameOrigin || isOriginAllowed(origin)
 
 	if (origin && !allowed) {
 		// Without this the rejection is invisible: the browser only reports a
