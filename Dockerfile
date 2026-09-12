@@ -48,6 +48,21 @@ COPY docker/start.sh /app/start.sh
 # hundreds of megabytes and the application directory on a PaaS instance is small.
 ENV BUILD_ROOT=/tmp/rwaft-builds
 
+# Memory guard rails, and they matter more here than in the split images: in
+# this container the API, the worker and a user's npm install and bundler all
+# share one memory limit, so a build that overruns restarts the API too.
+#
+# BUILD_CONCURRENCY=1 stops the deploy and prompt queues from each starting a
+# build at the same time — two installs and two bundlers at once is the fastest
+# way to hit the limit.
+#
+# BUILD_HEAP_MB caps V8's old space in the children we spawn. V8 otherwise sizes
+# its heap from the HOST's RAM rather than the container's cgroup limit, so Node
+# grows past the limit and gets killed instead of collecting garbage. Raise it
+# if you give this service a larger instance.
+ENV BUILD_CONCURRENCY=1
+ENV BUILD_HEAP_MB=256
+
 RUN chmod +x /app/start.sh \
     && mkdir -p /tmp/rwaft-builds \
     && chown -R bun:bun /app /tmp/rwaft-builds

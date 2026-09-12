@@ -84,6 +84,19 @@ services:
       - key: BUILD_ROOT
         value: /tmp/rwaft-builds
 
+      # One user build at a time. The deploy and prompt queues are pumped by two
+      # concurrent loops in this process, so without this a single instance can
+      # be running two npm installs and two bundlers at once.
+      - key: BUILD_CONCURRENCY
+        value: "1"
+      # Ceiling for V8's old space in the npm/bundler children. V8 sizes its
+      # heap from the HOST's RAM, not the container's cgroup limit, so an
+      # uncapped Node grows past the limit and is OOM-killed rather than
+      # collecting garbage. This is sized for the `standard` plan above; drop it
+      # to ~256 if you run the combined image on a 512MB instance.
+      - key: BUILD_HEAP_MB
+        value: "1024"
+
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY

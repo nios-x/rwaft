@@ -19,7 +19,11 @@ import { DEPLOY_QUEUE, DEPLOYMENT_STATUS_PREFIX, PROMPT_QUEUE } from "./lib/cons
 const app = express()
 const PORT = Number(process.env.PORT || 3000)
 const HOST = process.env.HOST || "0.0.0.0"
-const UPLOAD_BATCH_SIZE = Number(process.env.UPLOAD_BATCH_SIZE || 10)
+// Each in-flight upload holds a read stream, a TLS session and an SDK call. In
+// the combined image (see the root Dockerfile) this runs in the same container
+// as the build worker, so a staging upload burst competes for memory with a
+// bundler. Modest and tunable beats fast and fatal.
+const UPLOAD_BATCH_SIZE = Number(process.env.UPLOAD_BATCH_SIZE || 4)
 const STATUS_TTL_SECONDS = Number(process.env.STATUS_TTL_SECONDS || 24 * 60 * 60)
 const MAX_PROMPT_CHARS = Number(process.env.MAX_PROMPT_CHARS || 8_000)
 const SSE_HEARTBEAT_MS = Number(process.env.SSE_HEARTBEAT_MS || 25_000)
@@ -50,7 +54,24 @@ app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS || 1))
 app.disable("x-powered-by")
 
 app.use(securityHeaders)
-app.use(corsmiddlewares)
+/**
+ * The origin allowlist guards the API, not the static hosting.
+ *
+ * It exists so another site cannot drive /deploy and /prompt from a visitor's
+ * browser and burn the build and AI budget. Deployed sites are public files
+ * that anyone can already fetch without a browser, so an origin check protects
+ * nothing there — and mounted globally it actively broke them: Vite marks its
+ * bundles `crossorigin`, module scripts are always fetched in CORS mode, and a
+ * CORS-mode request carries an Origin header even when it is same-origin, so
+ * every deployed site's own CSS and JS came back 403 while the HTML (a
+ * navigation, which sends no Origin) still returned 200 and rendered blank.
+ *
+ * Scoping the middleware to the API routes keeps that protection exactly where
+ * it earns its keep and leaves the catch-all deployment proxy below ungated, so
+ * it cannot be broken again by however the platform's proxies rewrite Host or
+ * X-Forwarded-Proto.
+ */
+app.use(["/health", "/healthz", "/session", "/status", "/logs", "/deploy", "/prompt"], corsmiddlewares)
 // A repo URL or a prompt is small; a large body here is either a mistake or an
 // attempt to exhaust memory.
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "64kb" }))
@@ -128,6 +149,11 @@ const sendCloudinaryFile = async (id: string, filePath: string, res: Response) =
 	const extension = path.extname(filePath).slice(1).toLowerCase()
 	res.type(CONTENT_TYPES[extension] || "application/octet-stream")
 	res.setHeader("Content-Disposition", "inline")
+	// Deployed artifacts are public static files that anyone can already fetch
+	// without a browser, so there is nothing here for an origin check to
+	// protect. Saying so explicitly keeps `crossorigin` bundles and cross-origin
+	// font loads working whatever origin the page was served from.
+	res.setHeader("Access-Control-Allow-Origin", "*")
 	// Hashed build assets are immutable; HTML must always be revalidated so a
 	// redeploy is visible immediately.
 	res.setHeader(
