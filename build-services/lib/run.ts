@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
+import { readFile, writeFile, rm } from "node:fs/promises"
+import path from "node:path"
 import { jobLog, jobOutput } from "./joblog.ts"
 
 /**
@@ -46,6 +49,27 @@ export const BUILD_TIMEOUT_MS = Number(process.env.BUILD_TIMEOUT_MS || 10 * 60_0
 export const NPM_ENV: Record<string, string> = {
 	npm_config_include: "dev",
 	npm_config_omit: ""
+}
+
+/**
+ * Heap ceiling for the children we spawn (npm, and the bundler it runs).
+ *
+ * V8 sizes its old space from the *host's* RAM, not from the container's cgroup
+ * limit. On a small instance that means Node happily grows past the limit and
+ * is killed by the platform rather than collecting garbage — which is what a
+ * "service exceeded its memory limit" restart actually is. Naming a ceiling
+ * that fits the instance converts an OOM kill into a slightly slower build.
+ *
+ * Size it under the container limit, not at it: npm, the bundler's native
+ * parts and this worker itself all need room outside the JS heap.
+ */
+const BUILD_HEAP_MB = Number(process.env.BUILD_HEAP_MB || 384)
+
+/** Adds the heap ceiling without discarding NODE_OPTIONS the caller set. */
+function withHeapCap(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const existing = env.NODE_OPTIONS ?? ""
+	if (existing.includes("--max-old-space-size")) return env
+	return { ...env, NODE_OPTIONS: `${existing} --max-old-space-size=${BUILD_HEAP_MB}`.trim() }
 }
 
 const IS_WINDOWS = process.platform === "win32"
@@ -105,7 +129,7 @@ export function run(command: string, options: RunOptions): Promise<RunResult> {
 			// Detach so the child gets its own process group we can signal as a unit.
 			detached: !IS_WINDOWS,
 			// NPM_ENV first so an explicit caller override still wins.
-			env: { ...process.env, ...NPM_ENV, ...env }
+			env: withHeapCap({ ...process.env, ...NPM_ENV, ...env })
 		})
 
 		let output = ""
@@ -163,6 +187,46 @@ export function run(command: string, options: RunOptions): Promise<RunResult> {
 }
 
 /**
+ * Everything that decides the dependency tree, hashed.
+ *
+ * package.json alone is the right input: the lockfile is rewritten *by* the
+ * install, so including it would leave every stamp stale the moment it was
+ * written. Hashing the whole manifest rather than just the dependency blocks
+ * errs towards reinstalling, which is the safe direction to be wrong in.
+ */
+async function manifestFingerprint(projectDir: string): Promise<string> {
+	const manifest = await readFile(path.join(projectDir, "package.json"), "utf-8").catch(() => "")
+	return createHash("sha256").update(manifest).digest("hex")
+}
+
+/**
+ * The stamp lives inside node_modules deliberately: if the tree is wiped — the
+ * retry path below does exactly that — the stamp goes with it, so a skip can
+ * never outlive the install it describes.
+ */
+const stampPath = (projectDir: string) => path.join(projectDir, "node_modules", ".rwaft-install")
+
+async function installIsCurrent(projectDir: string): Promise<boolean> {
+	try {
+		const [stamp, fingerprint] = await Promise.all([
+			readFile(stampPath(projectDir), "utf-8"),
+			manifestFingerprint(projectDir)
+		])
+		return stamp.trim() === fingerprint
+	} catch {
+		// No stamp, or no tree at all: install.
+		return false
+	}
+}
+
+async function recordInstall(projectDir: string): Promise<void> {
+	// Recomputed after the fact: npm edits package.json itself when it adds a
+	// dependency, and the stamp must describe the tree we actually ended up with.
+	await writeFile(stampPath(projectDir), await manifestFingerprint(projectDir), "utf-8")
+		.catch(() => { /* a lost stamp only ever costs one redundant install */ })
+}
+
+/**
  * Installs dependencies with the flags that make npm behave inside a container:
  * no progress spinner (keeps logs readable), no audit/fund round-trips (two
  * fewer network calls that can hang), and a retry that wipes the tree first.
@@ -185,9 +249,20 @@ export async function installDependencies(projectDir: string, extraFlags = ""): 
 
 	const command = `npm install ${flags}`.trim()
 
+	// The build-repair loop calls this before every attempt, so a run that needed
+	// one install was paying for three. npm handles a no-op install in seconds,
+	// but those seconds are spent spawning a second Node process next to a
+	// bundler we are already trying to fit in memory. Skip it outright when
+	// nothing that decides the tree has changed.
+	if (await installIsCurrent(projectDir)) {
+		jobLog("Dependencies already match package.json - skipping install")
+		return
+	}
+
 	try {
 		jobLog("Installing dependencies…")
 		await run(command, { cwd: projectDir, timeoutMs: INSTALL_TIMEOUT_MS, stream: true })
+		await recordInstall(projectDir)
 		jobLog("Dependencies installed", "success")
 		return
 	} catch (error) {
@@ -199,11 +274,11 @@ export async function installDependencies(projectDir: string, extraFlags = ""): 
 	// reusing the same corrupt tarballs.
 	await run("npm cache clean --force", { cwd: projectDir, timeoutMs: 60_000, captureForError: false })
 		.catch(() => { /* best effort */ })
-	const { rm } = await import("node:fs/promises")
 	await rm(`${projectDir}/node_modules`, { recursive: true, force: true }).catch(() => { })
 
 	jobLog("Reinstalling dependencies from a clean tree…")
 	await run(command, { cwd: projectDir, timeoutMs: INSTALL_TIMEOUT_MS, stream: true })
+	await recordInstall(projectDir)
 	jobLog("Dependencies installed", "success")
 }
 

@@ -19,7 +19,11 @@ import { DEPLOY_QUEUE, DEPLOYMENT_STATUS_PREFIX, PROMPT_QUEUE } from "./lib/cons
 const app = express()
 const PORT = Number(process.env.PORT || 3000)
 const HOST = process.env.HOST || "0.0.0.0"
-const UPLOAD_BATCH_SIZE = Number(process.env.UPLOAD_BATCH_SIZE || 10)
+// Each in-flight upload holds a read stream, a TLS session and an SDK call. In
+// the combined image (see the root Dockerfile) this runs in the same container
+// as the build worker, so a staging upload burst competes for memory with a
+// bundler. Modest and tunable beats fast and fatal.
+const UPLOAD_BATCH_SIZE = Number(process.env.UPLOAD_BATCH_SIZE || 4)
 const STATUS_TTL_SECONDS = Number(process.env.STATUS_TTL_SECONDS || 24 * 60 * 60)
 const MAX_PROMPT_CHARS = Number(process.env.MAX_PROMPT_CHARS || 8_000)
 const SSE_HEARTBEAT_MS = Number(process.env.SSE_HEARTBEAT_MS || 25_000)

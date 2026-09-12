@@ -1,7 +1,10 @@
 import fs from "node:fs/promises"
+import { createWriteStream } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import http from "node:http"
+import { Readable } from "node:stream"
+import { pipeline } from "node:stream/promises"
 import {
 	cloudinary,
 	cloudinaryConfig,
@@ -26,6 +29,7 @@ import {
 	type JobKind
 } from "./lib/joblog.ts"
 import { run, installDependencies, buildProject } from "./lib/run.ts"
+import { withBuildSlot, buildSlotStats } from "./lib/jobslot.ts"
 import {
 	RUNTIME_DEPENDENCIES,
 	BUILD_DEPENDENCIES,
@@ -50,7 +54,11 @@ console.log("[build-services] Cloudinary config:", {
  */
 const root = process.env.BUILD_ROOT || path.join(os.tmpdir(), "rwaft-builds")
 
-const UPLOAD_BATCH_SIZE = Number(process.env.UPLOAD_BATCH_SIZE || 8)
+// Concurrency here is charged against the same memory limit as the bundler.
+// Each in-flight transfer holds buffers, a TLS session and a Cloudinary SDK
+// call, so these are deliberately modest and tunable rather than generous.
+const UPLOAD_BATCH_SIZE = Number(process.env.UPLOAD_BATCH_SIZE || 4)
+const DOWNLOAD_BATCH_SIZE = Number(process.env.DOWNLOAD_BATCH_SIZE || 4)
 const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 15 * 60_000)
 const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 30_000)
 const CLOUDINARY_API_TIMEOUT_MS = Number(process.env.CLOUDINARY_API_TIMEOUT_MS || 60_000)
@@ -60,7 +68,12 @@ const QUEUE_BLOCK_SECONDS = Number(process.env.QUEUE_BLOCK_SECONDS || 5)
 /** Abandon a build directory older than this during periodic sweeps. */
 const STALE_BUILD_MS = Number(process.env.STALE_BUILD_MS || 60 * 60_000)
 
-type FetchResponse = { ok: boolean; status: number; arrayBuffer: () => Promise<ArrayBuffer> }
+type FetchResponse = {
+	ok: boolean
+	status: number
+	arrayBuffer: () => Promise<ArrayBuffer>
+	body: ReadableStream<Uint8Array> | null
+}
 
 interface JobPayload {
 	id: string
@@ -120,7 +133,17 @@ const downloadFile = async (file: { public_id: string, secure_url: string }, pro
 	try {
 		const response = await fetch(getRawAssetUrl(file.public_id), { signal: controller.signal }) as unknown as FetchResponse
 		if (!response.ok) throw new Error(`Cloudinary returned ${response.status} for ${file.public_id}`)
-		await fs.writeFile(destination, Buffer.from(await response.arrayBuffer()))
+		// Stream to disk rather than buffering. arrayBuffer() held an entire file
+		// in memory, and with several downloads in flight that spike is charged
+		// against the very limit the bundler is about to need.
+		if (!response.body) {
+			await fs.writeFile(destination, "")
+			return
+		}
+		await pipeline(
+			Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+			createWriteStream(destination)
+		)
 	} finally {
 		clearTimeout(timer)
 	}
@@ -205,9 +228,8 @@ const buildFromCloudinary = async (id: string, assetBase: string) => {
 	if (files.length === 0) {
 		throw new Error("No source files were staged for this deployment")
 	}
-	const batchSize = 8
-	for (let i = 0; i < files.length; i += batchSize) {
-		const batch = files.slice(i, i + batchSize)
+	for (let i = 0; i < files.length; i += DOWNLOAD_BATCH_SIZE) {
+		const batch = files.slice(i, i + DOWNLOAD_BATCH_SIZE)
 		await Promise.all(batch.map((file) => downloadFile(file, projectDir, id)))
 	}
 	jobLog(`Fetched ${files.length} source files`, "success")
@@ -803,11 +825,18 @@ async function pump(
 
 		await runWithJobContext({ jobId: id, userId, kind }, async () => {
 			try {
-				jobStatus("building")
-				jobLog(`Starting ${kind} job ${id}`)
-				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "building", { EX: STATUS_TTL_SECONDS })
+				// Take a build slot BEFORE flipping the status and before the job
+				// timeout starts. Time spent queued behind another build is not
+				// this job's own runtime, so it must not count against its
+				// deadline — and the status stays "queued", which is what the
+				// proxy's waiting page already renders.
+				await withBuildSlot(async () => {
+					jobStatus("building")
+					jobLog(`Starting ${kind} job ${id}`)
+					await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "building", { EX: STATUS_TTL_SECONDS })
 
-				await withTimeout(handler(payload), JOB_TIMEOUT_MS, `${kind} job ${id}`)
+					await withTimeout(handler(payload), JOB_TIMEOUT_MS, `${kind} job ${id}`)
+				})
 
 				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: STATUS_TTL_SECONDS })
 				jobLog(`Deployment ${id} is live`, "success")
@@ -869,7 +898,19 @@ function startHealthServer() {
 	const server = http.createServer((req, res) => {
 		if (req.url === "/health" || req.url === "/healthz") {
 			res.writeHead(200, { "Content-Type": "application/json" })
-			res.end(JSON.stringify({ status: shuttingDown ? "draining" : "healthy", service: "worker" }))
+			// Report saturation and RSS. When the platform kills this container
+			// for memory it tells you nothing about what it was doing, so the
+			// last healthy sample is the only evidence you get.
+			const memory = process.memoryUsage()
+			res.end(JSON.stringify({
+				status: shuttingDown ? "draining" : "healthy",
+				service: "worker",
+				builds: buildSlotStats(),
+				memoryMb: {
+					rss: Math.round(memory.rss / 1024 / 1024),
+					heapUsed: Math.round(memory.heapUsed / 1024 / 1024)
+				}
+			}))
 			return
 		}
 		res.writeHead(404).end()

@@ -284,6 +284,16 @@ async function patchFile(projectDir: string, filePath: string, search: string, r
 
 	const occurrences = countOccurrences(original, search)
 	if (occurrences === 0) {
+		// The model routinely asks for the same change twice in one batch — a
+		// real repair pass in production sent six `patch` ops and then five
+		// `edit_file` ops with the same end state, and every one of the second
+		// set "failed" because the first set had already applied it. The intent
+		// is satisfied, so reporting failure only fails the whole repair pass
+		// and buys another build round for nothing.
+		//
+		// Guarded on a non-empty `replace`: for a deletion the replacement is ""
+		// and every file trivially contains it.
+		if (replace && original.includes(replace)) return
 		throw new Error(`Patch search string not found in ${filePath}`)
 	}
 	if (occurrences > 1) {
@@ -304,6 +314,10 @@ async function multiPatchFile(projectDir: string, filePath: string, patches: Arr
 		if (!patch || !patch.search) continue
 		const occurrences = countOccurrences(content, patch.search)
 		if (occurrences === 0) {
+			// Same idempotency rule as patchFile, and it matters more here: the
+			// file is only written after this loop, so throwing on chunk 3 threw
+			// away the already-applied chunks 1 and 2 as well.
+			if (patch.replace && content.includes(patch.replace)) continue
 			throw new Error(`Multi-patch chunk ${i + 1}/${patches.length} search string not found in ${filePath}`)
 		}
 		if (occurrences > 1) {
