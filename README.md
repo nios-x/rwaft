@@ -406,7 +406,7 @@ files are git-ignored and are excluded from Docker images.
 | `CLOUDINARY_API_KEY` | `string` | **Yes**\* | Cloudinary API key (signed uploads) | — |
 | `CLOUDINARY_API_SECRET` | `string` | **Yes**\* | Cloudinary API secret | — |
 | `CLOUDINARY_UPLOAD_PRESET` | `string` | No | Unsigned-upload preset, \*used instead of key/secret | — |
-| `FRONTEND_ORIGIN` | `string` | **Yes** (prod) | Comma-separated exact browser origins allowed to call this API. **No wildcard default in production** — unset means every browser request is blocked | dev localhost origins |
+| `FRONTEND_ORIGIN` | `string` | **Yes** (prod) | Comma-separated exact browser origins allowed to call this API *cross-origin*. **No wildcard default in production** — unset means every cross-origin browser request is blocked. Same-origin requests are always allowed, so a deployed site can load its own assets without being listed here | dev localhost origins |
 | `PUBLIC_BASE_URL` | `string` | **Yes** (prod) | Externally reachable URL of this service; deployment URLs are built from it | request host |
 | `PORT` | `number` | No | HTTP port (the platform usually injects this) | `3000` |
 | `DEPLOYMENT_DOMAIN` | `string` | No | Root domain for subdomain-style deployment URLs | — |
