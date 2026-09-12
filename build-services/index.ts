@@ -30,6 +30,7 @@ import {
 } from "./lib/joblog.ts"
 import { run, installDependencies, buildProject } from "./lib/run.ts"
 import { withBuildSlot, buildSlotStats } from "./lib/jobslot.ts"
+import { assertNoUndefinedIdentifiers } from "./lib/validate.ts"
 import {
 	RUNTIME_DEPENDENCIES,
 	BUILD_DEPENDENCIES,
@@ -641,6 +642,10 @@ const installAndBuildPromptProject = async (
 			await ensureModulesResolvable(projectDir)
 			// The scaffold is always Vite, so --base is always the right lever.
 			await buildProject(projectDir, undefined, `--base=${assetBase}`)
+			// A bundle that builds is not the same as a page that runs. Catch
+			// undefined identifiers here, inside the repair loop, rather than
+			// uploading them and reporting the deployment live.
+			await assertNoUndefinedIdentifiers(projectDir)
 
 			// ── Post-build validation: reject boilerplate output ─────────
 			const distIndex = path.join(projectDir, "dist", "index.html")
