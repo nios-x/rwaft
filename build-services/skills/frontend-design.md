@@ -49,6 +49,8 @@ ships nothing.
 - **Relative asset paths.** The build is served from a subpath, so a root-absolute URL
   (`/logo.svg`, `url(/bg.png)`) 404s in production. Reference assets by importing them
   from `src/` or with a relative path.
+- **Icons come from `lucide-react`, which is installed.** `import { ArrowRight } from "lucide-react"`
+  and size them with `size`/`className`. Do not hand-write icon path data.
 - **Prefer CSS over dependencies.** Gradients, masks, filters, `clip-path`, blend modes,
   transforms and keyframes carry most of an aesthetic with no install cost. Add an
   animation or UI package only when neither Tailwind nor hand-written CSS can do the job.

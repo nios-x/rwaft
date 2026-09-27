@@ -14,6 +14,30 @@ $env:CLOUDINARY_API_KEY="your-api-key"
 $env:CLOUDINARY_API_SECRET="your-api-secret"
 ```
 
+## Prompt pipeline
+
+A prompt job runs in three stages, all inside `lib/ai.ts`:
+
+1. **Plan** — `planApplication` makes one tool-free call that turns the user's
+   request into a product brief (views, testable features, data + seed records,
+   palette and fonts, copy). The brief is logged to the user's build console and
+   prepended to the generation prompt. If it fails, generation uses the raw prompt.
+2. **Generate** — `generateToolCalls` applies every file operation to disk as it
+   arrives, so the model's `read_file`, searches and `npm run build` see its own
+   work, and a failed patch comes back as an error it can retry.
+3. **Verify** — when the model stops calling tools, the worker runs the real
+   normalize → install → build → undefined-identifier check and sends any failure
+   back into the same conversation (up to 3 rounds). Once it builds, an advisory
+   scan (`findPlaceholderIssues` in `lib/validate.ts`) flags lorem ipsum, dead
+   `href="#"` links, no-op handlers, `alert()`, dead image hosts, `BrowserRouter`
+   and root-absolute URLs, and asks for one polish pass.
+
+The old cold-start repair loop in `index.ts` still runs after this as a fallback.
+
+Tunables: `AI_MAX_ITERATIONS` (default 40), `AI_TIMEOUT_MS` (default 120000),
+`JOB_TIMEOUT_MS` (default 20 minutes). The model matters more than any of this:
+`OPENROUTER_MODEL` / `AI_MODEL` pick it, and OpenRouter is tried first.
+
 ## Skills
 
 `skills/*.md` hold instruction blocks that get appended to the AI's system

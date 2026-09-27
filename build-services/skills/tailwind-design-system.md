@@ -583,7 +583,7 @@ on disk.
   point at it describe the ideas; implement them from those summaries or leave them out.
 - **The example imports are illustrative, not installed.** `class-variance-authority`,
   `clsx`, `tailwind-merge`, `@radix-ui/*`, `react-hook-form` and `zod` are NOT in the
-  scaffold. Either install what you use with `install_package`, or build the same
+  scaffold (`lucide-react` is). Either install what you use with `install_package`, or build the same
   component shape with plain template-literal `className` strings and a local `cn`
   helper. Never import a package that is not in package.json.
 - **`@/` is not aliased.** Import with relative paths (`../lib/utils`) unless you add the

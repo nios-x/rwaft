@@ -18,8 +18,8 @@ import {
 } from "./lib/config.ts"
 import { getAllFileNames } from "./lib/helper.ts"
 import { uploadFile } from "./lib/upload.ts"
-import { generateToolCalls } from "./lib/ai.ts"
-import { applyOperations, releaseJobState } from "./lib/tools.ts"
+import { generateToolCalls, planApplication } from "./lib/ai.ts"
+import { releaseJobState } from "./lib/tools.ts"
 import {
 	runWithJobContext,
 	jobLog,
@@ -30,7 +30,7 @@ import {
 } from "./lib/joblog.ts"
 import { run, installDependencies, buildProject } from "./lib/run.ts"
 import { withBuildSlot, buildSlotStats } from "./lib/jobslot.ts"
-import { assertNoUndefinedIdentifiers } from "./lib/validate.ts"
+import { assertNoUndefinedIdentifiers, findPlaceholderIssues } from "./lib/validate.ts"
 import {
 	RUNTIME_DEPENDENCIES,
 	BUILD_DEPENDENCIES,
@@ -60,7 +60,9 @@ const root = process.env.BUILD_ROOT || path.join(os.tmpdir(), "rwaft-builds")
 // call, so these are deliberately modest and tunable rather than generous.
 const UPLOAD_BATCH_SIZE = Number(process.env.UPLOAD_BATCH_SIZE || 4)
 const DOWNLOAD_BATCH_SIZE = Number(process.env.DOWNLOAD_BATCH_SIZE || 4)
-const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 15 * 60_000)
+// Prompt jobs plan, generate and verify inside one conversation, which takes
+// longer than a single blind pass did.
+const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 20 * 60_000)
 const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 30_000)
 const CLOUDINARY_API_TIMEOUT_MS = Number(process.env.CLOUDINARY_API_TIMEOUT_MS || 60_000)
 const STATUS_TTL_SECONDS = Number(process.env.STATUS_TTL_SECONDS || 24 * 60 * 60)
@@ -635,22 +637,16 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 const installAndBuildPromptProject = async (
 	projectDir: string,
 	prompt: string,
-	initialOperations: Awaited<ReturnType<typeof generateToolCalls>>,
 	assetBase: string
 ) => {
 	// Deterministic dependency repairs don't consume an AI attempt: they cost a
 	// single npm call, and burning a model round-trip (plus free-tier quota) on
 	// "install the package the error just named" is pure waste.
 	let deterministicRepairs = 0
-	let appliedInitialOperations = false
 	let unrepairedFailure: string | undefined
 
 	for (let attempt = 0; attempt <= MAX_BUILD_REPAIRS; attempt++) {
 		try {
-			if (!appliedInitialOperations) {
-				appliedInitialOperations = true
-				await applyOperations(projectDir, initialOperations)
-			}
 			await normalizeGeneratedProject(projectDir)
 			await installDependencies(projectDir, "--legacy-peer-deps")
 			// npm reporting "up to date" only means node_modules matches
@@ -716,7 +712,12 @@ ${failure}
 ${failureGuidance}
 
 Inspect the relevant files first and make all required changes in one repair pass. Fix every error shown above so both npm install and npm run build succeed. For React JSX files, tsconfig.json must set compilerOptions.jsx to react-jsx and allowImportingTsExtensions to true. Do not leave starter imports to missing assets; replace starter entry code or use only files that exist. Before finishing, use find_file on each changed shared type and entry file to verify imports and exports agree.`
-			const repairOperations = await generateToolCalls(repairPrompt, projectDir)
+			// Operations are applied to disk as the model makes them.
+			const repairOperations = await generateToolCalls(repairPrompt, projectDir, {
+				verify: () => verifyPromptProject(projectDir),
+				maxVerifyRounds: 2,
+				maxIterations: 20
+			})
 			if (repairOperations.length === 0) {
 				// The model may still have changed the workspace through
 				// run_command/install_package, so retry once and let the next
@@ -726,13 +727,31 @@ Inspect the relevant files first and make all required changes in one repair pas
 				continue
 			}
 			unrepairedFailure = undefined
-			jobLog(`Applying ${repairOperations.length} repair operations`)
-			try {
-				await applyOperations(projectDir, repairOperations)
-			} catch (repairError) {
-				const message = repairError instanceof Error ? repairError.message : String(repairError)
-				jobLog(`Repair application partially failed; re-attempting build: ${message}`, "warn")
-			}
+			jobLog(`AI applied ${repairOperations.length} repair operations`)
+		}
+	}
+}
+
+/**
+ * The check the model runs against before it may call a pass finished: the
+ * same normalize -> install -> build -> identifier gate the final build uses,
+ * minus the deployment's asset base. Returns the failure text, or null.
+ * Missing packages named by the error are installed here first, so the model
+ * is only ever sent back for problems that are actually its to fix.
+ */
+const verifyPromptProject = async (projectDir: string): Promise<string | null> => {
+	for (let attempt = 0; ; attempt++) {
+		try {
+			await normalizeGeneratedProject(projectDir)
+			await installDependencies(projectDir, "--legacy-peer-deps")
+			await ensureModulesResolvable(projectDir)
+			await buildProject(projectDir)
+			await assertNoUndefinedIdentifiers(projectDir)
+			return null
+		} catch (error) {
+			const failure = error instanceof Error ? error.message : String(error)
+			if (attempt < MAX_DEPENDENCY_REPAIRS && (await repairMissingDependencies(projectDir, failure)).length > 0) continue
+			return failure
 		}
 	}
 }
@@ -893,18 +912,26 @@ const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESS
 
 	await scaffoldViteProject(projectDir)
 
+	jobLog("Planning your application...")
+	const brief = await planApplication(payload.prompt)
+	if (brief) jobLog(`Product brief:\n${brief}`)
+
 	jobLog("Asking the AI to write your application...")
-	// The design skill rides along with the first pass only: it shapes what
+	const generationPrompt = brief
+		? `User request:\n${payload.prompt}\n\nProduct brief (expands on the request; the user's words win where they differ):\n${brief}`
+		: payload.prompt
+	// The design skills ride along with the first pass only: they shape what
 	// gets written, and a later repair pass is about making it compile.
-	const operations = await generateToolCalls(payload.prompt, projectDir, {
-		skills: ["frontend-design", "tailwind-design-system"]
+	const operations = await generateToolCalls(generationPrompt, projectDir, {
+		skills: ["frontend-design", "tailwind-design-system"],
+		verify: () => verifyPromptProject(projectDir),
+		review: () => findPlaceholderIssues(projectDir)
 	})
-	jobLog(`AI produced ${operations.length} file operations`)
+	jobLog(`AI applied ${operations.length} file operations`)
 
 	await installAndBuildPromptProject(
 		projectDir,
 		payload.prompt,
-		operations,
 		payload.assetBase || `/${payload.id}/`
 	)
 	await uploadBuildOutput(payload.id, projectDir)

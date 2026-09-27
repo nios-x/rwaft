@@ -2,7 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import OpenAI from "openai"
 import type { ChatCompletionTool, ChatCompletionMessageParam } from "openai/resources/chat/completions"
-import { executeToolRequest } from "./tools.ts"
+import { executeToolRequest, executeOperation } from "./tools.ts"
 import { jobLog } from "./joblog.ts"
 import { composeSystemPrompt } from "./skills.ts"
 import "./config.ts"
@@ -182,7 +182,9 @@ function compactMessages(messages: ChatCompletionMessageParam[]): void {
 const MAX_RETRIES = parseInt(process.env.AI_MAX_RETRIES || "3", 10)
 const MAX_OPENROUTER_ATTEMPTS = 7
 const RETRY_BASE_MS = 2_000
-const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 60_000)
+// Generous because a first pass routinely writes a whole page component in one
+// call, and a slow free-tier model can spend well over a minute on that.
+const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 120_000)
 
 async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
 
@@ -208,7 +210,7 @@ function getErrorResponse(error: unknown): string {
 async function callWithRetry(
 	modelChain: ModelEntry[],
 	messages: ChatCompletionMessageParam[],
-	tools: ChatCompletionTool[],
+	tools: ChatCompletionTool[] | undefined,
 	exhaustedEntries: Set<string>
 ) {
 	let openRouterFailures = 0
@@ -229,7 +231,7 @@ async function callWithRetry(
 				const response = await client.chat.completions.create({
 					model: entry.model,
 					messages,
-					tools
+					...(tools ? { tools } : {})
 				}, { signal: controller.signal })
 				return response
 			} catch (error: unknown) {
@@ -285,55 +287,59 @@ export type FileOperation = CreateFileOp | PatchFileOp | MultiPatchFileOp | Repl
 
 // ── System prompt ───────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a senior frontend engineer. The user will describe a web application.
-You will receive a Vite + React + TypeScript project that has already been scaffolded. The project has:
+const SYSTEM_PROMPT = `You are a senior product engineer and designer building a complete, working web application — the kind a real user would open and actually use, not a mockup.
+
+You receive a Vite + React 19 + TypeScript project that has already been scaffolded and installed:
 - src/main.tsx — the entry point that mounts <App /> (DO NOT modify this file)
-- src/App.tsx — a stub component you MUST replace with the actual application
-- src/index.css — a minimal CSS reset you should replace with full styles
-- react, react-dom, @vitejs/plugin-react already installed
+- src/App.tsx — a stub you MUST replace with the real application
+- src/index.css — a minimal stylesheet you should replace (keep its first line, see below)
+- react, react-dom, lucide-react (icons), Tailwind CSS v4 and the Vite toolchain are installed
 
-Your job is to use the provided filesystem tools to create and modify files so the project implements what the user asked for.
+HOW THE WORKSPACE BEHAVES
+- Every file tool is applied to disk immediately. read_file always returns the current content, including files you wrote this session, and a tool result starting with ERROR means that change did NOT happen — fix the call and retry it.
+- When you stop calling tools, the system runs the production build and a type check. If either fails you get the errors back in this conversation and must fix them. You are finished only when the build passes.
+- The finished site is served from a sub-path (e.g. https://host/<id>/), so root-absolute URLs break in production.
 
-WORKFLOW — follow these steps in order:
-1. Determine the pages or views needed. Inspect the scaffold first, then create a concise page map with each page's purpose, content, and primary actions. Identify the shared application shell and reusable components needed across pages.
-2. Establish consistency before building broadly. Define shared TypeScript types and component prop contracts, then choose the shared visual language: typography, colors, spacing, borders, radii, responsive breakpoints, and interaction states. Reuse these decisions on every page.
-3. Create each page one at a time. Build the shared shell and global styles first, then implement pages in page-map order. Finish each page's imports, types, responsive layout, and user interactions before starting the next. Every created component must be used by the application; do not create speculative or orphan components.
-4. Fix bugs before moving forward. After each meaningful batch, inspect imports and run the available typecheck or build command. Resolve TypeScript, module-resolution, layout, and behavior errors before adding more pages. Before finishing, run npm run build and fix every blocking error without using any, @ts-ignore, broad casts, or placeholders.
-5. Deploy last. Only deploy after the production build succeeds and the requested pages and primary flows work. Verify the existing deployment command, configuration, environment variables, and provider before running it. If credentials or provider details are unavailable, report the exact prerequisite instead of claiming deployment succeeded.
+WORKFLOW
+1. Read the product brief (if one is given) and the user's request. Decide the views, the data model and the visual language before writing code.
+2. Write the foundations first: shared TypeScript types, seed data, a small store/hook for state and persistence, then src/index.css with @theme tokens.
+3. Build the app shell and each view as its own component under src/components/ (or src/views/), then wire them all into src/App.tsx. Write each file completely in one write_file call.
+4. Re-read anything you are unsure about and fix inconsistencies (props, exports, imports) before you stop.
 
-CRITICAL RULES — read these first:
-- You MUST modify src/App.tsx. This is the root component. Replace the stub content with your actual application that imports and renders all your components.
-- Every component file you create in src/components/ MUST be imported and rendered in App.tsx. Do not create orphan components.
-- After the page map and shared contracts are clear, write App.tsx with the application shell and page-level structure, then create the supporting component files one page at a time.
-- Do NOT leave the default App.tsx stub content ("Hello" or "app-root"). Replace it entirely.
+FUNCTIONALITY — this is what separates a real app from slop
+- Every button, link, tab, toggle, form and menu must DO something real. No dead controls, no href="#", no onClick={() => {}}, no "coming soon".
+- Implement the core feature end to end. A todo app adds, edits, completes, deletes and filters; a store has a working cart with quantities and totals; a dashboard's filters actually filter; a game is playable with win/lose/restart.
+- Keep state in React (useState/useReducer/context). Persist user-created data to localStorage (read with a safe JSON.parse fallback) so a reload keeps it.
+- Navigation: switch views with React state or the URL hash (window.location.hash + a hashchange listener). Do NOT use BrowserRouter or root-absolute links like href="/about" — they break on the sub-path. If you install react-router-dom, use HashRouter.
+- Forms validate input, show inline errors, disable submit while invalid, and confirm success in the UI (toast, inline message, updated list). Never use alert() for feedback.
+- Handle empty states ("No tasks yet — add your first"), search/filter with no results, and destructive actions (confirm or undo).
+- There is no backend. Ship realistic seed data in a src/data file and simulate async work with state when useful. Do not call APIs that need keys.
 
-General rules:
+CONTENT & VISUALS
+- Write real, specific copy for the domain: product names, prices, bios, stats, testimonials. Never lorem ipsum, "Item 1", "Feature title" or "Your text here".
+- Use lucide-react for icons (import { Search } from "lucide-react"). Do not hand-roll icon SVG paths.
+- For photos use https://picsum.photos/seed/<descriptive-word>/<w>/<h> (always resolves) or CSS gradients / illustrations. Never use source.unsplash.com or via.placeholder.com — they are dead. Always set width/height or aspect-ratio and alt text.
+- Responsive from 360px to wide desktop, visible keyboard focus, semantic HTML (header/nav/main/section/button/label), WCAG AA contrast.
+
+CRITICAL RULES
+- You MUST replace src/App.tsx. It is the root component and must import and render your components. Do NOT leave the stub ("Hello" / "app-root").
+- Every component file you create must be used. No orphan or speculative components.
 - Only use the provided tools. Do NOT output code in plain text.
-- Use read_file to inspect an existing file before editing it.
-- Use write_file for complete file contents, edit_file for exact search/replace, multi_patch_file for applying multiple search/replace patches in a file at once, and delete_file, move_file, copy_file, or create_directory for filesystem management.
-- Use list_files, search_files, find_symbol, find_references, and get_file_metadata to inspect the workspace.
-- Use run_command to run shell commands (e.g. npm install), and install_package to add npm packages.
-- All file paths are relative to the project root (e.g. "src/App.tsx", "src/components/Header.tsx").
+- Do NOT modify src/main.tsx or index.html. App.tsx must only export the component — never call createRoot, hydrateRoot or ReactDOM.render there.
+- Every imported module must exist: relative files you created, or packages in package.json. Add packages with install_package, never by hand-editing package.json.
+
+TOOLING RULES
+- Use write_file for whole files, edit_file for one exact search/replace, multi_patch_file for several in one file. read_file a file before patching it; search strings must match exactly and uniquely.
+- Use list_files, search_files, find_symbol and find_references to inspect the workspace; run_command runs a shell command (e.g. "npm run build" to check your work early).
+- All paths are relative to the project root (e.g. "src/components/Header.tsx").
 - Write complete, production-quality code. No placeholders or TODOs.
-- You may add CSS files, components, assets, and new dependencies (via edit_file on package.json or install_package).
-- Tailwind CSS v4 IS installed and wired up: vite.config.ts registers tailwindcss() from @tailwindcss/vite, and src/index.css starts with an @import of "tailwindcss". Style with Tailwind utility classes, plain CSS, or both.
-- Keep that wiring intact. If you rewrite vite.config.ts, keep BOTH react() and tailwindcss(); if you rewrite src/index.css, keep the @import on the first line. Dropping either does not fail the build — it emits no Tailwind CSS and ships an unstyled page.
-- This is Tailwind v4, which is configured in CSS, not JavaScript. Do NOT create tailwind.config.js/ts, and do NOT use the v3 directives @tailwind base/components/utilities. Declare theme tokens with @theme inside src/index.css.
-- Do NOT use the NodeJS namespace (e.g. NodeJS.Timeout). Use ReturnType<typeof setTimeout> or number for timer types instead.
-- When using React hooks such as useState or useEffect, import each hook from "react" in the file that uses it.
-- Ensure package.json includes react, react-dom, typescript, vite, and @vitejs/plugin-react when the Vite config imports the React plugin.
-- Use type-only imports for TypeScript types when verbatimModuleSyntax is enabled.
-- Do NOT modify src/main.tsx or index.html — they are already configured correctly.
-- App.tsx must only export the app component; never call createRoot, hydrateRoot, or ReactDOM.render from App.tsx. Mount React exactly once in the entry file.
-- Ensure tsconfig.json sets compilerOptions.jsx to "react-jsx" when the project contains .tsx files.
-- Set tsconfig.json compilerOptions.lib to ["ES2020", "DOM", "DOM.Iterable"] and allowImportingTsExtensions to true.
-- Do not add compiler options that may not be supported by the installed TypeScript version, especially erasableSyntaxOnly.
-- Every imported file must exist. Do not import modules that do not exist.
-- After inspecting a file, implement the required changes immediately. Do not spend multiple iterations only inspecting files.
-- Keep Vite config syntax consistent with its extension: never use 'import type' or TypeScript annotations in vite.config.js; prefer vite.config.ts for TypeScript config.
-- Before finishing, verify package.json and every imported module/config file so npm install and npm run build can resolve them.
-- When repairing a failed build, inspect every named file and its imported types/modules before editing, then fix all reported errors in one coherent pass. Never hide errors with any, @ts-ignore, or broad casts, and never replace requested functionality with a placeholder.
-- Make sure the app compiles and builds cleanly with "npm run build".`
+- Tailwind CSS v4 is installed and wired up: vite.config.ts registers tailwindcss() from @tailwindcss/vite, and src/index.css starts with @import "tailwindcss". If you rewrite vite.config.ts keep BOTH react() and tailwindcss(); if you rewrite src/index.css keep that @import (a Google Fonts @import url(...) may sit next to it — all @imports come first). Dropping either ships an unstyled page without failing the build.
+- This is Tailwind v4, configured in CSS: declare tokens with @theme in src/index.css. Do NOT create tailwind.config.js/ts and do NOT use @tailwind base/components/utilities.
+- Import each React hook from "react" in the file that uses it. Use type-only imports for types (verbatimModuleSyntax is on).
+- Do NOT use the NodeJS namespace (NodeJS.Timeout); use ReturnType<typeof setTimeout>.
+- Do not add tsconfig options unsupported by the installed TypeScript (e.g. erasableSyntaxOnly). Keep tsconfig.json compilerOptions.jsx "react-jsx".
+- Values that live inside a component (state, props, locals) cannot be read from module scope — that compiles but crashes on load.
+- When repairing a failed build, inspect every named file and the types/modules it imports, then fix all reported errors in one coherent pass. Never hide errors with any, @ts-ignore or broad casts, and never replace requested functionality with a placeholder.`
 
 // ── Tool definitions ────────────────────────────────────────────────────────
 // Each tool now declares ONLY the parameters it actually uses, plus required
@@ -443,6 +449,42 @@ const tools: ChatCompletionTool[] = toolSpecs.map(spec => ({
 	function: { name: spec.name, description: spec.description, parameters: spec.parameters }
 }))
 
+// ── Planning pass ───────────────────────────────────────────────────────────
+
+const PLANNER_PROMPT = `You are the product lead for an AI app builder. Turn a short user request into a precise, buildable product brief for a single-page React app that an engineer will implement in one pass.
+
+Constraints the app must live within: client-side only (React 19 + TypeScript + Tailwind v4 + lucide-react icons), no backend and no API keys, state in React persisted to localStorage, navigation by React state or URL hash, served from a sub-path.
+
+Write the brief in compact markdown with exactly these sections:
+## Concept — app name, one-sentence pitch, who it is for.
+## Design direction — a specific aesthetic that fits the domain (not generic SaaS), a palette of 5-6 hex colors with roles (background, surface, text, muted, accent, danger), a Google Fonts pairing (display + body; avoid Inter/Roboto/Arial), and the signature visual detail people will remember.
+## Views — every screen/section, in order, with what it shows and its primary actions.
+## Features — the concrete behaviours, as testable statements ("Adding a task with an empty title shows an inline error and does not save"). Cover the full core loop plus empty states, search/filter, and edit/delete where they apply.
+## Data — TypeScript-style shape of each entity, what is persisted to localStorage, and 6-12 realistic seed records described concretely (real-sounding names, prices, dates).
+## Copy — the hero headline, key labels and empty-state messages, written for the domain.
+
+Be ambitious about polish but keep scope buildable: roughly 5-12 components. Honour everything the user explicitly asked for; fill gaps with sensible, specific choices. Do not write code.`
+
+/**
+ * One tool-free call that expands a terse prompt ("a habit tracker") into a
+ * concrete brief. Generation quality tracks prompt specificity far more than
+ * anything else, and users rarely write specific prompts. Best effort: any
+ * failure falls back to the raw prompt.
+ */
+export async function planApplication(prompt: string): Promise<string | undefined> {
+	try {
+		const response = await callWithRetry(getModelChain(), [
+			{ role: "system", content: PLANNER_PROMPT },
+			{ role: "user", content: prompt }
+		], undefined, new Set())
+		const brief = response.choices[0]?.message?.content?.trim()
+		return brief && brief.length > 200 ? brief : undefined
+	} catch (error) {
+		jobLog(`  [ai] Planning pass failed, building from the raw prompt: ${(error as Error).message}`, "warn")
+		return undefined
+	}
+}
+
 // ── Main generation function ────────────────────────────────────────────────
 
 export interface GenerateOptions {
@@ -452,8 +494,93 @@ export interface GenerateOptions {
 	 * carries only the rules it needs.
 	 */
 	skills?: string[]
+	/**
+	 * Runs when the model says it is done. Returns failure text (fed back into
+	 * the same conversation for another round) or null when the project is
+	 * good. Fixing inside the conversation that wrote the code beats a cold
+	 * repair pass: the model still knows what every file is for.
+	 */
+	verify?: () => Promise<string | null>
+	/** Advisory checks (placeholder content, dead links); reported once, never fatal. */
+	review?: () => Promise<string[]>
+	/** How many times `verify` may send the model back to work. */
+	maxVerifyRounds?: number
+	maxIterations?: number
 }
 
+const DEFAULT_MAX_ITERATIONS = Number(process.env.AI_MAX_ITERATIONS || 40)
+
+/** Turns a tool call into a file operation, or an error string for the model. */
+function toFileOperation(name: string, args: Record<string, any>): FileOperation | string {
+	const needsPath = () => !args.path || typeof args.path !== "string"
+	const pathError = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
+	switch (name) {
+		case "create_file":
+		case "write_file":
+			if (needsPath()) return pathError
+			if (typeof args.content !== "string") return "ERROR: content argument is required and must be the complete file text."
+			return { tool: name, path: args.path, content: args.content }
+		case "replace_file":
+			if (needsPath()) return pathError
+			if (typeof args.content !== "string") return "ERROR: content argument is required and must be the complete file text."
+			return { tool: "replace_file", path: args.path, content: args.content }
+		case "patch_file":
+		case "edit_file":
+			if (needsPath()) return pathError
+			if (typeof args.search !== "string" || !args.search) return "ERROR: search argument is required and must be the exact text to replace."
+			return { tool: name, path: args.path, search: args.search, replace: String(args.replace ?? "") }
+		case "multi_patch_file":
+		case "multi_edit_file":
+		case "patch_multiple":
+		case "multi_patch":
+		case "batch_patch": {
+			if (needsPath()) return pathError
+			let rawPatches = args.patches || args.edits || args.chunks || args.replacements || args.changes
+			if (typeof rawPatches === "string") {
+				try { rawPatches = JSON.parse(rawPatches) } catch { rawPatches = [] }
+			}
+			if (!Array.isArray(rawPatches) || rawPatches.length === 0) {
+				return "ERROR: patches argument is required and must be a non-empty array of { search, replace } objects."
+			}
+			const patches: MultiPatchChunk[] = []
+			for (const p of rawPatches) {
+				if (!p || typeof p !== "object") continue
+				const search = p.search ?? p.old_str ?? p.old ?? p.find ?? p.target
+				const replace = p.replace ?? p.new_str ?? p.new ?? p.replacement ?? ""
+				if (typeof search === "string" && search.length > 0) patches.push({ search, replace: String(replace) })
+			}
+			if (patches.length === 0) return "ERROR: No valid search/replace patches found in the patches array."
+			return { tool: "multi_patch_file", path: args.path, patches }
+		}
+		case "delete_file":
+			if (needsPath()) return pathError
+			return { tool: "delete_file", path: args.path }
+		case "move_file":
+		case "copy_file":
+			if (needsPath() || !args.to || typeof args.to !== "string") {
+				return "ERROR: both 'path' and 'to' arguments are required and must be non-empty strings."
+			}
+			return { tool: name, path: args.path, to: args.to }
+		case "create_directory":
+			if (needsPath()) return pathError
+			return { tool: "create_directory", path: args.path }
+		default:
+			return `ERROR: Unknown tool "${name}". Use one of: ${toolSpecs.map(spec => spec.name).join(", ")}.`
+	}
+}
+
+const READ_TOOLS = new Set([
+	"list_files", "read_file", "find_file", "search_files", "find_symbol", "find_references",
+	"get_file_metadata", "run_command", "run_background_command", "kill_process",
+	"get_process_output", "open_terminal", "set_environment_variable", "install_package", "run_script"
+])
+
+/**
+ * Runs a tool-calling conversation against the project. File operations are
+ * applied to disk as they arrive, so the model's reads, searches and builds
+ * see its own work. The returned list is what was successfully applied; it is
+ * informational — callers must not apply it again.
+ */
 export async function generateToolCalls(prompt: string, projectDir: string, options: GenerateOptions = {}): Promise<FileOperation[]> {
 	const modelChain = getModelChain()
 	const systemPrompt = await composeSystemPrompt(SYSTEM_PROMPT, options.skills ?? [])
@@ -465,14 +592,17 @@ export async function generateToolCalls(prompt: string, projectDir: string, opti
 
 	const operations: FileOperation[] = []
 	const exhaustedEntries = new Set<string>()
+	const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS
+	const maxVerifyRounds = options.maxVerifyRounds ?? 3
 	let iterations = 0
-	const MAX_ITERATIONS = 20
+	let verifyRounds = 0
+	let reviewed = !options.review
 	let consecutiveReadOnlyIterations = 0
-	const MAX_READ_ONLY_ITERATIONS = 2
+	const MAX_READ_ONLY_ITERATIONS = 3
 	let totalNudges = 0
 	const MAX_TOTAL_NUDGES = 3
 
-	while (iterations < MAX_ITERATIONS) {
+	while (iterations < maxIterations) {
 		iterations++
 
 		// Compact old tool results if context is getting too large
@@ -493,7 +623,40 @@ export async function generateToolCalls(prompt: string, projectDir: string, opti
 			jobLog(`  [ai] text response: ${message.content.slice(0, 200)}`)
 		}
 
-		if (!message.tool_calls?.length) break
+		if (!message.tool_calls?.length) {
+			// The model thinks it is done. Check that claim before accepting it.
+			if (options.verify && verifyRounds < maxVerifyRounds && operations.length > 0) {
+				verifyRounds++
+				jobLog(`  [ai] Verifying the build (${verifyRounds}/${maxVerifyRounds})...`)
+				const failure = await options.verify()
+				if (failure) {
+					jobLog("  [ai] Build failed - sending the errors back to the model", "warn")
+					messages.push({ role: "assistant", content: message.content || "Done." })
+					messages.push({
+						role: "user",
+						content: `The production build failed. Your changes are on disk; fix the root cause of every error below with the file tools, then stop again to re-run the check.\n\n${truncateResult(failure)}`
+					})
+					continue
+				}
+				jobLog("  [ai] Build verified", "success")
+			}
+			if (!reviewed && options.review) {
+				reviewed = true
+				const issues = await options.review()
+				if (issues.length > 0) {
+					jobLog(`  [ai] Review found ${issues.length} placeholder/dead-UI issue(s) - asking for a polish pass`, "warn")
+					messages.push({ role: "assistant", content: message.content || "Done." })
+					messages.push({
+						role: "user",
+						content: `The app builds. A review found these problems that make it feel unfinished or broken in production. Fix each one properly (real behaviour, real content, working navigation), then stop:\n\n${issues.map(issue => `- ${issue}`).join("\n")}`
+					})
+					// A polish pass can break the build, so it earns one more check.
+					if (verifyRounds >= maxVerifyRounds) verifyRounds = maxVerifyRounds - 1
+					continue
+				}
+			}
+			break
+		}
 
 		// Feed the assistant message back so the model maintains conversation context
 		messages.push(message)
@@ -501,10 +664,10 @@ export async function generateToolCalls(prompt: string, projectDir: string, opti
 		let iterationProducedOperation = false
 
 		for (const call of message.tool_calls) {
-			// Fix 4: Gracefully handle malformed JSON in tool call arguments
+			// Gracefully handle malformed JSON in tool call arguments
 			let args: Record<string, any>
 			try {
-				args = JSON.parse(call.function.arguments)
+				args = JSON.parse(call.function.arguments || "{}")
 			} catch (parseError) {
 				jobLog(`  ⚠ malformed JSON in tool call ${call.function.name}: ${(parseError as Error).message}`, "warn")
 				messages.push({
@@ -515,153 +678,33 @@ export async function generateToolCalls(prompt: string, projectDir: string, opti
 				continue
 			}
 
-			const toolName = call.function.name
-			let result = "OK"
-			// Alias for the switch — keep 'name' available for args.name
-			const name = toolName
-
-			// Fix 1: Normalize file_path → path (AI sometimes uses file_path)
+			const name = call.function.name
+			// The AI sometimes uses file_path instead of path
 			if (!args.path && args.file_path) args.path = args.file_path
 
-			switch (name) {
-				case "list_files":
-				case "read_file":
-				case "find_file":
-				case "search_files":
-				case "find_symbol":
-				case "find_references":
-				case "get_file_metadata":
-				case "run_command":
-				case "run_background_command":
-				case "kill_process":
-				case "get_process_output":
-				case "open_terminal":
-				case "set_environment_variable":
-				case "install_package":
-				case "run_script":
+			let result: string
+			if (READ_TOOLS.has(name)) {
+				try {
+					result = truncateResult(await executeToolRequest(projectDir, name, args))
+				} catch (error) {
+					result = `ERROR: ${truncateResult(error instanceof Error ? error.message : String(error))}`
+				}
+			} else {
+				const operation = toFileOperation(name, args)
+				if (typeof operation === "string") {
+					jobLog(`  ⚠ ${name}: ${operation}`, "warn")
+					result = operation
+				} else {
 					try {
-						result = truncateResult(await executeToolRequest(projectDir, name, args))
+						await executeOperation(projectDir, operation)
+						operations.push(operation)
+						iterationProducedOperation = true
+						result = `OK: ${operation.tool} ${operation.path} applied`
 					} catch (error) {
-						result = `ERROR: ${error instanceof Error ? error.message : String(error)}`
+						const reason = error instanceof Error ? error.message : String(error)
+						jobLog(`  ⚠ ${operation.tool} ${operation.path} — ${reason}`, "warn")
+						result = `ERROR: ${reason}. The file was NOT changed. read_file it and retry with text that matches exactly.`
 					}
-					break
-				// Fix 2: Validate required fields before collecting operations
-				case "create_file":
-				case "write_file": {
-					if (!args.path || typeof args.path !== "string") {
-						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
-						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
-						break
-					}
-					operations.push({ tool: name as "create_file" | "write_file", path: args.path, content: args.content ?? "" })
-					iterationProducedOperation = true
-					break
-				}
-				case "patch_file":
-				case "edit_file": {
-					if (!args.path || typeof args.path !== "string") {
-						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
-						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
-						break
-					}
-					operations.push({ tool: name as "patch_file" | "edit_file", path: args.path, search: args.search ?? "", replace: args.replace ?? "" })
-					iterationProducedOperation = true
-					break
-				}
-				case "multi_patch_file":
-				case "multi_edit_file":
-				case "patch_multiple":
-				case "multi_patch":
-				case "batch_patch": {
-					if (!args.path || typeof args.path !== "string") {
-						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
-						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
-						break
-					}
-					let rawPatches = args.patches || args.edits || args.chunks || args.replacements || args.changes
-					if (typeof rawPatches === "string") {
-						try { rawPatches = JSON.parse(rawPatches) } catch { rawPatches = [] }
-					}
-					if (!Array.isArray(rawPatches) || rawPatches.length === 0) {
-						jobLog(`  ⚠ ${name} missing or invalid patches array, skipping`, "warn")
-						result = "ERROR: patches argument is required and must be a non-empty array of { search, replace } objects."
-						break
-					}
-
-					const parsedPatches: MultiPatchChunk[] = []
-					for (const p of rawPatches) {
-						if (p && typeof p === "object") {
-							const search = p.search ?? p.old_str ?? p.old ?? p.find ?? p.target
-							const replace = p.replace ?? p.new_str ?? p.new ?? p.replacement ?? ""
-							if (typeof search === "string" && search.length > 0) {
-								parsedPatches.push({ search, replace: String(replace) })
-							}
-						}
-					}
-
-					if (parsedPatches.length === 0) {
-						result = "ERROR: No valid search/replace patches found in the patches array."
-						break
-					}
-
-					operations.push({
-						tool: "multi_patch_file",
-						path: args.path,
-						patches: parsedPatches
-					})
-					iterationProducedOperation = true
-					result = `OK: Staged ${parsedPatches.length} patches for ${args.path}`
-					break
-				}
-				case "replace_file": {
-					if (!args.path || typeof args.path !== "string") {
-						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
-						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
-						break
-					}
-					operations.push({ tool: "replace_file", path: args.path, content: args.content ?? "" })
-					iterationProducedOperation = true
-					break
-				}
-				case "delete_file": {
-					if (!args.path || typeof args.path !== "string") {
-						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
-						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
-						break
-					}
-					operations.push({ tool: "delete_file", path: args.path })
-					iterationProducedOperation = true
-					break
-				}
-				case "move_file": {
-					if (!args.path || typeof args.path !== "string" || !args.to || typeof args.to !== "string") {
-						jobLog(`  ⚠ ${name} missing path or to, skipping`, "warn")
-						result = "ERROR: both 'path' and 'to' arguments are required and must be non-empty strings."
-						break
-					}
-					operations.push({ tool: "move_file", path: args.path, to: args.to })
-					iterationProducedOperation = true
-					break
-				}
-				case "copy_file": {
-					if (!args.path || typeof args.path !== "string" || !args.to || typeof args.to !== "string") {
-						jobLog(`  ⚠ ${name} missing path or to, skipping`, "warn")
-						result = "ERROR: both 'path' and 'to' arguments are required and must be non-empty strings."
-						break
-					}
-					operations.push({ tool: "copy_file", path: args.path, to: args.to })
-					iterationProducedOperation = true
-					break
-				}
-				case "create_directory": {
-					if (!args.path || typeof args.path !== "string") {
-						jobLog(`  ⚠ ${name} missing path, skipping`, "warn")
-						result = "ERROR: path argument is required and must be a non-empty string. Use the 'path' parameter."
-						break
-					}
-					operations.push({ tool: "create_directory", path: args.path })
-					iterationProducedOperation = true
-					break
 				}
 			}
 
@@ -672,7 +715,7 @@ export async function generateToolCalls(prompt: string, projectDir: string, opti
 			})
 		}
 
-		// Fix 3: Track consecutive read-only iterations and nudge the AI
+		// Track consecutive read-only iterations and nudge the AI
 		if (iterationProducedOperation) {
 			consecutiveReadOnlyIterations = 0
 		} else {
@@ -691,10 +734,12 @@ export async function generateToolCalls(prompt: string, projectDir: string, opti
 				consecutiveReadOnlyIterations = 0
 			}
 		}
-
-		// If the model indicated it's done (stop or no more tool calls), break
-		if (choice.finish_reason === "stop") break
+		// Deliberately no break on finish_reason "stop" here: several providers
+		// report "stop" alongside tool calls, and breaking then cut generation
+		// off after the first batch of files. The model ends the pass by
+		// replying without tool calls.
 	}
 
+	if (iterations >= maxIterations) jobLog(`  [ai] Reached the ${maxIterations}-iteration limit`, "warn")
 	return operations
 }
