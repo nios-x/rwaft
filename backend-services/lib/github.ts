@@ -1,0 +1,264 @@
+import { gunzipSync } from "node:zlib"
+import { getRedisClient } from "./redis.ts"
+import { sourceKey } from "./constants.ts"
+
+/**
+ * "Push to GitHub" through a GitHub OAuth App.
+ *
+ * Each push runs its own authorization and the access token is revoked as soon
+ * as the push ends, so no GitHub credential is ever stored. GitHub remembers
+ * the user's consent, so after the first time the popup only flashes.
+ */
+export const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID?.trim() || ""
+const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET?.trim() || ""
+export const isGitHubConfigured = Boolean(GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET)
+
+const API = "https://api.github.com"
+const GITHUB_TIMEOUT_MS = Number(process.env.GITHUB_TIMEOUT_MS || 30_000)
+/** Blob uploads in flight at once: fast enough, and well under GitHub's secondary rate limits. */
+const BLOB_BATCH_SIZE = 6
+
+/** See the note on FetchResponse in index.ts: Bun's types lack the DOM Response. */
+type FetchResponse = {
+	ok: boolean
+	status: number
+	text(): Promise<string>
+}
+
+export class GitHubError extends Error {
+	constructor(readonly status: number, message: string, readonly detail: string = "") {
+		super(message)
+	}
+}
+
+async function request<T>(url: string, init: { method: string; headers: Record<string, string>; body?: unknown }): Promise<T> {
+	const controller = new AbortController()
+	const timer = setTimeout(() => controller.abort(), GITHUB_TIMEOUT_MS)
+	try {
+		const response = await fetch(url, {
+			method: init.method,
+			headers: {
+				Accept: "application/vnd.github+json",
+				"User-Agent": "rwaft",
+				"X-GitHub-Api-Version": "2022-11-28",
+				...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+				...init.headers
+			},
+			body: init.body === undefined ? undefined : JSON.stringify(init.body),
+			signal: controller.signal
+		}) as unknown as FetchResponse
+		const text = await response.text()
+		let data: unknown = {}
+		try {
+			data = text ? JSON.parse(text) : {}
+		} catch { /* a non-JSON error page; reported by status below */ }
+		if (!response.ok) {
+			const message = (data as { message?: unknown }).message
+			throw new GitHubError(response.status, typeof message === "string" ? message : `GitHub returned ${response.status}`, text.slice(0, 500))
+		}
+		return data as T
+	} finally {
+		clearTimeout(timer)
+	}
+}
+
+const api = <T>(token: string, method: string, path: string, body?: unknown) =>
+	request<T>(`${API}${path}`, { method, headers: { Authorization: `Bearer ${token}` }, body })
+
+// ── OAuth ───────────────────────────────────────────────────────────────────
+
+/**
+ * Least privilege per push: `public_repo` cannot read or write any private
+ * repository, so it is only widened to `repo` when the user asked for a
+ * private one.
+ */
+export function authorizeUrl(state: string, redirectUri: string, privateRepo: boolean): string {
+	const params = new URLSearchParams({
+		client_id: GITHUB_CLIENT_ID,
+		redirect_uri: redirectUri,
+		scope: privateRepo ? "repo" : "public_repo",
+		state,
+		allow_signup: "true"
+	})
+	return `https://github.com/login/oauth/authorize?${params}`
+}
+
+export async function exchangeCode(code: string, redirectUri: string): Promise<string> {
+	const data = await request<{ access_token?: string; error_description?: string }>("https://github.com/login/oauth/access_token", {
+		method: "POST",
+		headers: { Accept: "application/json" },
+		body: { client_id: GITHUB_CLIENT_ID, client_secret: GITHUB_CLIENT_SECRET, code, redirect_uri: redirectUri }
+	})
+	if (!data.access_token) throw new GitHubError(401, data.error_description || "GitHub did not return an access token")
+	return data.access_token
+}
+
+/** Ends the token's life the moment the push is over. Failure here is logged, never surfaced. */
+export async function revokeToken(token: string): Promise<void> {
+	const basic = Buffer.from(`${GITHUB_CLIENT_ID}:${GITHUB_CLIENT_SECRET}`).toString("base64")
+	await request(`${API}/applications/${GITHUB_CLIENT_ID}/token`, {
+		method: "DELETE",
+		headers: { Authorization: `Basic ${basic}` },
+		body: { access_token: token }
+	})
+}
+
+// ── Source snapshots ────────────────────────────────────────────────────────
+
+export interface SourceFile {
+	path: string
+	/** base64 */
+	content: string
+}
+
+export interface SourceSnapshot {
+	owner: string
+	fileCount: number
+	/** Set once pushed; the files themselves are dropped at that point. */
+	repoUrl?: string
+}
+
+export async function readSnapshot(buildId: string): Promise<SourceSnapshot | null> {
+	const redis = await getRedisClient()
+	const [owner, fileCount, repoUrl] = await redis.hmGet(sourceKey(buildId), ["owner", "fileCount", "repoUrl"])
+	if (!owner) return null
+	return { owner, fileCount: Number(fileCount) || 0, repoUrl: repoUrl || undefined }
+}
+
+export async function readSnapshotFiles(buildId: string): Promise<SourceFile[] | null> {
+	const redis = await getRedisClient()
+	const packed = await redis.hGet(sourceKey(buildId), "files")
+	if (!packed) return null
+	const files = JSON.parse(gunzipSync(Buffer.from(packed, "base64")).toString("utf-8")) as SourceFile[]
+	return Array.isArray(files) ? files : null
+}
+
+/**
+ * The source has done its job once it is on GitHub. Keep only the repo link,
+ * still under the snapshot's own expiry, so the console can show it.
+ */
+export async function markSnapshotPushed(buildId: string, repoUrl: string): Promise<void> {
+	const redis = await getRedisClient()
+	await redis.multi()
+		.hDel(sourceKey(buildId), "files")
+		.hSet(sourceKey(buildId), "repoUrl", repoUrl)
+		.exec()
+}
+
+// ── Pushing ─────────────────────────────────────────────────────────────────
+
+/** GitHub's own rule for repository names. */
+export const isRepositoryName = (value: unknown): value is string =>
+	typeof value === "string" && /^[A-Za-z0-9._-]{1,100}$/.test(value) && value !== "." && value !== ".."
+
+interface Repository {
+	full_name: string
+	html_url: string
+	default_branch: string
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Takes the requested name, or name-2 … name-5 when the user already has it. */
+async function createRepository(token: string, name: string, privateRepo: boolean): Promise<Repository> {
+	for (let attempt = 1; attempt <= 5; attempt++) {
+		const candidate = attempt === 1 ? name : `${name.slice(0, 97)}-${attempt}`
+		try {
+			// auto_init: GitHub's Git Data API refuses to write to an empty repository,
+			// so it needs one commit to exist. That commit is replaced below.
+			return await api<Repository>(token, "POST", "/user/repos", {
+				name: candidate,
+				private: privateRepo,
+				description: "Built with rwaft",
+				auto_init: true
+			})
+		} catch (error) {
+			if (error instanceof GitHubError && error.status === 422 && /already exists/i.test(error.detail)) continue
+			throw error
+		}
+	}
+	throw new GitHubError(422, `You already have repositories named ${name} through ${name}-5. Pick another name.`)
+}
+
+/** auto_init's commit lands a moment after the repo itself; writing before it 409s. */
+async function waitForBranch(token: string, repo: Repository): Promise<void> {
+	for (let attempt = 0; attempt < 10; attempt++) {
+		try {
+			await api(token, "GET", `/repos/${repo.full_name}/git/ref/heads/${repo.default_branch}`)
+			return
+		} catch (error) {
+			if (!(error instanceof GitHubError) || (error.status !== 404 && error.status !== 409)) throw error
+			await sleep(500)
+		}
+	}
+	throw new GitHubError(504, "GitHub created the repository but it never became ready")
+}
+
+const readme = (name: string) => `# ${name}
+
+Built with [rwaft](https://github.com/nios-x/rwaft): a React + TypeScript app on Vite, styled with Tailwind CSS.
+
+## Run it locally
+
+\`\`\`bash
+npm install
+npm run dev
+\`\`\`
+
+## Build for production
+
+\`\`\`bash
+npm run build
+\`\`\`
+
+The output is in \`dist/\`, ready for any static host.
+`
+
+/**
+ * Creates a repository on the user's account and writes the whole source as
+ * one commit. The commit has no parent and the branch is moved onto it, so the
+ * repository's history is that single commit, not GitHub's placeholder README
+ * plus ours.
+ */
+export async function pushToNewRepository(token: string, name: string, privateRepo: boolean, files: SourceFile[]): Promise<Repository> {
+	const repo = await createRepository(token, name, privateRepo)
+	try {
+		await waitForBranch(token, repo)
+
+		// The scaffold's README describes the template, not this app.
+		const repoName = repo.full_name.split("/")[1] || name
+		const contents = [
+			...files.filter((file) => file.path.toLowerCase() !== "readme.md"),
+			{ path: "README.md", content: Buffer.from(readme(repoName)).toString("base64") }
+		]
+
+		const tree: { path: string; mode: "100644"; type: "blob"; sha: string }[] = []
+		for (let index = 0; index < contents.length; index += BLOB_BATCH_SIZE) {
+			const batch = contents.slice(index, index + BLOB_BATCH_SIZE)
+			tree.push(...await Promise.all(batch.map(async (file) => {
+				const blob = await api<{ sha: string }>(token, "POST", `/repos/${repo.full_name}/git/blobs`, {
+					content: file.content,
+					encoding: "base64"
+				})
+				return { path: file.path, mode: "100644" as const, type: "blob" as const, sha: blob.sha }
+			})))
+		}
+
+		const created = await api<{ sha: string }>(token, "POST", `/repos/${repo.full_name}/git/trees`, { tree })
+		const commit = await api<{ sha: string }>(token, "POST", `/repos/${repo.full_name}/git/commits`, {
+			message: "Initial commit from rwaft",
+			tree: created.sha,
+			parents: []
+		})
+		await api(token, "PATCH", `/repos/${repo.full_name}/git/refs/heads/${repo.default_branch}`, { sha: commit.sha, force: true })
+		return repo
+	} catch (error) {
+		// The token cannot delete repositories (that needs delete_repo), so say
+		// where the half-made one is rather than leave the user to find it.
+		const reason = error instanceof Error ? error.message : String(error)
+		throw new GitHubError(
+			error instanceof GitHubError ? error.status : 502,
+			`GitHub created ${repo.html_url} but the files could not be pushed (${reason}). Delete that repository and try again.`
+		)
+	}
+}

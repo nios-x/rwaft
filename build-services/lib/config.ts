@@ -25,6 +25,8 @@ export const BUILD_WAITING = "rwaft:builds:waiting"
 export const BUILD_ACTIVE = "rwaft:builds:active"
 export const userKey = (userId: string) => `rwaft:user:${userId}`
 export const refundKey = (jobId: string) => `rwaft:billing:refunded:${jobId}`
+/** A generated app's source, kept for "Push to GitHub". Expires on its own. */
+export const sourceKey = (jobId: string) => `rwaft:source:${jobId}`
 
 const redisUrl = process.env.REDIS_URL
 

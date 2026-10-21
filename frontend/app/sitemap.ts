@@ -1,9 +1,9 @@
 import type { MetadataRoute } from "next";
-import { SITE_URL } from "../lib/site";
+import { LEGAL_UPDATED, SITE_URL } from "../lib/site";
 
 /**
- * The console is one page. Builds open in place rather than at their own
- * route, and deployed sites live on the API's hosts, so neither belongs here.
+ * Every indexable page. Builds open in place rather than at their own route,
+ * and deployed sites live on the API's hosts, so neither belongs here.
  */
 export default function sitemap(): MetadataRoute.Sitemap {
   return [
@@ -12,6 +12,18 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified: new Date(),
       changeFrequency: "weekly",
       priority: 1,
+    },
+    {
+      url: `${SITE_URL}/privacy`,
+      lastModified: new Date(LEGAL_UPDATED),
+      changeFrequency: "yearly",
+      priority: 0.3,
+    },
+    {
+      url: `${SITE_URL}/terms`,
+      lastModified: new Date(LEGAL_UPDATED),
+      changeFrequency: "yearly",
+      priority: 0.3,
     },
   ];
 }

@@ -29,6 +29,12 @@ export const refundKey = (jobId: string) => `rwaft:billing:refunded:${jobId}`
 /** Set once per Stripe Checkout Session, so a redelivered webhook cannot credit twice. */
 export const fulfilledKey = (checkoutId: string) => `rwaft:billing:fulfilled:${checkoutId}`
 
+// ── GitHub export ───────────────────────────────────────────────────────────
+/** A generated app's source, written by the worker when the build goes live. Expires on its own. */
+export const sourceKey = (jobId: string) => `rwaft:source:${jobId}`
+/** One "Push to GitHub" request, from the button press to the OAuth callback. */
+export const githubPushKey = (pushId: string) => `rwaft:github:push:${pushId}`
+
 /** The tokens a job paid for, carried on the job so the worker can refund a failed build. */
 export interface JobCharge {
 	userId: string

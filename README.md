@@ -381,8 +381,8 @@ files are git-ignored and are excluded from Docker images.
 | `PORT` | `number` | No | HTTP port (the platform usually injects this) | `3000` |
 | `DEPLOYMENT_DOMAIN` | `string` | No | Root domain for subdomain-style deployment URLs | — |
 | `DEPLOYMENT_WILDCARD` | `bool` | No | Set `true` **only** with real wildcard DNS + wildcard TLS. Otherwise URLs stay path-based | `false` |
-| `DEPLOY_RATE_LIMIT` | `number` | No | `/deploy` requests per user/IP per hour | `5` |
-| `PROMPT_RATE_LIMIT` | `number` | No | `/prompt` requests per user/IP per hour | `3` |
+| `DEPLOY_RATE_LIMIT` | `number` | No | `/deploy` requests per account/IP per hour | `5` free, `20` with `PROD=true` |
+| `PROMPT_RATE_LIMIT` | `number` | No | `/prompt` requests per account/IP per hour. Keep it above `SIGNUP_TOKENS`, or new users are rate-limited before they can spend their free credits | `3` free, `20` with `PROD=true` |
 | `ALLOWED_REPO_HOSTS` | `string` | No | Hosts `/deploy` may clone from; `*` allows any public host | `github.com,gitlab.com,bitbucket.org` |
 | `MAX_PROMPT_CHARS` | `number` | No | Longest accepted prompt | `8000` |
 | `JSON_BODY_LIMIT` | `string` | No | Max request body size | `64kb` |
@@ -419,7 +419,10 @@ files are git-ignored and are excluded from Docker images.
 
 | Variable | Type | Required | Description | Default |
 | :--- | :---: | :---: | :--- | :--- |
-| `NEXT_PUBLIC_BACKEND_URL` | `string` | **Yes** (prod) | Origin of the API. Inlined at build time, so it must be set **before** the production build runs. There is no hardcoded production fallback | dev `http://localhost:3000` |
+| `NEXT_PUBLIC_BACKEND_URL` | `string` | **Yes** (prod) | Origin of the API. Inlined at build time, so it must be set **before** the production build runs. There is no hardcoded production fallback. The home page also reads `/auth/config` from it (hourly) to render pricing for search engines | dev `http://localhost:3000` |
+| `NEXT_PUBLIC_SITE_URL` | `string` | No | Canonical origin for canonical links, Open Graph, sitemap and robots | `https://rwaft.live` |
+| `NEXT_PUBLIC_CONTACT_EMAIL` | `string` | No | Privacy and support inbox shown on `/privacy` and `/terms` | GitHub issues link |
+| `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` / `NEXT_PUBLIC_BING_SITE_VERIFICATION` | `string` | No | Search Console / Bing Webmaster ownership tags | — |
 
 ---
 
@@ -629,9 +632,22 @@ would request its bundles from `/assets/...` and render a blank page.
 - [ ] Real `.env` files are not committed (they are git-ignored and
       `.dockerignore`d)
 - [ ] **Google sign-in:** API `GOOGLE_CLIENT_ID` is the *Client ID*
-      (`…apps.googleusercontent.com`), never the `GOCSPX-…` secret, and the
-      console's origin (e.g. `https://rwaft.vercel.app`) is listed under the
-      OAuth client's **Authorized JavaScript origins**
+      (`…apps.googleusercontent.com`), never the `GOCSPX-…` secret, and every
+      console origin is listed under the OAuth client's **Authorized
+      JavaScript origins**: `https://rwaft.live`, `https://rwaft.vercel.app`,
+      and for local work both `http://localhost` and `http://localhost:3001`.
+      A missing origin shows the button but fails with *"The given origin is
+      not allowed for the given client ID"* in the browser console
+- [ ] **OAuth consent screen** is *In production* (in *Testing*, only listed
+      test users can sign in) with the home page, `https://rwaft.live/privacy`
+      and `https://rwaft.live/terms` filled in. The `openid email profile`
+      scopes need no Google verification
+- [ ] **Legal pages** reviewed: `/privacy` and `/terms` are a starting point
+      written from what the code does, not legal advice; set
+      `NEXT_PUBLIC_CONTACT_EMAIL` so they name a real inbox
+- [ ] **Search:** submit `https://rwaft.live/sitemap.xml` in Google Search
+      Console and Bing Webmaster Tools (verify via DNS or the
+      `NEXT_PUBLIC_*_SITE_VERIFICATION` variables)
 - [ ] **Credits:** `PROD=true` on the API *after* sign-in works (with no
       client ID nobody can sign in, so nobody can build); defaults are 5 free
       credits and 1 per message (`SIGNUP_TOKENS`, `PROMPT_TOKEN_COST`)

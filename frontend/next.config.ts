@@ -38,8 +38,19 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
+          // Google sign-in needs the origin in the referrer; `no-referrer`
+          // would break the button.
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          // Browsers honour this only over HTTPS, so local http is unaffected.
+          // No includeSubDomains: deployed sites live on *.rwaft.live and must
+          // not be pinned to HTTPS by the console before their certificate is.
+          { key: "Strict-Transport-Security", value: "max-age=63072000" },
+          // Deliberately absent:
+          // - Cross-Origin-Opener-Policy: `same-origin` severs the Google
+          //   sign-in popup from this page and sign-in silently fails.
+          // - Permissions-Policy: it also binds the preview iframe, so a
+          //   generated app that uses the camera or location would break there.
         ],
       },
     ];

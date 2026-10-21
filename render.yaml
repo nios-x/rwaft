@@ -66,18 +66,33 @@ services:
         value: "true"
       - key: GOOGLE_CLIENT_ID
         sync: false
+      # 5 free credits on sign-up, 1 per chat message: 5 free chats. A repo
+      # deploy also costs 1. Failed builds are refunded automatically.
+      - key: SIGNUP_TOKENS
+        value: "5"
+      - key: PROMPT_TOKEN_COST
+        value: "1"
+      - key: DEPLOY_TOKEN_COST
+        value: "1"
       - key: STRIPE_SECRET_KEY
         sync: false
       # Webhook endpoint: https://rwaft.onrender.com/billing/webhook
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      # "Push to GitHub": a GitHub OAuth App whose callback URL is
+      # https://rwaft.onrender.com/github/callback. Hidden until both are set.
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
 
-      # Per-hour caps per user/IP. Both endpoints start real builds, so these
-      # are the difference between a demo and someone else's free build farm.
+      # Per-hour caps per account. Credits are the real meter with PROD=true;
+      # these only stop bursts. Keep PROMPT_RATE_LIMIT above SIGNUP_TOKENS, or
+      # a new user is rate-limited before they can spend their free credits.
       - key: DEPLOY_RATE_LIMIT
-        value: "5"
+        value: "20"
       - key: PROMPT_RATE_LIMIT
-        value: "3"
+        value: "20"
 
   # ── Build worker ─────────────────────────────────────────────────────────
   - type: worker

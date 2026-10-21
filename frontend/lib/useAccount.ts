@@ -22,6 +22,8 @@ export interface AuthConfig {
 	payments: "stripe" | null
 	/** Local testing: a free top-up button while no provider is connected. */
 	testCredits: boolean
+	/** True when the API has a GitHub OAuth App, so finished apps can be pushed to GitHub. */
+	github?: boolean
 }
 
 export interface Account {
@@ -70,6 +72,9 @@ export interface AccountState {
 	token: string | null
 	/** True until the stored session has been checked against the API. */
 	checking: boolean
+	/** True right after a sign-in that created the account, until dismissed. */
+	newAccount: boolean
+	dismissNewAccount: () => void
 	signIn: (credential: string) => Promise<void>
 	signOut: () => void
 	refresh: () => Promise<Account | null>
@@ -82,17 +87,31 @@ export function useAccount(): AccountState {
 	const [config, setConfig] = useState<AuthConfig | null>(null)
 	const [account, setAccount] = useState<Account | null>(null)
 	const [checkedToken, setCheckedToken] = useState<string | null>(null)
+	const [newAccount, setNewAccount] = useState(false)
 
+	// Without the config there is no sign-in button, so one failed request (an
+	// API restarting mid-deploy, a dropped connection) used to leave the page
+	// unable to sign anyone in until a reload. Keep asking, backing off to 30s.
 	useEffect(() => {
 		if (!isBackendConfigured) return
 		let cancelled = false
-		void (async () => {
+		let timer: ReturnType<typeof setTimeout> | undefined
+		const load = async (attempt: number) => {
 			try {
 				const response = await fetch(`${BACKEND_URL}/auth/config`)
-				if (response.ok && !cancelled) setConfig(await response.json() as AuthConfig)
-			} catch { /* the console still works anonymously in free mode */ }
-		})()
-		return () => { cancelled = true }
+				if (response.ok) {
+					const data = await response.json() as AuthConfig
+					if (!cancelled) setConfig(data)
+					return
+				}
+			} catch { /* retried below */ }
+			if (!cancelled) timer = setTimeout(() => void load(attempt + 1), Math.min(1_000 * 2 ** attempt, 30_000))
+		}
+		void load(0)
+		return () => {
+			cancelled = true
+			clearTimeout(timer)
+		}
 	}, [])
 
 	const refresh = useCallback(async (): Promise<Account | null> => {
@@ -135,12 +154,15 @@ export function useAccount(): AccountState {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ credential })
 		})
-		const data = await readApiJson<{ token?: string; account?: Account; message?: string }>(response)
+		const data = await readApiJson<{ token?: string; account?: Account; created?: boolean; message?: string }>(response)
 		if (!response.ok || !data.token || !data.account) throw new Error(data.message || "Sign-in failed")
 		writeToken(data.token)
 		setAccount(data.account)
 		setCheckedToken(data.token)
+		setNewAccount(data.created === true)
 	}, [])
+
+	const dismissNewAccount = useCallback(() => setNewAccount(false), [])
 
 	const signOut = useCallback(() => {
 		const current = readToken()
@@ -149,6 +171,7 @@ export function useAccount(): AccountState {
 		}
 		writeToken(null)
 		setAccount(null)
+		setNewAccount(false)
 		// Without this Google would sign the same account straight back in.
 		window.google?.accounts.id.disableAutoSelect()
 	}, [])
@@ -167,6 +190,8 @@ export function useAccount(): AccountState {
 		account: token ? account : null,
 		token,
 		checking: Boolean(token) && checkedToken !== token,
+		newAccount: Boolean(token) && newAccount,
+		dismissNewAccount,
 		signIn,
 		signOut,
 		refresh,
@@ -203,8 +228,13 @@ declare global {
 
 let gisLoading: Promise<void> | null = null
 let initializedFor: string | null = null
-/** GIS takes one callback per page; every rendered button routes through it. */
-let credentialHandler: ((credential: string) => void) | null = null
+/**
+ * GIS takes one callback per page; every rendered button routes through it.
+ * A stack rather than a single slot: with two buttons mounted, the old slot
+ * was nulled by whichever unmounted first, and the survivor's sign-in then
+ * went nowhere.
+ */
+const credentialHandlers: Array<(credential: string) => void> = []
 
 export function loadGoogleIdentity(clientId: string): Promise<void> {
 	if (!gisLoading) {
@@ -225,12 +255,17 @@ export function loadGoogleIdentity(clientId: string): Promise<void> {
 		window.google.accounts.id.initialize({
 			client_id: clientId,
 			ux_mode: "popup",
-			callback: (response) => credentialHandler?.(response.credential)
+			callback: (response) => credentialHandlers.at(-1)?.(response.credential)
 		})
 		initializedFor = clientId
 	})
 }
 
-export const setCredentialHandler = (handler: ((credential: string) => void) | null) => {
-	credentialHandler = handler
+/** Registers a button's sign-in handler; returns the unregister function. */
+export const registerCredentialHandler = (handler: (credential: string) => void) => {
+	credentialHandlers.push(handler)
+	return () => {
+		const index = credentialHandlers.lastIndexOf(handler)
+		if (index >= 0) credentialHandlers.splice(index, 1)
+	}
 }

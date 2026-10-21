@@ -48,17 +48,20 @@ export const isAccountId = (value: string) => value.startsWith("g-")
  */
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex")
 
-export async function upsertGoogleAccount(profile: GoogleProfile): Promise<Account> {
+/** `created` is true only for the sign-in that made the account, i.e. the sign-up. */
+export async function upsertGoogleAccount(profile: GoogleProfile): Promise<{ account: Account; created: boolean }> {
 	const id = accountIdFor(profile.sub)
 	const key = userKey(id)
 	const redis = await getRedisClient()
 	await redis.hSet(key, { email: profile.email, name: profile.name, picture: profile.picture })
-	// HSETNX makes the signup grant once-only even if two first logins race.
-	await redis.hSetNX(key, "tokens", String(SIGNUP_TOKENS))
+	// HSETNX makes the signup grant once-only even if two first logins race, and
+	// whichever login wins it is the one that reports the sign-up.
+	const created = Number(await redis.hSetNX(key, "tokens", String(SIGNUP_TOKENS))) === 1
 	await redis.hSetNX(key, "createdAt", new Date().toISOString())
 	const account = await getAccount(id)
 	if (!account) throw new Error("Account vanished after creation")
-	return account
+	if (created) console.log(`[auth] New account ${id} granted ${SIGNUP_TOKENS} credits`)
+	return { account, created }
 }
 
 export async function getAccount(id: string): Promise<Account | null> {

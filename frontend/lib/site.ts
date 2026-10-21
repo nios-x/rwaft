@@ -20,3 +20,16 @@ export const SITE_DESCRIPTION =
 	"Describe an app in plain words. rwaft's AI writes it, builds it and hosts it at its own URL while you watch the real build. Or deploy a public React repo."
 
 export const SOURCE_URL = "https://github.com/nios-x/rwaft"
+export const AUTHOR_HANDLE = "nios-x"
+export const AUTHOR_URL = `https://github.com/${AUTHOR_HANDLE}`
+
+/**
+ * Where the legal pages send privacy and support requests. Without an address
+ * they point at the issue tracker rather than an inbox nobody reads.
+ */
+export const CONTACT_EMAIL = process.env.NEXT_PUBLIC_CONTACT_EMAIL?.trim() || ""
+export const CONTACT_URL = CONTACT_EMAIL ? `mailto:${CONTACT_EMAIL}` : `${SOURCE_URL}/issues`
+export const CONTACT_LABEL = CONTACT_EMAIL || "the rwaft issue tracker on GitHub"
+
+/** When the privacy policy and terms last changed. Update it with them. */
+export const LEGAL_UPDATED = "2026-10-21"

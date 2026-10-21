@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { BACKEND_URL, readApiJson } from "../../lib/config"
-import { loadGoogleIdentity, setCredentialHandler, type AccountState, type TokenPack } from "../../lib/useAccount"
+import { loadGoogleIdentity, registerCredentialHandler, type AccountState, type TokenPack } from "../../lib/useAccount"
 import type { Theme } from "../../lib/useTheme"
 import { ChevronDown, CoinIcon, SignOutIcon } from "./Icons"
 
@@ -18,14 +18,12 @@ export function GoogleButton({ auth, theme, width = 220 }: { auth: AccountState;
 	const clientId = auth.config?.googleClientId
 	const { signIn } = auth
 
-	useEffect(() => {
-		setCredentialHandler((credential) => {
-			signIn(credential).catch((failure: unknown) => {
-				setError(failure instanceof Error ? failure.message : "Sign-in failed")
-			})
+	useEffect(() => registerCredentialHandler((credential) => {
+		setError("")
+		signIn(credential).catch((failure: unknown) => {
+			setError(failure instanceof Error ? failure.message : "Sign-in failed")
 		})
-		return () => setCredentialHandler(null)
-	}, [signIn])
+	}), [signIn])
 
 	useEffect(() => {
 		if (!clientId) return
@@ -38,7 +36,8 @@ export function GoogleButton({ auth, theme, width = 220 }: { auth: AccountState;
 					theme: theme === "dark" ? "filled_black" : "outline",
 					size: "large",
 					shape: "pill",
-					text: "signin_with",
+					// One button for both: a first sign-in creates the account.
+					text: "continue_with",
 					logo_alignment: "left",
 					width,
 				})
@@ -171,13 +170,13 @@ export function TokenShop({ auth }: { auth: AccountState }) {
 				<button type="button" className="text-btn" popoverTarget={TOKEN_SHOP_ID} popoverTargetAction="hide">Close</button>
 			</header>
 			<p className="shop-costs">
-				You have <strong>{account.tokens} credit{account.tokens === 1 ? "" : "s"}</strong>. Every message costs {config.costs.prompt}, a repo deploy {config.costs.deploy}, and failed builds are refunded.
+				You have <strong>{account.tokens} credit{account.tokens === 1 ? "" : "s"}</strong>. Every chat costs {config.costs.prompt}, a repo deploy {config.costs.deploy}, and failed builds are refunded.
 			</p>
 			<ul className="shop-packs">
 				{config.packs.map((pack) => (
 					<li key={pack.id} className="shop-pack">
 						<span className="shop-pack-tokens"><strong>{pack.tokens}</strong> credits</span>
-						<span className="shop-pack-builds">about {Math.floor(pack.tokens / Math.max(1, config.costs.prompt))} messages · {formatPrice(pack, config.currency)}</span>
+						<span className="shop-pack-builds">about {Math.floor(pack.tokens / Math.max(1, config.costs.prompt))} chats · {formatPrice(pack, config.currency)}</span>
 						<button type="button" className="pill-btn pill-btn--ink" onClick={() => buy(pack)} disabled={!canPay || pending !== null} aria-busy={pending === pack.id}>
 							{pending === pack.id ? "Opening…" : canPay ? `Pay ${formatPrice(pack, config.currency)}` : "Soon"}
 						</button>

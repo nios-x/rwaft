@@ -1,5 +1,6 @@
 "use client"
 
+import type { ReactNode } from "react"
 import { STATE_LABEL, relativeTime, type BuildView } from "../../lib/builds"
 import { buildTitle } from "../../lib/recentBuilds"
 import { PromptBox, type PromptBoxProps } from "./PromptBox"
@@ -16,14 +17,20 @@ interface HomeProps {
 	prompt: PromptBoxProps
 	builds: BuildView[]
 	onOpen: (id: string) => void
+	/** Server-rendered sections below the fold (see app/page.tsx). */
+	children?: ReactNode
 }
 
-export function Home({ prompt, builds, onOpen }: HomeProps) {
+export function Home({ prompt, builds, onOpen, children }: HomeProps) {
 	return (
 		<main className="home">
-			<section className="hero" aria-labelledby="hero-title">
-				<h1 id="hero-title">What should we build?</h1>
-				<p className="hero-sub">Describe an app in plain words. rwaft writes it, builds it and hosts it, and you watch the real build happen.</p>
+			<section className="hero" id="start" aria-labelledby="hero-title">
+				{/* The eyebrow is part of the heading so the page's h1 names what rwaft is. */}
+				<h1 id="hero-title">
+					<span className="hero-eyebrow">AI website builder</span>
+					What should we build?
+				</h1>
+				<p className="hero-sub">Describe an app in plain words. rwaft writes it, builds it and hosts it at its own link, and you watch the real build happen.</p>
 				<PromptBox {...prompt} size="hero" />
 				{prompt.mode === "prompt" && !prompt.blocked && (
 					<div className="examples" aria-label="Example prompts">
@@ -61,6 +68,8 @@ export function Home({ prompt, builds, onOpen }: HomeProps) {
 					</ul>
 				</section>
 			)}
+
+			{children}
 		</main>
 	)
 }

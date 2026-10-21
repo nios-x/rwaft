@@ -37,6 +37,7 @@ import {
 } from "./lib/joblog.ts"
 import { run, installDependencies, buildProject } from "./lib/run.ts"
 import { withBuildSlot, buildSlotStats } from "./lib/jobslot.ts"
+import { saveSourceSnapshot } from "./lib/source.ts"
 import { assertNoUndefinedIdentifiers } from "./lib/validate.ts"
 import {
 	RUNTIME_DEPENDENCIES,
@@ -854,7 +855,7 @@ async function pump(
 	kind: JobKind,
 	queue: string,
 	processing: string,
-	handler: (payload: JobPayload) => Promise<void>
+	handler: (payload: JobPayload, redis: RedisLike) => Promise<void>
 ) {
 	const redis = createRedisClient()
 	await redis.connect()
@@ -898,7 +899,7 @@ async function pump(
 					jobLog(`Starting ${kind} job ${id}`)
 					await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "building", { EX: STATUS_TTL_SECONDS })
 
-					await withTimeout(handler(payload), JOB_TIMEOUT_MS, `${kind} job ${id}`)
+					await withTimeout(handler(payload, redis), JOB_TIMEOUT_MS, `${kind} job ${id}`)
 				})
 
 				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: STATUS_TTL_SECONDS })
@@ -932,7 +933,7 @@ const deployWorker = () => pump("deploy", "deploy", DEPLOY_QUEUE, DEPLOY_PROCESS
 	await cleanup(payload.id, projectDir)
 })
 
-const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESSING, async (payload) => {
+const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESSING, async (payload, redis) => {
 	if (!payload.prompt) throw new Error("Prompt job carried no prompt text")
 	const projectDir = path.join(root, payload.id)
 
@@ -962,6 +963,15 @@ const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESS
 		payload.assetBase || `/${payload.id}/`
 	)
 	await uploadBuildOutput(payload.id, projectDir)
+
+	// The project directory is deleted when this job ends, so keep the source for
+	// "Push to GitHub". Best effort: the site is already uploaded. An `anon-` id
+	// was made up by the worker, so nobody could prove they own the build.
+	if (!payload.userId.startsWith("anon-")) {
+		await saveSourceSnapshot(redis, payload.id, payload.userId, projectDir).catch((error) => {
+			jobLog(`Could not keep the source for GitHub export: ${(error as Error).message}`, "warn")
+		})
+	}
 })
 
 // ── Health probe ────────────────────────────────────────────────────────────

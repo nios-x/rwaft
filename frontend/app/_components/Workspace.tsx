@@ -6,6 +6,7 @@ import type { LogLine } from "../../lib/useBuildLogs"
 import { clockTime, formatElapsed, type BuildView } from "../../lib/builds"
 import { CheckIcon, ChevronRight, CopyIcon, CrossIcon, ExternalIcon, RefreshIcon } from "./Icons"
 import { PromptBox, type PromptBoxProps } from "./PromptBox"
+import { GitHubExport } from "./GitHubExport"
 
 interface Step {
 	key: string
@@ -77,9 +78,12 @@ interface WorkspaceProps {
 	prompt: PromptBoxProps
 	/** Puts this build's prompt (or repo) back in the box, ready to send again. */
 	onRetry: () => void
+	/** Offer "Push to GitHub" on finished prompt builds; the API has a GitHub app. */
+	githubExport: boolean
+	requestHeaders: () => Record<string, string>
 }
 
-function Chat({ build, lines, connected, failure, billing, prompt, onRetry }: Omit<WorkspaceProps, "stages" | "running">) {
+function Chat({ build, lines, connected, failure, billing, prompt, onRetry, githubExport, requestHeaders }: Omit<WorkspaceProps, "stages" | "running">) {
 	const thread = useRef<HTMLDivElement>(null)
 	const [pinned, setPinned] = useState(true)
 	const steps = useMemo(() => stepsFrom(lines, build.kind), [lines, build.kind])
@@ -134,6 +138,9 @@ function Chat({ build, lines, connected, failure, billing, prompt, onRetry }: Om
 					<div className="msg" data-tone="good">
 						<p><strong>Your site is live.</strong> Share the link with anyone.</p>
 						<a className="msg-link" href={build.url} target="_blank" rel="noreferrer">{build.url} <ExternalIcon /></a>
+						{githubExport && build.kind === "prompt" && (
+							<GitHubExport key={build.id} build={build} headers={requestHeaders} />
+						)}
 					</div>
 				)}
 				{build.state === "failed" && (

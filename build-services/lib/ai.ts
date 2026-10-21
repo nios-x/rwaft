@@ -9,11 +9,34 @@ import "./config.ts"
 
 // ── Client factory ──────────────────────────────────────────────────────────
 
+/**
+ * Gemini's OpenAI-compatible endpoint sends errors as a list,
+ * `[{"error": {...}}]`, and the SDK only reads `body.error`. Every failure
+ * was logged as "503 status code (no body)" with Google's reason thrown away,
+ * so an invalid key looked the same as an overloaded model.
+ */
+async function geminiFetch(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> {
+	const response = await globalThis.fetch(input, init)
+	if (response.ok) return response
+	const text = await response.text()
+	let body = text
+	try {
+		const parsed: unknown = JSON.parse(text)
+		if (Array.isArray(parsed) && parsed.length === 1) body = JSON.stringify(parsed[0])
+	} catch {
+		// Not JSON: the SDK reports the raw text as it is.
+	}
+	const headers = new Headers(response.headers)
+	headers.delete("content-length")
+	headers.delete("content-encoding")
+	return new Response(body, { status: response.status, statusText: response.statusText, headers })
+}
+
 function getGeminiClient(apiKey: string): OpenAI {
 	return new OpenAI({
 		baseURL: process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/",
 		apiKey,
-		fetch: globalThis.fetch,
+		fetch: geminiFetch,
 		// The SDK otherwise retries 429/5xx twice more on the SAME key, hidden
 		// from the log. Retries belong to callWithRetry's round robin.
 		maxRetries: 0
@@ -78,7 +101,8 @@ function getModelChain(): ModelEntry[] {
 		: DEFAULT_GEMINI_MODELS
 
 	// Every key gets a turn on the preferred model before any key drops down
-	// to an older one. Which key goes first is callWithRetry's round robin.
+	// to an older one, unless the model says it is overloaded (OVERLOAD_SWITCH).
+	// Which key goes first is callWithRetry's round robin.
 	for (const model of models) {
 		chain.push(...geminiKeys.map(entry => ({
 			client: () => getGeminiClient(entry.key),
@@ -158,6 +182,27 @@ const cooldownUntil = new Map<string, number>()
 const MINUTE_COOLDOWN_MS = 60_000
 const DAILY_COOLDOWN_MS = 6 * 60 * 60_000
 
+/**
+ * Keys Google refused outright (401/403, or a 400 about the key itself) and
+ * key+model pairs it does not serve (404). Process-wide for the same reason as
+ * cooldownUntil: pages build in parallel, and each one used to rediscover the
+ * same dead key. Outlasts a build; a key fixed in the console comes back
+ * without a restart.
+ */
+const rejectedUntil = new Map<string, number>()
+const REJECTED_COOLDOWN_MS = 30 * 60_000
+
+/**
+ * A 503 means the model is overloaded for everyone, so the next key on the same
+ * model rarely does better. After this many in one pass the call moves to the
+ * next model, and every call puts this one last until OVERLOAD_COOLDOWN_MS.
+ */
+const OVERLOAD_SWITCH = 3
+const overloadedUntil = new Map<string, number>()
+const OVERLOAD_COOLDOWN_MS = 60_000
+
+const isCooling = (until: Map<string, number>, id: string, now: number) => (until.get(id) ?? 0) > now
+
 function isRetryable(error: unknown): boolean {
 	if (error && typeof error === "object" && "status" in error) {
 		const status = (error as any).status
@@ -192,77 +237,108 @@ async function callWithRetry(
 	}
 
 	const idOf = (entry: ModelEntry) => `${entry.model}:${entry.provider}`
+	const usable = (entry: ModelEntry, now: number) => !exhaustedEntries.has(idOf(entry))
+		&& !isCooling(rejectedUntil, idOf(entry), now)
+		&& !isCooling(rejectedUntil, entry.provider, now)
 	const models = [...new Set(modelChain.map((entry) => entry.model))]
+	let attempt = 0
 
-	for (const model of models) {
-		const keys = modelChain.filter((entry) => entry.model === model)
-		// Each key gets up to MAX_RETRIES tries on this model, one at a time in
-		// rotation, never the same key twice in a row while another is usable.
-		const budget = keys.length * MAX_RETRIES
-		let timeouts = 0
-		let failuresThisPass = 0
+	// A round gives every model one pass over its keys. Rounds rather than one
+	// model's keys × MAX_RETRIES, so an overloaded model costs a few calls, not
+	// the whole budget, before the next model gets a turn.
+	for (let round = 1; round <= MAX_RETRIES; round++) {
+		const roundStart = Date.now()
+		// A model that just said "overloaded" goes last, not away: it may be the
+		// only one these keys can reach.
+		const order = [
+			...models.filter((model) => !isCooling(overloadedUntil, model, roundStart)),
+			...models.filter((model) => isCooling(overloadedUntil, model, roundStart))
+		]
 
-		for (let attempt = 1; attempt <= budget; attempt++) {
-			const now = Date.now()
-			const live = keys.filter((entry) => !exhaustedEntries.has(idOf(entry)))
-			if (live.length === 0) break
-			// Rate-limited keys sit out their cooldown, unless every key is cooling.
-			const ready = live.filter((entry) => (cooldownUntil.get(idOf(entry)) ?? 0) <= now)
-			const pool = ready.length > 0 ? ready : live
-			const entry = pool[roundRobin++ % pool.length]!
-			const entryId = idOf(entry)
+		for (const model of order) {
+			const keys = modelChain.filter((entry) => entry.model === model)
+			// Each usable key at most once per pass, in rotation.
+			const tried = new Set<string>()
+			let overloads = 0
+			let timeouts = 0
 
-			const controller = new AbortController()
-			const timer = setTimeout(() => controller.abort(), timeoutMs)
-			try {
-				jobLog(`  [ai] Calling ${entry.model} via ${entry.provider} (attempt ${attempt})`)
-				const response = await entry.client().chat.completions.create({
-					model: entry.model,
-					messages,
-					...(tools ? { tools } : {}),
-					...(effort ? { reasoning_effort: effort } : {})
-				}, { signal: controller.signal })
-				return response
-			} catch (error: unknown) {
-				const status = (error as any)?.status
-				const timedOut = controller.signal.aborted
-				const errorResponse = getErrorResponse(error)
-				if (status === 400 && effort && /reasoning/i.test(`${(error as Error).message} ${errorResponse}`)) {
-					jobLog(`  [ai] ${entry.model} does not accept reasoning_effort; retrying without it`, "warn")
-					effort = undefined
-					attempt--
-					continue
+			while (true) {
+				const now = Date.now()
+				const live = keys.filter((entry) => usable(entry, now) && !tried.has(idOf(entry)))
+				if (live.length === 0) break
+				// Rate-limited keys sit out their cooldown, unless every key is cooling.
+				const ready = live.filter((entry) => !isCooling(cooldownUntil, idOf(entry), now))
+				const pool = ready.length > 0 ? ready : live
+				const entry = pool[roundRobin++ % pool.length]!
+				const entryId = idOf(entry)
+
+				const controller = new AbortController()
+				const timer = setTimeout(() => controller.abort(), timeoutMs)
+				try {
+					jobLog(`  [ai] Calling ${entry.model} via ${entry.provider} (attempt ${++attempt})`)
+					const response = await entry.client().chat.completions.create({
+						model: entry.model,
+						messages,
+						...(tools ? { tools } : {}),
+						...(effort ? { reasoning_effort: effort } : {})
+					}, { signal: controller.signal })
+					return response
+				} catch (error: unknown) {
+					const status = (error as any)?.status
+					const timedOut = controller.signal.aborted
+					const errorResponse = getErrorResponse(error)
+					if (status === 400 && effort && /reasoning/i.test(`${(error as Error).message} ${errorResponse}`)) {
+						jobLog(`  [ai] ${entry.model} does not accept reasoning_effort; retrying without it`, "warn")
+						effort = undefined
+						attempt--
+						continue
+					}
+					tried.add(entryId)
+					const message = timedOut
+						? `request timed out after ${timeoutMs}ms`
+						: (error as Error).message?.slice(0, 160)
+					jobLog(`  ⚠ ${entry.model} error (${status || "timeout"}) via ${entry.provider}: ${message}`, "warn")
+
+					if (status === 429) {
+						// A daily quota will not come back within this job; a per-minute one will.
+						const daily = /per.?day|daily/i.test(`${message} ${errorResponse}`)
+						cooldownUntil.set(entryId, Date.now() + (daily ? DAILY_COOLDOWN_MS : MINUTE_COOLDOWN_MS))
+					} else if (timedOut) {
+						// A model that stalls twice is slow right now, not unlucky: try the next one.
+						if (++timeouts >= 2) break
+					} else if (isRetryable(error)) {
+						if (++overloads >= OVERLOAD_SWITCH) {
+							overloadedUntil.set(model, Date.now() + OVERLOAD_COOLDOWN_MS)
+							break
+						}
+					} else {
+						if (errorResponse) jobLog(`  [ai] Provider response: ${errorResponse}`, "warn")
+						if (status === 401 || status === 403 || (status === 400 && /api[ _]?key/i.test(`${message} ${errorResponse}`))) {
+							// The key itself is bad (invalid, expired, leaked, API not enabled): no model will take it.
+							rejectedUntil.set(entry.provider, Date.now() + REJECTED_COOLDOWN_MS)
+						} else if (status === 404) {
+							// This key cannot reach this model, and will not on the next call either.
+							rejectedUntil.set(entryId, Date.now() + REJECTED_COOLDOWN_MS)
+						} else {
+							// Any other 400: this request will not work on this key and model.
+							exhaustedEntries.add(entryId)
+						}
+					}
+				} finally {
+					clearTimeout(timer)
 				}
-				const message = timedOut
-					? `request timed out after ${timeoutMs}ms`
-					: (error as Error).message?.slice(0, 100)
-				jobLog(`  ⚠ ${entry.model} error (${status || "timeout"}) via ${entry.provider}: ${message}`, "warn")
-				if (errorResponse) jobLog(`  [ai] Provider response: ${errorResponse}`, "warn")
-
-				if (status === 429) {
-					// A daily quota will not come back within this job; a per-minute one will.
-					const daily = /per.?day|daily/i.test(`${message} ${errorResponse}`)
-					cooldownUntil.set(entryId, Date.now() + (daily ? DAILY_COOLDOWN_MS : MINUTE_COOLDOWN_MS))
-				} else if (timedOut) {
-					// A model that stalls twice is slow right now, not unlucky: try the next one.
-					if (++timeouts >= 2) break
-				} else if (!isRetryable(error)) {
-					// 400/401/403/404: this key (or this model on it) will not work. Drop it.
-					exhaustedEntries.add(entryId)
-				}
-
-				// Back off once per full pass over the keys, not after every failure.
-				if (++failuresThisPass >= pool.length) {
-					failuresThisPass = 0
-					const delay = RETRY_BASE_MS * Math.pow(2, Math.min(3, Math.floor(attempt / Math.max(1, pool.length))))
-					jobLog(`  [ai] Every key failed this round; retrying in ${delay}ms...`)
-					await sleep(delay)
-				}
-			} finally {
-				clearTimeout(timer)
 			}
+			jobLog(overloads >= OVERLOAD_SWITCH
+				? `  [ai] ${model} is overloaded, trying the next model...`
+				: `  [ai] ${model} unavailable on every key, trying the next model...`, "warn")
 		}
-		jobLog(`  [ai] ${model} unavailable on every key, trying the next model...`, "warn")
+
+		if (!modelChain.some((entry) => usable(entry, Date.now()))) break
+		if (round < MAX_RETRIES) {
+			const delay = RETRY_BASE_MS * Math.pow(2, Math.min(3, round + 1))
+			jobLog(`  [ai] Every model failed this round; retrying in ${delay}ms...`)
+			await sleep(delay)
+		}
 	}
 	throw new Error("All AI models exhausted — no successful response")
 }

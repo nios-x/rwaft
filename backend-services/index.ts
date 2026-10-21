@@ -1,4 +1,5 @@
 import fs from "node:fs/promises"
+import { randomBytes } from "node:crypto"
 import os from "node:os"
 import path from "node:path"
 import { Readable } from "node:stream"
@@ -14,7 +15,7 @@ import { closeRedis, getRedisClient, isRedisHealthy } from "./lib/redis.ts"
 import { corsmiddlewares, securityHeaders } from "./lib/middleware.ts"
 import { rateLimit } from "./lib/ratelimit.ts"
 import { clearLogHistory, closeLogStream, readLogHistory, subscribeToUserLogs } from "./lib/logstream.ts"
-import { DEPLOY_QUEUE, DEPLOYMENT_STATUS_PREFIX, PROMPT_QUEUE, userKey, type JobCharge } from "./lib/constants.ts"
+import { DEPLOY_QUEUE, DEPLOYMENT_STATUS_PREFIX, PROMPT_QUEUE, githubPushKey, userKey, type JobCharge } from "./lib/constants.ts"
 import {
 	BILLING_ENABLED,
 	SIGNUP_TOKENS,
@@ -40,6 +41,18 @@ import {
 	type CheckoutSession
 } from "./lib/billing.ts"
 import { joinLine, leaveLine, linePosition } from "./lib/queue.ts"
+import {
+	GitHubError,
+	authorizeUrl,
+	exchangeCode,
+	isGitHubConfigured,
+	isRepositoryName,
+	markSnapshotPushed,
+	pushToNewRepository,
+	readSnapshot,
+	readSnapshotFiles,
+	revokeToken
+} from "./lib/github.ts"
 
 const app = express()
 const PORT = Number(process.env.PORT || 3000)
@@ -54,6 +67,13 @@ const MAX_PROMPT_CHARS = Number(process.env.MAX_PROMPT_CHARS || 8_000)
 const SSE_HEARTBEAT_MS = Number(process.env.SSE_HEARTBEAT_MS || 25_000)
 const SSE_HISTORY_LIMIT = Number(process.env.SSE_HISTORY_LIMIT || 300)
 const CLONE_TIMEOUT_MS = Number(process.env.CLONE_TIMEOUT_MS || 120_000)
+/**
+ * Per-hour build caps. In free mode they are the only meter, so they stay
+ * tight. With billing on, credits are the meter and the cap only stops bursts:
+ * at the old 3 an hour, a new account could not spend its own 5 free credits.
+ */
+const PROMPT_RATE_LIMIT = Number(process.env.PROMPT_RATE_LIMIT || (BILLING_ENABLED ? 20 : 3))
+const DEPLOY_RATE_LIMIT = Number(process.env.DEPLOY_RATE_LIMIT || (BILLING_ENABLED ? 20 : 5))
 
 /**
  * Staging area for cloned repositories. Kept in the OS temp dir: the app
@@ -96,7 +116,7 @@ app.use(securityHeaders)
  * it cannot be broken again by however the platform's proxies rewrite Host or
  * X-Forwarded-Proto.
  */
-app.use(["/health", "/healthz", "/session", "/status", "/queue", "/logs", "/deploy", "/prompt", "/auth", "/billing/checkout", "/billing/test-credits"], corsmiddlewares)
+app.use(["/health", "/healthz", "/session", "/status", "/queue", "/logs", "/deploy", "/prompt", "/auth", "/billing/checkout", "/billing/test-credits", "/github"], corsmiddlewares)
 
 // ── Stripe webhook ──────────────────────────────────────────────────────────
 //
@@ -140,7 +160,7 @@ app.post("/billing/webhook", express.raw({ type: "application/json", limit: "1mb
 // A repo URL or a prompt is small; a large body here is either a mistake or an
 // attempt to exhaust memory.
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "64kb" }))
-app.use(["/auth", "/deploy", "/prompt", "/billing/checkout", "/billing/test-credits"], authenticate())
+app.use(["/auth", "/deploy", "/prompt", "/billing/checkout", "/billing/test-credits", "/github"], authenticate())
 app.use("/logs", authenticate({ allowQuery: true }))
 
 const publicOrigin = (req: Request): string => {
@@ -324,7 +344,8 @@ app.get("/auth/config", (_req, res) => {
 		// they can actually be bought.
 		packs: BILLING_ENABLED ? TOKEN_PACKS : [],
 		payments: BILLING_ENABLED && isCheckoutConfigured ? "stripe" : null,
-		testCredits: TEST_CREDITS_ENABLED
+		testCredits: TEST_CREDITS_ENABLED,
+		github: isGitHubConfigured
 	})
 })
 
@@ -352,10 +373,10 @@ app.post(
 		}
 
 		try {
-			const account = await upsertGoogleAccount(profile)
+			const { account, created } = await upsertGoogleAccount(profile)
 			const token = await createSession(account.id)
 			res.setHeader("Cache-Control", "no-store")
-			res.json({ status: "success", token, account })
+			res.json({ status: "success", token, account, created })
 		} catch (error) {
 			console.error("[auth] Sign-in failed:", (error as Error).message)
 			res.status(503).json({ status: "failed", message: "Sign-in is temporarily unavailable" })
@@ -645,7 +666,7 @@ const enqueueJob = async (queue: string, job: { id: string; charge?: JobCharge }
 app.post(
 	"/deploy",
 	requireAccountWhenBilling,
-	rateLimit({ name: "deploy", limit: Number(process.env.DEPLOY_RATE_LIMIT || 5), windowSeconds: 60 * 60 }),
+	rateLimit({ name: "deploy", limit: DEPLOY_RATE_LIMIT, windowSeconds: 60 * 60 }),
 	async (req, res) => {
 		const validation = validateRepositoryUrl((req.body as { url?: unknown } | undefined)?.url)
 		if (!validation.ok) {
@@ -734,7 +755,7 @@ app.post(
 app.post(
 	"/prompt",
 	requireAccountWhenBilling,
-	rateLimit({ name: "prompt", limit: Number(process.env.PROMPT_RATE_LIMIT || 3), windowSeconds: 60 * 60 }),
+	rateLimit({ name: "prompt", limit: PROMPT_RATE_LIMIT, windowSeconds: 60 * 60 }),
 	async (req, res) => {
 		const raw = (req.body as { prompt?: unknown } | undefined)?.prompt
 		const prompt = typeof raw === "string" ? raw.trim() : ""
@@ -773,6 +794,208 @@ app.post(
 		res.status(202).json({ status: "success", id, userId, url: deploymentUrl, charged: charge?.tokens ?? 0 })
 	}
 )
+
+// ── Push a generated app's source to the user's GitHub ──────────────────────
+
+/** Time allowed for GitHub's consent screen; the push record expires with it. */
+const GITHUB_PUSH_TTL_SECONDS = 15 * 60
+
+interface PushRecord {
+	userId: string
+	buildId: string
+	name: string
+	private: boolean
+	state: "authorizing" | "pushing" | "done" | "failed"
+	repoUrl?: string
+	message?: string
+}
+
+const isPushId = (value: string) => /^[A-Za-z0-9_-]{32}$/.test(value)
+
+/**
+ * Whether this request comes from the user a build belongs to: the account it
+ * ran under, or the anonymous id it ran under. Both are accepted because a
+ * build started before signing in still belongs to that visitor afterwards.
+ */
+const isRequester = (owner: string, req: Request, res: Response): boolean => {
+	if (typeof res.locals.accountId === "string" && owner === res.locals.accountId) return true
+	const anonymous = (req.header("x-user-id") || "").trim()
+	return isUserId(anonymous) && !isAccountId(anonymous) && owner === anonymous
+}
+
+/** Must match the OAuth App's "Authorization callback URL" on GitHub exactly. */
+const githubRedirectUri = (req: Request) =>
+	process.env.GITHUB_REDIRECT_URI?.trim() || `${publicOrigin(req)}/github/callback`
+
+const readPush = async (pushId: string): Promise<PushRecord | null> => {
+	const redis = await getRedisClient()
+	const raw = await redis.get(githubPushKey(pushId))
+	return raw ? JSON.parse(raw) as PushRecord : null
+}
+
+const writePush = async (pushId: string, record: PushRecord) => {
+	const redis = await getRedisClient()
+	await redis.set(githubPushKey(pushId), JSON.stringify(record), { EX: GITHUB_PUSH_TTL_SECONDS })
+}
+
+const escapeHtml = (text: string) =>
+	text.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!)
+
+/** What the GitHub popup lands on. The console learns the outcome by polling, so this only has to read well. */
+const sendPushPage = (res: Response, status: number, outcome: "done" | "failed", message: string, repoUrl?: string) => {
+	const title = outcome === "done" ? "Pushed to GitHub" : "Push to GitHub failed"
+	res.status(status).type("html").setHeader("Cache-Control", "no-store")
+	res.send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>`
+		+ `<style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.6 system-ui,sans-serif;background:Canvas;color:CanvasText}main{max-width:440px;padding:32px 24px;text-align:center}h1{margin:0 0 8px;font-size:20px}p{margin:0 0 12px;opacity:.8;overflow-wrap:anywhere}a{color:inherit;font-weight:600}</style>`
+		+ `<main><h1>${title}</h1><p>${escapeHtml(message)}</p>`
+		+ (repoUrl ? `<p><a href="${escapeHtml(repoUrl)}">${escapeHtml(repoUrl.replace(/^https:\/\//, ""))}</a></p>` : "")
+		+ `<p>You can close this window and go back to rwaft.</p></main>`
+		+ (outcome === "done" ? "<script>setTimeout(function(){window.close()},1500)</script>" : "")
+		+ "</html>")
+}
+
+/** Whether this build's source can be pushed, or where it already went. */
+app.get("/github/source/:id", async (req, res) => {
+	res.setHeader("Cache-Control", "no-store")
+	const { id } = req.params
+	if (!isDeploymentId(id)) {
+		res.status(400).json({ status: "failed", message: "Invalid deployment id" })
+		return
+	}
+	try {
+		const snapshot = isGitHubConfigured ? await readSnapshot(id) : null
+		// Someone else's build answers exactly like an expired one.
+		if (!snapshot || !isRequester(snapshot.owner, req, res)) {
+			res.json({ status: "success", available: false, repoUrl: null })
+			return
+		}
+		res.json({ status: "success", available: !snapshot.repoUrl, repoUrl: snapshot.repoUrl ?? null })
+	} catch (error) {
+		console.error("[github] Source lookup failed:", (error as Error).message)
+		res.status(503).json({ status: "failed", message: "GitHub export is temporarily unavailable" })
+	}
+})
+
+/** Starts a push: records what to push, and hands back GitHub's consent URL for the popup. */
+app.post(
+	"/github/push",
+	rateLimit({ name: "github", limit: Number(process.env.GITHUB_RATE_LIMIT || 20), windowSeconds: 60 * 60 }),
+	async (req, res) => {
+		if (!isGitHubConfigured) {
+			res.status(503).json({ status: "failed", message: "Pushing to GitHub isn't set up on this server" })
+			return
+		}
+		const body = (req.body ?? {}) as { id?: unknown; name?: unknown; private?: unknown }
+		if (typeof body.id !== "string" || !isDeploymentId(body.id)) {
+			res.status(400).json({ status: "failed", message: "Invalid deployment id" })
+			return
+		}
+		if (!isRepositoryName(body.name)) {
+			res.status(400).json({ status: "failed", message: "Use letters, numbers, dots, dashes or underscores for the repository name, up to 100 characters" })
+			return
+		}
+		const privateRepo = body.private === true
+
+		try {
+			const snapshot = await readSnapshot(body.id)
+			if (!snapshot || !isRequester(snapshot.owner, req, res)) {
+				res.status(404).json({ status: "failed", code: "source_expired", message: "This build's source is no longer kept. Build the app again to push it to GitHub." })
+				return
+			}
+			if (snapshot.repoUrl) {
+				res.status(409).json({ status: "failed", code: "already_pushed", message: "This build is already on GitHub", repoUrl: snapshot.repoUrl })
+				return
+			}
+
+			const pushId = randomBytes(24).toString("base64url")
+			await writePush(pushId, { userId: snapshot.owner, buildId: body.id, name: body.name, private: privateRepo, state: "authorizing" })
+			res.json({ status: "success", pushId, authorizeUrl: authorizeUrl(pushId, githubRedirectUri(req), privateRepo) })
+		} catch (error) {
+			console.error("[github] Push start failed:", (error as Error).message)
+			res.status(503).json({ status: "failed", message: "GitHub export is temporarily unavailable" })
+		}
+	}
+)
+
+/** Polled by the console while the popup is open. */
+app.get("/github/push/:pushId", async (req, res) => {
+	res.setHeader("Cache-Control", "no-store")
+	const { pushId } = req.params
+	try {
+		const record = isPushId(pushId) ? await readPush(pushId) : null
+		if (!record || !isRequester(record.userId, req, res)) {
+			res.status(404).json({ status: "failed", message: "This push has expired. Start it again." })
+			return
+		}
+		res.json({ status: "success", state: record.state, repoUrl: record.repoUrl ?? null, message: record.message ?? null })
+	} catch (error) {
+		console.error("[github] Push lookup failed:", (error as Error).message)
+		res.status(503).json({ status: "failed", message: "GitHub export is temporarily unavailable" })
+	}
+})
+
+/**
+ * GitHub sends the popup here after the consent screen. The whole push happens
+ * in this request, and the token is revoked before it ends, whatever happened.
+ */
+app.get("/github/callback", async (req, res) => {
+	const pushId = typeof req.query.state === "string" ? req.query.state : ""
+	const code = typeof req.query.code === "string" ? req.query.code : ""
+	if (!isPushId(pushId)) {
+		sendPushPage(res, 400, "failed", "This GitHub link is not valid.")
+		return
+	}
+
+	let record: PushRecord | null
+	try {
+		const redis = await getRedisClient()
+		// One callback per push: a reload or a replayed URL must not push twice.
+		const claimed = await redis.set(`${githubPushKey(pushId)}:claimed`, "1", { NX: true, EX: GITHUB_PUSH_TTL_SECONDS })
+		record = await readPush(pushId)
+		if (!record) {
+			sendPushPage(res, 410, "failed", "This push has expired. Start it again from rwaft.")
+			return
+		}
+		if (claimed !== "OK") {
+			if (record.state === "done") sendPushPage(res, 200, "done", "Your code is on GitHub.", record.repoUrl)
+			else sendPushPage(res, 409, "failed", record.message || "This push is already being handled. Go back to rwaft to see how it went.")
+			return
+		}
+	} catch (error) {
+		console.error("[github] Callback lookup failed:", (error as Error).message)
+		sendPushPage(res, 503, "failed", "GitHub export is temporarily unavailable. Try again in a moment.")
+		return
+	}
+
+	if (!code) {
+		const message = "GitHub access wasn't granted, so nothing was pushed."
+		await writePush(pushId, { ...record, state: "failed", message }).catch(() => { })
+		sendPushPage(res, 200, "failed", message)
+		return
+	}
+
+	await writePush(pushId, { ...record, state: "pushing" }).catch(() => { })
+	let token: string | undefined
+	try {
+		token = await exchangeCode(code, githubRedirectUri(req))
+		const files = await readSnapshotFiles(record.buildId)
+		if (!files) throw new Error("This build's source is no longer kept, so there was nothing to push.")
+		const repo = await pushToNewRepository(token, record.name, record.private, files)
+		// Cleanup: the source has done its job; only the repo link stays.
+		await markSnapshotPushed(record.buildId, repo.html_url)
+		await writePush(pushId, { ...record, state: "done", repoUrl: repo.html_url })
+		sendPushPage(res, 200, "done", `Pushed ${files.length} files to ${repo.full_name}.`, repo.html_url)
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error)
+		console.error(`[github] Push for ${record.buildId} failed${error instanceof GitHubError ? ` (${error.status})` : ""}:`, message)
+		await writePush(pushId, { ...record, state: "failed", message }).catch(() => { })
+		sendPushPage(res, 502, "failed", message)
+	} finally {
+		if (token) {
+			await revokeToken(token).catch((error) => console.warn("[github] Token revoke failed:", (error as Error).message))
+		}
+	}
+})
 
 // ── Deployed site proxy (registered last: it matches everything) ────────────
 

@@ -114,8 +114,12 @@ export const corsmiddlewares = (req: Request, res: Response, next: NextFunction)
 }
 
 /** Baseline security headers for an API that also proxies static sites. */
-export const securityHeaders = (_req: Request, res: Response, next: NextFunction) => {
+export const securityHeaders = (req: Request, res: Response, next: NextFunction) => {
 	res.setHeader("X-Content-Type-Options", "nosniff")
 	res.setHeader("Referrer-Policy", "no-referrer")
+	// Only over HTTPS (as reported by the trusted proxy): browsers ignore it on
+	// plain HTTP anyway, and a local http://localhost stack must not learn it.
+	// No includeSubDomains, so one deployment's host never pins its siblings.
+	if (req.secure) res.setHeader("Strict-Transport-Security", "max-age=31536000")
 	next()
 }

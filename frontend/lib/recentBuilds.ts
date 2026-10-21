@@ -16,6 +16,8 @@ export interface RecentBuild {
 	outcome?: BuildOutcome
 	/** Epoch ms when the outcome was first seen; drives the notification bell. */
 	settledAt?: number
+	/** Where "Push to GitHub" put the source. Kept here because the server forgets it after a day. */
+	repoUrl?: string
 }
 
 /**
@@ -80,6 +82,12 @@ export const settleRecentBuild = (id: string, outcome: BuildOutcome) => {
 	const builds = read()
 	if (!builds.some((build) => build.id === id && build.outcome !== outcome)) return
 	write(builds.map((build) => (build.id === id ? { ...build, outcome, settledAt: Date.now() } : build)))
+}
+
+export const setRecentBuildRepo = (id: string, repoUrl: string) => {
+	const builds = read()
+	if (!builds.some((build) => build.id === id && build.repoUrl !== repoUrl)) return
+	write(builds.map((build) => (build.id === id ? { ...build, repoUrl } : build)))
 }
 
 /** A short human title for a build: the first words of its prompt, or the repo name. */
