@@ -10,7 +10,7 @@ export const metadata = pageMetadata(
 
 /**
  * Prices are deliberately not repeated here: they are configured on the API
- * and shown live in the home page's pricing section, which this links to.
+ * and shown live on the pricing page, which this links to.
  */
 export default function TermsPage() {
 	return (
@@ -36,7 +36,7 @@ export default function TermsPage() {
 			<ul>
 				<li>
 					Building costs credits. New accounts get free credits when they sign up, and each chat (one build from a
-					prompt) and each repository deploy costs credits, as shown in <Link href="/#pricing">Pricing</Link>.
+					prompt) and each repository deploy costs credits, as shown in <Link href="/pricing">Pricing</Link>.
 				</li>
 				<li>Credits are taken when a build starts. If the build fails, they are returned automatically.</li>
 				<li>

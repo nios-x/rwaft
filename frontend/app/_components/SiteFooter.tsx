@@ -16,9 +16,9 @@ export function SiteFooter() {
 				</Link>
 				<nav aria-label="Footer">
 					<ul className="site-footer-links">
-						<li><Link href="/#how-it-works">How it works</Link></li>
-						<li><Link href="/#pricing">Pricing</Link></li>
-						<li><Link href="/#faq">FAQ</Link></li>
+						<li><Link href="/how-it-works">How it works</Link></li>
+						<li><Link href="/pricing">Pricing</Link></li>
+						<li><Link href="/faq">FAQ</Link></li>
 						<li><Link href="/privacy">Privacy</Link></li>
 						<li><Link href="/terms">Terms</Link></li>
 						<li><a href={SOURCE_URL} rel="noopener">GitHub</a></li>

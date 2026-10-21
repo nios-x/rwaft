@@ -21,16 +21,14 @@ import type { PromptBoxProps } from "./PromptBox"
 
 interface ConsoleProps {
   /**
-   * Server-rendered home content (how it works, pricing, FAQ) and the footer.
-   * They are passed in rather than imported so they stay server components:
-   * their HTML is in the first response for crawlers, and none of it ships as
-   * client JavaScript. Both are shown on the home screen only.
+   * The server-rendered footer. Passed in rather than imported so it stays a
+   * server component: its links are in the first response for crawlers, and
+   * none of it ships as client JavaScript. Shown on the home screen only.
    */
-  landing?: ReactNode
   footer?: ReactNode
 }
 
-export function Console({ landing, footer }: ConsoleProps) {
+export function Console({ footer }: ConsoleProps) {
   const [theme, setTheme] = useTheme()
   const [mode, setMode] = useState<BuildKind>("prompt")
   const [promptText, setPromptText] = useState("")
@@ -260,9 +258,7 @@ export function Console({ landing, footer }: ConsoleProps) {
         />
       ) : (
         <>
-          <Home prompt={{ ...promptBase, inputRef: heroInput }} builds={builds} onOpen={open}>
-            {landing}
-          </Home>
+          <Home prompt={{ ...promptBase, inputRef: heroInput }} builds={builds} onOpen={open} />
           {footer}
         </>
       )}

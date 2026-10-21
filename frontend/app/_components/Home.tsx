@@ -1,6 +1,5 @@
 "use client"
 
-import type { ReactNode } from "react"
 import { STATE_LABEL, relativeTime, type BuildView } from "../../lib/builds"
 import { buildTitle } from "../../lib/recentBuilds"
 import { PromptBox, type PromptBoxProps } from "./PromptBox"
@@ -17,11 +16,9 @@ interface HomeProps {
 	prompt: PromptBoxProps
 	builds: BuildView[]
 	onOpen: (id: string) => void
-	/** Server-rendered sections below the fold (see app/page.tsx). */
-	children?: ReactNode
 }
 
-export function Home({ prompt, builds, onOpen, children }: HomeProps) {
+export function Home({ prompt, builds, onOpen }: HomeProps) {
 	return (
 		<main className="home">
 			<section className="hero" id="start" aria-labelledby="hero-title">
@@ -68,8 +65,6 @@ export function Home({ prompt, builds, onOpen, children }: HomeProps) {
 					</ul>
 				</section>
 			)}
-
-			{children}
 		</main>
 	)
 }

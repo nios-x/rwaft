@@ -1,24 +1,8 @@
-import type { Metadata } from "next"
-import Link from "next/link"
 import type { ReactNode } from "react"
-import { LEGAL_UPDATED, SITE_NAME } from "../../lib/site"
-import { Mark } from "./Icons"
-import { SiteFooter } from "./SiteFooter"
+import { LEGAL_UPDATED } from "../../lib/site"
+import { PageShell } from "./PageShell"
 
-/**
- * Metadata for a standalone page. Next merges metadata shallowly, so a page
- * that sets only its canonical would still inherit the home page's og:url and
- * title; this sets the whole Open Graph block for the page itself.
- */
-export function pageMetadata(path: string, title: string, description: string): Metadata {
-	return {
-		title,
-		description,
-		alternates: { canonical: path },
-		openGraph: { type: "article", url: path, siteName: SITE_NAME, title, description, locale: "en_US" },
-		twitter: { card: "summary", title, description },
-	}
-}
+export { pageMetadata } from "./PageShell"
 
 const updated = new Date(`${LEGAL_UPDATED}T00:00:00Z`).toLocaleDateString("en-US", {
 	year: "numeric",
@@ -29,16 +13,7 @@ const updated = new Date(`${LEGAL_UPDATED}T00:00:00Z`).toLocaleDateString("en-US
 
 export function LegalPage({ title, children }: { title: string; children: ReactNode }) {
 	return (
-		<div className="app" data-screen="page">
-			<header className="header">
-				<Link href="/" className="brand" aria-label="rwaft home">
-					<Mark className="brand-mark" />
-					<span>rwaft</span>
-				</Link>
-				<div className="header-right">
-					<Link href="/" className="pill-btn pill-btn--ink">Start building</Link>
-				</div>
-			</header>
+		<PageShell>
 			<main className="legal">
 				<article>
 					<h1>{title}</h1>
@@ -46,7 +21,6 @@ export function LegalPage({ title, children }: { title: string; children: ReactN
 					{children}
 				</article>
 			</main>
-			<SiteFooter />
-		</div>
+		</PageShell>
 	)
 }

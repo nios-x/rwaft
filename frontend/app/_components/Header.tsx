@@ -5,6 +5,7 @@ import type { AccountState } from "../../lib/useAccount"
 import type { Theme } from "../../lib/useTheme"
 import { AccountPill, openTokenShop } from "./Account"
 import { CoinIcon, Mark, MoonIcon, SunIcon } from "./Icons"
+import { SiteNav } from "./SiteNav"
 
 interface HeaderProps {
 	auth: AccountState
@@ -28,7 +29,7 @@ export function Header({ auth, theme, setTheme, onHome, running, waiting, childr
 				<span>rwaft</span>
 			</button>
 
-			{children && <div className="header-middle">{children}</div>}
+			{children ? <div className="header-middle">{children}</div> : <SiteNav className="site-nav--home" />}
 
 			<div className="header-right">
 				{(running > 0 || waiting > 0) && (
