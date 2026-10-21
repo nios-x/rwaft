@@ -11,9 +11,9 @@ const updated = new Date(`${LEGAL_UPDATED}T00:00:00Z`).toLocaleDateString("en-US
 	timeZone: "UTC",
 })
 
-export function LegalPage({ title, children }: { title: string; children: ReactNode }) {
+export function LegalPage({ title, path, children }: { title: string; path: string; children: ReactNode }) {
 	return (
-		<PageShell>
+		<PageShell crumb={{ name: title, path }}>
 			<main className="legal">
 				<article>
 					<h1>{title}</h1>

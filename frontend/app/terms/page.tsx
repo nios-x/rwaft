@@ -14,7 +14,7 @@ export const metadata = pageMetadata(
  */
 export default function TermsPage() {
 	return (
-		<LegalPage title="Terms of service">
+		<LegalPage title="Terms of service" path="/terms">
 			<p>
 				These terms apply when you use rwaft. By signing in or starting a build, you agree to them. If you don&apos;t
 				agree, please don&apos;t use rwaft.

@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import type { ReactNode } from "react"
-import { SITE_NAME } from "../../lib/site"
+import { SITE_NAME, SITE_URL } from "../../lib/site"
 import { Mark } from "./Icons"
 import { SiteFooter } from "./SiteFooter"
 import { SiteNav, type InfoPath } from "./SiteNav"
@@ -23,10 +23,26 @@ export function pageMetadata(path: string, title: string, description: string): 
 	}
 }
 
-/** Header, content and footer for every page outside the console. */
-export function PageShell({ current, children }: { current?: InfoPath; children: ReactNode }) {
+/**
+ * Header, content and footer for every page outside the console. `crumb`
+ * names the page for its BreadcrumbList, which is what lets a search result
+ * read "rwaft.live › Pricing" instead of a bare URL.
+ */
+export function PageShell({ current, crumb, children }: { current?: InfoPath; crumb?: { name: string; path: string }; children: ReactNode }) {
 	return (
 		<div className="app" data-screen="page">
+			{crumb && (
+				<JsonLd
+					data={{
+						"@context": "https://schema.org",
+						"@type": "BreadcrumbList",
+						itemListElement: [
+							{ "@type": "ListItem", position: 1, name: SITE_NAME, item: SITE_URL },
+							{ "@type": "ListItem", position: 2, name: crumb.name, item: `${SITE_URL}${crumb.path}` },
+						],
+					}}
+				/>
+			)}
 			<header className="header">
 				<Link href="/" className="brand" aria-label="rwaft home">
 					<Mark className="brand-mark" />

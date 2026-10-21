@@ -8,8 +8,8 @@ export const revalidate = 3600
 
 export const metadata = pageMetadata(
 	"/faq",
-	"Questions",
-	"What rwaft is, what you can build, how credits work, how long a build takes and who can see your site."
+	"AI app builder FAQ: credits, builds and hosting",
+	"Answers about rwaft's AI website builder: what you can build, whether you need to code, how credits work, how long a build takes and who can see your site."
 )
 
 export default async function FaqPage() {
@@ -28,7 +28,7 @@ export default async function FaqPage() {
 	}
 
 	return (
-		<PageShell current="/faq">
+		<PageShell current="/faq" crumb={{ name: "FAQ", path: "/faq" }}>
 			<JsonLd data={jsonLd} />
 			<main className="info">
 				<FaqList faq={faq} />

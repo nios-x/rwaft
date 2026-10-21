@@ -17,7 +17,8 @@ export async function generateMetadata() {
 		: pricing.payments && pricing.packs.length > 0
 			? "Free credits when you sign up, then buy credit packs with no subscription. Every chat is one complete build, and failed builds are refunded."
 			: "Free credits when you sign up. Every chat is one complete build, and failed builds are refunded."
-	return pageMetadata("/pricing", "Pricing", description)
+	const title = pricing.billing ? "Pricing: free credits, pay per build" : "Pricing: every build is free"
+	return pageMetadata("/pricing", title, description)
 }
 
 export default async function PricingPage() {
@@ -55,7 +56,7 @@ export default async function PricingPage() {
 	}
 
 	return (
-		<PageShell current="/pricing">
+		<PageShell current="/pricing" crumb={{ name: "Pricing", path: "/pricing" }}>
 			<JsonLd data={jsonLd} />
 			<main className="info">
 				<PricingPlans pricing={pricing} />

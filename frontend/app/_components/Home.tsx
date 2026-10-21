@@ -27,7 +27,7 @@ export function Home({ prompt, builds, onOpen }: HomeProps) {
 					
 					What should we build?
 				</h1>
-				<p className="hero-sub">Describe an app in plain words. rwaft writes it, builds it and hosts it at its own link, and you watch the real build happen.</p>
+				<p className="hero-sub">rwaft is an AI app builder. Describe an app in plain words, and it writes it, builds it and hosts it at its own link while you watch the real build.</p>
 				<PromptBox {...prompt} size="hero" />
 				{prompt.mode === "prompt" && !prompt.blocked && (
 					<div className="examples" aria-label="Example prompts">

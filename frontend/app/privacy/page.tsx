@@ -14,7 +14,7 @@ export const metadata = pageMetadata(
  */
 export default function PrivacyPage() {
 	return (
-		<LegalPage title="Privacy policy">
+		<LegalPage title="Privacy policy" path="/privacy">
 			<p>
 				This policy explains what rwaft (&ldquo;we&rdquo;) collects when you use rwaft at{" "}
 				<a href={SITE_URL}>{SITE_URL.replace(/^https?:\/\//, "")}</a> and the sites it hosts, why we collect it, and who

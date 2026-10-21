@@ -31,6 +31,36 @@ const STEPS = [
 	},
 ]
 
+/** What people actually make with it; every one is a front-end site the pipeline can build. */
+const BUILDS = [
+	"Landing pages for a product, an app or a launch",
+	"Portfolios for photographers, designers and developers",
+	"Menus and pages for cafés, restaurants and small shops",
+	"Event, wedding and RSVP pages",
+	"Habit trackers, to-do lists and other single-page tools",
+	"Multi-page sites with their own navigation",
+]
+
+/** Facts about the output, taken from the build pipeline; nothing here is aspirational. */
+const OUTPUT = [
+	{
+		title: "A real React app",
+		body: "Every app is React and TypeScript on Vite, styled with Tailwind CSS, with React Router when it has more than one page. It's the same stack a developer would choose.",
+	},
+	{
+		title: "A live link",
+		body: "As soon as the build passes, the site is hosted at its own URL. There's nothing to set up and no server to manage.",
+	},
+	{
+		title: "The whole build, in the open",
+		body: "Each step is explained in plain words as it happens, with the raw build log one tap away. When something breaks, you see rwaft fix it.",
+	},
+	{
+		title: "Changes by chat",
+		body: "Send a follow-up like “make the header darker” or “add a contact page”, and rwaft edits the app and publishes the new version.",
+	},
+]
+
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`
 
 const titleCase = (id: string) => id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, " ")
@@ -58,6 +88,10 @@ export function faqFor(pricing: Pricing): Faq[] {
 		{
 			question: "What can I build?",
 			answer: "Websites and front-end web apps: landing pages, portfolios, menus, event pages, trackers and other single-page tools. rwaft generates a React app built with Vite and TypeScript.",
+		},
+		{
+			question: "Can I change my app after it's built?",
+			answer: "Yes. Send a follow-up message in the same chat, like “make the header darker” or “add a contact page”, and rwaft edits the app and publishes the new version. Its code is kept for a while after each build so it can be changed; after that, describe the whole app again to rebuild it.",
 		},
 		{
 			question: "Can I deploy my own GitHub repository?",
@@ -98,6 +132,26 @@ export function HowItWorks() {
 					</li>
 				))}
 			</ol>
+
+			<h2 className="land-subtitle">What you can build</h2>
+			<p className="land-lead">Websites and front-end web apps, described the way you&apos;d explain them to a friend.</p>
+			<ul className="land-list">
+				{BUILDS.map((item) => <li key={item}>{item}</li>)}
+			</ul>
+
+			<h2 className="land-subtitle">What you get</h2>
+			<ul className="land-grid land-output">
+				{OUTPUT.map((item) => (
+					<li key={item.title} className="land-card">
+						<h3>{item.title}</h3>
+						<p>{item.body}</p>
+					</li>
+				))}
+			</ul>
+			<p className="land-more">
+				Already have a React app? Paste a public GitHub repository instead and rwaft builds and hosts that.
+				Costs are on the <Link href="/pricing">pricing page</Link>, and the <Link href="/faq">FAQ</Link> covers the rest.
+			</p>
 			<NextStep href="/pricing" label="See pricing" />
 		</section>
 	)
@@ -161,8 +215,8 @@ export function PricingPlans({ pricing }: { pricing: Pricing }) {
 export function FaqList({ faq }: { faq: Faq[] }) {
 	return (
 		<section className="land" aria-labelledby="faq-title">
-			<h1 id="faq-title" className="land-title">Questions</h1>
-			<p className="land-lead">What people ask before their first build.</p>
+			<h1 id="faq-title" className="land-title">Frequently asked questions</h1>
+			<p className="land-lead">What people ask about rwaft&apos;s AI app builder before their first build.</p>
 			<div className="land-faq">
 				{faq.map((item) => (
 					<details key={item.question} className="land-card land-q">

@@ -1006,11 +1006,62 @@ a.brand {
   background: var(--surface);
 }
 
-.land-card h2 {
+.land-card h2,
+.land-card h3 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+
+.land-subtitle {
+  margin: 64px 0 0;
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.land-subtitle + .land-lead {
+  margin-top: 8px;
+}
+
+.land-subtitle + .land-grid,
+.land-subtitle + .land-list {
+  margin-top: 20px;
+}
+
+.land-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px 32px;
+  margin: 0;
+  padding-left: 18px;
+  /* Tailwind's preflight removes list markers; this is a real bullet list. */
+  list-style: disc;
+  font-size: 15px;
+  color: var(--text-2);
+}
+
+.land-list li::marker {
+  color: var(--accent);
+}
+
+.land-output {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.land-more {
+  max-width: 64ch;
+  margin: 28px 0 0;
+  font-size: 14.5px;
+  color: var(--text-2);
+}
+
+.land-more a {
+  color: var(--accent-ink);
+  font-weight: 500;
 }
 
 .land-card p {
@@ -2241,5 +2292,226 @@ li[data-state="failed"] .steps-dot {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* ── Admin ─────────────────────────────────────────────────────────────── */
+
+.admin-main {
+  flex: 1;
+  width: min(880px, 100% - 32px);
+  margin: 0 auto;
+  padding: 6vh 0 72px;
+}
+
+.admin-main h1 {
+  margin: 0;
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.admin-lock {
+  display: grid;
+  gap: 12px;
+  max-width: 340px;
+  margin: 8vh auto 0;
+}
+
+.admin-lock p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.admin-lock input,
+.admin-search {
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.admin-lock input:focus-visible,
+.admin-search:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.admin-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.admin-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 24px 0;
+}
+
+.admin-stats > div {
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.admin-stats dt {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.admin-stats dd {
+  margin: 4px 0 0;
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.admin-search {
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  transition: opacity 150ms ease;
+}
+
+.admin-table-wrap[aria-busy="true"] {
+  opacity: 0.55;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.admin-table th {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-3);
+  text-align: left;
+}
+
+.admin-table td {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.admin-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.admin-table .admin-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-table td.admin-num {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.admin-name,
+.admin-email {
+  display: block;
+}
+
+.admin-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.admin-email {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+
+.admin-empty {
+  text-align: center;
+}
+
+.admin-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.admin-pager > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-page {
+  min-width: 96px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .admin-stats dd {
+    font-size: 24px;
+  }
+}
+
+/* ── Build animations (IconScout Lottie, converted to animated WebP) ───── */
+
+/* A background, not an img, so only the current theme's file downloads. */
+.build-anim {
+  display: block;
+  width: 88px;
+  height: 88px;
+  background: url("/animations/building-light.webp") center / contain no-repeat;
+}
+
+:root[data-theme="dark"] .build-anim {
+  background-image: url("/animations/building-dark.webp");
+}
+
+.msg-live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.live-check,
+.live-check img {
+  display: block;
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .build-anim {
+    background-image: url("/animations/building-light-still.png");
+  }
+  :root[data-theme="dark"] .build-anim {
+    background-image: url("/animations/building-dark-still.png");
   }
 }

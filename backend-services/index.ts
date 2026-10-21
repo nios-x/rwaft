@@ -41,6 +41,7 @@ import {
 	type DodoPayment
 } from "./lib/billing.ts"
 import { joinLine, leaveLine, linePosition } from "./lib/queue.ts"
+import { listUsers, requireAdmin } from "./lib/admin.ts"
 import {
 	GitHubError,
 	authorizeUrl,
@@ -130,7 +131,7 @@ if (USE_WILDCARD_SUBDOMAINS) {
  * it cannot be broken again by however the platform's proxies rewrite Host or
  * X-Forwarded-Proto.
  */
-app.use(["/health", "/healthz", "/session", "/status", "/queue", "/logs", "/deploy", "/prompt", "/auth", "/billing/checkout", "/billing/test-credits", "/github"], corsmiddlewares)
+app.use(["/health", "/healthz", "/session", "/status", "/queue", "/logs", "/deploy", "/prompt", "/auth", "/billing/checkout", "/billing/test-credits", "/github", "/admin"], corsmiddlewares)
 
 // ── Dodo Payments webhook ───────────────────────────────────────────────────
 //
@@ -843,6 +844,20 @@ app.post(
 		res.status(202).json({ status: "success", id, userId, url: deploymentUrl, charged: charge?.tokens ?? 0, ...(baseId ? { from: baseId } : {}) })
 	}
 )
+
+// ── Admin: accounts and their credits ───────────────────────────────────────
+
+app.get("/admin/users", requireAdmin, async (req, res) => {
+	const page = Math.max(1, Number.parseInt(String(req.query.page ?? "1"), 10) || 1)
+	const pageSize = Math.min(100, Math.max(1, Number.parseInt(String(req.query.pageSize ?? "25"), 10) || 25))
+	const query = typeof req.query.q === "string" ? req.query.q.slice(0, 200) : ""
+	try {
+		res.json({ status: "success", ...await listUsers(page, pageSize, query) })
+	} catch (error) {
+		console.error("[admin] User listing failed:", (error as Error).message)
+		res.status(503).json({ status: "failed", message: "Could not read accounts right now" })
+	}
+})
 
 // ── Push a generated app's source to the user's GitHub ──────────────────────
 

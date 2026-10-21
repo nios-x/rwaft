@@ -95,7 +95,7 @@ export const corsmiddlewares = (req: Request, res: Response, next: NextFunction)
 	}
 
 	res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
-	res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,X-User-Id,Last-Event-ID")
+	res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,X-User-Id,X-Admin-Password,Last-Event-ID")
 	res.setHeader("Access-Control-Max-Age", "600")
 
 	if (req.method === "OPTIONS") {

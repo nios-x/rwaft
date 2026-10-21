@@ -53,6 +53,31 @@ function aheadOf(position: number | null, running: number): string {
 	return `${ahead} build${ahead === 1 ? " is" : "s are"} ahead of you (${parts}). Yours starts automatically.`
 }
 
+/**
+ * The green tick beside "Your site is live" (an IconScout Lottie, converted to
+ * an animated WebP so no Lottie player ships). It draws itself once, then the
+ * still takes over: an animated WebP loops forever, and a tick that keeps
+ * redrawing reads as something still happening.
+ */
+const LIVE_CHECK_MS = 1_100
+
+function LiveCheck() {
+	const [settled, setSettled] = useState(false)
+	useEffect(() => {
+		const timer = setTimeout(() => setSettled(true), LIVE_CHECK_MS)
+		return () => clearTimeout(timer)
+	}, [])
+	const still = "/animations/live-check-still.png"
+	return (
+		<picture className="live-check">
+			<source media="(prefers-reduced-motion: reduce)" srcSet={still} />
+			{/* A plain img: next/image would re-encode the animation, and this one is decorative. */}
+			{/* eslint-disable-next-line @next/next/no-img-element */}
+			<img src={settled ? still : "/animations/live-check.webp"} alt="" width={28} height={28} />
+		</picture>
+	)
+}
+
 /** Worker errors arrive without a full stop; prose around them needs one. */
 const sentence = (text: string | null) => (text && !/[.!?]$/.test(text.trim()) ? `${text.trim()}.` : text)
 
@@ -141,7 +166,7 @@ function Chat({ build, lines, connected, failure, billing, prompt, editing, onOp
 
 				{build.state === "live" && (
 					<div className="msg" data-tone="good">
-						<p><strong>Your site is live.</strong> Share the link with anyone.</p>
+						<p className="msg-live"><LiveCheck key={build.id} /><span><strong>Your site is live.</strong> Share the link with anyone.</span></p>
 						<a className="msg-link" href={build.url} target="_blank" rel="noreferrer">{build.url} <ExternalIcon /></a>
 						{editing && <p>Want something different? Describe a change below and rwaft updates this app. This version stays live at its own link.</p>}
 						{build.parentId && (
@@ -265,7 +290,7 @@ function Panel({ build, lines, stages, running, failure, onRetry }: Pick<Workspa
 					</div>
 				) : (
 					<div className="state">
-						<span className="spinner" aria-hidden="true" />
+						<span className="build-anim" aria-hidden="true" />
 						<h2>{current?.label ?? "Building"}{current?.detail ? ` · ${current.detail}` : ""}</h2>
 						<p className="state-time">{formatElapsed(elapsed)}</p>
 						<ol className="steps" aria-label="Build progress">
