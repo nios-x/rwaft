@@ -16,8 +16,12 @@ export interface RateLimitOptions {
 	windowSeconds: number
 }
 
-/** Best-effort client identity: the per-user id when present, else the IP. */
-function clientKey(req: Request): string {
+/**
+ * Client identity: the signed-in account when there is one (it cannot be
+ * forged), else the self-reported user id, else the IP.
+ */
+function clientKey(req: Request, res: Response): string {
+	if (typeof res.locals.accountId === "string") return `account:${res.locals.accountId}`
 	const userId = (req.header("x-user-id") || (req.body as { userId?: string } | undefined)?.userId || "").trim()
 	if (userId) return `user:${userId}`
 	// `trust proxy` is enabled on the app, so req.ip is the real client IP.
@@ -26,7 +30,7 @@ function clientKey(req: Request): string {
 
 export function rateLimit({ name, limit, windowSeconds }: RateLimitOptions) {
 	return async (req: Request, res: Response, next: NextFunction) => {
-		const key = `rwaft:ratelimit:${name}:${clientKey(req)}`
+		const key = `rwaft:ratelimit:${name}:${clientKey(req, res)}`
 
 		try {
 			const redis = await getRedisClient()

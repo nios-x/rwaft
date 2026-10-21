@@ -14,7 +14,32 @@ import { closeRedis, getRedisClient, isRedisHealthy } from "./lib/redis.ts"
 import { corsmiddlewares, securityHeaders } from "./lib/middleware.ts"
 import { rateLimit } from "./lib/ratelimit.ts"
 import { clearLogHistory, closeLogStream, readLogHistory, subscribeToUserLogs } from "./lib/logstream.ts"
-import { DEPLOY_QUEUE, DEPLOYMENT_STATUS_PREFIX, PROMPT_QUEUE } from "./lib/constants.ts"
+import { DEPLOY_QUEUE, DEPLOYMENT_STATUS_PREFIX, PROMPT_QUEUE, userKey, type JobCharge } from "./lib/constants.ts"
+import {
+	BILLING_ENABLED,
+	SIGNUP_TOKENS,
+	TOKEN_COSTS,
+	authenticate,
+	createSession,
+	destroySession,
+	getAccount,
+	isAccountId,
+	refundCharge,
+	requireAccountWhenBilling,
+	spendTokens,
+	upsertGoogleAccount
+} from "./lib/accounts.ts"
+import { GOOGLE_CLIENT_ID, verifyGoogleIdToken } from "./lib/google.ts"
+import {
+	CURRENCY,
+	TOKEN_PACKS,
+	createCheckoutSession,
+	fulfilCheckout,
+	isCheckoutConfigured,
+	verifyStripeSignature,
+	type CheckoutSession
+} from "./lib/billing.ts"
+import { joinLine, leaveLine, linePosition } from "./lib/queue.ts"
 
 const app = express()
 const PORT = Number(process.env.PORT || 3000)
@@ -71,10 +96,52 @@ app.use(securityHeaders)
  * it cannot be broken again by however the platform's proxies rewrite Host or
  * X-Forwarded-Proto.
  */
-app.use(["/health", "/healthz", "/session", "/status", "/logs", "/deploy", "/prompt"], corsmiddlewares)
+app.use(["/health", "/healthz", "/session", "/status", "/queue", "/logs", "/deploy", "/prompt", "/auth", "/billing/checkout", "/billing/test-credits"], corsmiddlewares)
+
+// ── Stripe webhook ──────────────────────────────────────────────────────────
+//
+// Registered ahead of the JSON parser: the signature covers the exact bytes
+// Stripe sent, so this route needs the raw body. Server-to-server, so it sits
+// outside the browser origin allowlist.
+app.post("/billing/webhook", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+	const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+	if (!verifyStripeSignature(raw, req.header("stripe-signature"))) {
+		res.status(400).json({ status: "failed", message: "Invalid signature" })
+		return
+	}
+
+	let event: { type?: string; data?: { object?: CheckoutSession } }
+	try {
+		event = JSON.parse(raw.toString("utf-8"))
+	} catch {
+		res.status(400).json({ status: "failed", message: "Invalid payload" })
+		return
+	}
+
+	if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+		const session = event.data?.object
+		if (!session?.id) {
+			res.status(400).json({ status: "failed", message: "Event carried no session" })
+			return
+		}
+		try {
+			const result = await fulfilCheckout(session)
+			console.log(`[billing] ${event.type} ${session.id}: ${result}`)
+		} catch (error) {
+			// A non-2xx makes Stripe retry, which is what we want when Redis blips.
+			console.error(`[billing] Fulfilment of ${session.id} failed:`, (error as Error).message)
+			res.status(503).json({ status: "failed" })
+			return
+		}
+	}
+	res.json({ received: true })
+})
+
 // A repo URL or a prompt is small; a large body here is either a mistake or an
 // attempt to exhaust memory.
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "64kb" }))
+app.use(["/auth", "/deploy", "/prompt", "/billing/checkout", "/billing/test-credits"], authenticate())
+app.use("/logs", authenticate({ allowQuery: true }))
 
 const publicOrigin = (req: Request): string => {
 	const configured = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, "")
@@ -97,9 +164,45 @@ const buildDeploymentUrl = (req: Request, id: string): string =>
  */
 const assetBaseFor = (id: string): string => (USE_WILDCARD_SUBDOMAINS ? "/" : `/${id}/`)
 
-const resolveUserId = (req: Request): string | undefined => {
+/**
+ * Whose log channel a build reports to. A signed-in request always uses its
+ * account; an anonymous one may name its own id, but never an account's, or it
+ * could stream its build output into someone else's console.
+ */
+const resolveUserId = (req: Request, res: Response): string | undefined => {
+	if (typeof res.locals.accountId === "string") return res.locals.accountId
 	const candidate = (req.header("x-user-id") || (req.body as { userId?: string } | undefined)?.userId || "").trim()
-	return isUserId(candidate) ? candidate : undefined
+	return isUserId(candidate) && !isAccountId(candidate) ? candidate : undefined
+}
+
+/**
+ * Takes a build's tokens up front, so two concurrent submissions cannot both
+ * spend the same balance. Answers the request itself and returns null when
+ * the account cannot pay; returns undefined when nothing needs charging.
+ */
+const chargeForBuild = async (res: Response, kind: keyof typeof TOKEN_COSTS): Promise<JobCharge | undefined | null> => {
+	const cost = TOKEN_COSTS[kind]
+	const accountId = res.locals.accountId as string | undefined
+	if (!BILLING_ENABLED || cost === 0 || !accountId) return undefined
+
+	try {
+		const result = await spendTokens(accountId, cost)
+		if (!result.ok) {
+			res.status(402).json({
+				status: "failed",
+				code: "insufficient_tokens",
+				message: `You're out of credits: this costs ${cost} and you have ${result.balance}. Buy more to keep building.`,
+				balance: result.balance,
+				cost
+			})
+			return null
+		}
+		return { userId: accountId, tokens: cost }
+	} catch (error) {
+		console.error("[billing] Charge failed:", (error as Error).message)
+		res.status(503).json({ status: "failed", message: "Billing is temporarily unavailable" })
+		return null
+	}
 }
 
 // ── Static asset proxy ──────────────────────────────────────────────────────
@@ -205,6 +308,201 @@ app.get("/session", (_req, res) => {
 	res.json({ userId: genUserId() })
 })
 
+// ── Accounts: Google sign-in and the token balance ──────────────────────────
+
+/** Everything the frontend needs to decide what to render; it holds no secrets. */
+app.get("/auth/config", (_req, res) => {
+	res.setHeader("Cache-Control", "no-store")
+	res.json({
+		billing: BILLING_ENABLED,
+		googleClientId: GOOGLE_CLIENT_ID || null,
+		signupTokens: SIGNUP_TOKENS,
+		costs: TOKEN_COSTS,
+		currency: CURRENCY,
+		// The packs are always listed with billing on, so recharging is visible
+		// even before a payment provider is connected; `payments` says whether
+		// they can actually be bought.
+		packs: BILLING_ENABLED ? TOKEN_PACKS : [],
+		payments: BILLING_ENABLED && isCheckoutConfigured ? "stripe" : null,
+		testCredits: TEST_CREDITS_ENABLED
+	})
+})
+
+app.post(
+	"/auth/google",
+	rateLimit({ name: "auth", limit: Number(process.env.AUTH_RATE_LIMIT || 30), windowSeconds: 10 * 60 }),
+	async (req, res) => {
+		const credential = (req.body as { credential?: unknown } | undefined)?.credential
+		if (typeof credential !== "string" || !credential) {
+			res.status(400).json({ status: "failed", message: "A Google credential is required" })
+			return
+		}
+		if (!GOOGLE_CLIENT_ID) {
+			res.status(503).json({ status: "failed", message: "Google sign-in is not configured on this server" })
+			return
+		}
+
+		let profile
+		try {
+			profile = await verifyGoogleIdToken(credential)
+		} catch (error) {
+			console.warn("[auth] Rejected Google credential:", (error as Error).message)
+			res.status(401).json({ status: "failed", message: "Google sign-in could not be verified" })
+			return
+		}
+
+		try {
+			const account = await upsertGoogleAccount(profile)
+			const token = await createSession(account.id)
+			res.setHeader("Cache-Control", "no-store")
+			res.json({ status: "success", token, account })
+		} catch (error) {
+			console.error("[auth] Sign-in failed:", (error as Error).message)
+			res.status(503).json({ status: "failed", message: "Sign-in is temporarily unavailable" })
+		}
+	}
+)
+
+app.get("/auth/me", async (_req, res) => {
+	res.setHeader("Cache-Control", "no-store")
+	const accountId = res.locals.accountId as string | undefined
+	if (!accountId) {
+		res.status(401).json({ status: "failed", message: "Not signed in" })
+		return
+	}
+	try {
+		const account = await getAccount(accountId)
+		if (!account) {
+			res.status(401).json({ status: "failed", message: "Account not found" })
+			return
+		}
+		res.json({ status: "success", account })
+	} catch (error) {
+		console.error("[auth] Account lookup failed:", (error as Error).message)
+		res.status(503).json({ status: "failed", message: "Account service unavailable" })
+	}
+})
+
+app.post("/auth/logout", async (_req, res) => {
+	const token = res.locals.sessionToken as string | undefined
+	if (token) await destroySession(token).catch(() => { })
+	res.json({ status: "success" })
+})
+
+// ── Test top-up (local development only) ────────────────────────────────────
+
+/**
+ * Lets you exercise the whole recharge flow before a payment provider exists.
+ * It is off unless ALLOW_TEST_CREDITS=true, and it switches itself off the
+ * moment real checkout is configured, so a production deployment can never
+ * hand out free credits through it.
+ */
+const TEST_CREDITS_ENABLED = BILLING_ENABLED && process.env.ALLOW_TEST_CREDITS === "true" && !isCheckoutConfigured
+const TEST_CREDIT_AMOUNT = 5
+/** Ceiling on a test balance, so a stuck button cannot inflate it without bound. */
+const TEST_CREDIT_CAP = 100
+
+if (TEST_CREDITS_ENABLED) {
+	console.warn(`[billing] ALLOW_TEST_CREDITS is on: signed-in users can add ${TEST_CREDIT_AMOUNT} free test credits (up to ${TEST_CREDIT_CAP}). Never enable this in production.`)
+}
+
+app.post(
+	"/billing/test-credits",
+	rateLimit({ name: "test-credits", limit: 20, windowSeconds: 60 * 60 }),
+	async (_req, res) => {
+		const accountId = res.locals.accountId as string | undefined
+		if (!TEST_CREDITS_ENABLED) {
+			res.status(404).json({ status: "failed", message: "Test credits are not enabled" })
+			return
+		}
+		if (!accountId) {
+			res.status(401).json({ status: "failed", code: "sign_in_required", message: "Sign in to add credits" })
+			return
+		}
+		try {
+			const account = await getAccount(accountId)
+			if (!account) {
+				res.status(401).json({ status: "failed", message: "Account not found" })
+				return
+			}
+			const added = Math.max(0, Math.min(TEST_CREDIT_AMOUNT, TEST_CREDIT_CAP - account.tokens))
+			const redis = await getRedisClient()
+			const balance = added > 0 ? await redis.hIncrBy(userKey(accountId), "tokens", added) : account.tokens
+			res.json({ status: "success", added, balance })
+		} catch (error) {
+			console.error("[billing] Test top-up failed:", (error as Error).message)
+			res.status(503).json({ status: "failed", message: "Could not add credits right now" })
+		}
+	}
+)
+
+// ── Buy tokens ──────────────────────────────────────────────────────────────
+
+app.post("/billing/checkout", async (req, res) => {
+	const accountId = res.locals.accountId as string | undefined
+	if (!accountId) {
+		res.status(401).json({ status: "failed", code: "sign_in_required", message: "Sign in to buy credits" })
+		return
+	}
+	if (!BILLING_ENABLED || !isCheckoutConfigured) {
+		res.status(404).json({ status: "failed", message: "Credit purchases are not enabled" })
+		return
+	}
+
+	const packId = (req.body as { pack?: unknown } | undefined)?.pack
+	const pack = TOKEN_PACKS.find((candidate) => candidate.id === packId)
+	if (!pack) {
+		res.status(400).json({ status: "failed", message: "Unknown credit pack" })
+		return
+	}
+
+	// Stripe sends the buyer back to the page they came from. The Origin header
+	// has already passed the CORS allowlist above, so this cannot be pointed at
+	// an arbitrary site.
+	const returnOrigin = (req.header("origin") || (process.env.FRONTEND_ORIGIN || "").split(",")[0] || "")
+		.trim()
+		.replace(/\/+$/, "")
+	if (!/^https?:\/\//.test(returnOrigin)) {
+		res.status(400).json({ status: "failed", message: "Cannot determine where to return after checkout" })
+		return
+	}
+
+	try {
+		const account = await getAccount(accountId)
+		if (!account) {
+			res.status(401).json({ status: "failed", message: "Account not found" })
+			return
+		}
+		const url = await createCheckoutSession(account, pack, returnOrigin)
+		res.json({ status: "success", url })
+	} catch (error) {
+		console.error("[billing] Checkout creation failed:", (error as Error).message)
+		res.status(502).json({ status: "failed", message: "Could not start checkout" })
+	}
+})
+
+// ── Place in the build line ─────────────────────────────────────────────────
+
+app.get("/queue/:id", async (req, res) => {
+	const { id } = req.params
+	if (!isDeploymentId(id)) {
+		res.status(400).json({ status: "failed", message: "Invalid deployment id" })
+		return
+	}
+	try {
+		const redis = await getRedisClient()
+		const [status, line] = await Promise.all([
+			redis.get(`${DEPLOYMENT_STATUS_PREFIX}${id}`),
+			linePosition(id)
+		])
+		res.setHeader("Cache-Control", "no-store")
+		res.json({ id, status: status || "unknown", ...line })
+	} catch (error) {
+		console.error("[queue] Lookup failed:", (error as Error).message)
+		res.status(503).json({ status: "failed", message: "Queue service unavailable" })
+	}
+})
+
 // ── Deployment status polling (fallback for when SSE is unavailable) ────────
 
 app.get("/status/:id", async (req, res) => {
@@ -231,6 +529,14 @@ app.get("/status/:id", async (req, res) => {
 // ── Live logs over Server-Sent Events ───────────────────────────────────────
 
 /**
+ * Anonymous channels are guarded only by their unguessable id, as before. An
+ * account's channel carries its builds and prompts, so only that account's
+ * session may read or clear it.
+ */
+const canReadLogs = (userId: string, res: Response): boolean =>
+	!isAccountId(userId) || res.locals.accountId === userId
+
+/**
  * Streams the build log for one user.
  *
  * SSE rather than WebSockets: the traffic is one-way, it survives ordinary
@@ -242,6 +548,10 @@ app.get("/logs/:userId", async (req, res) => {
 	const { userId } = req.params
 	if (!isUserId(userId)) {
 		res.status(400).json({ status: "failed", message: "Invalid user id" })
+		return
+	}
+	if (!canReadLogs(userId, res)) {
+		res.status(401).json({ status: "failed", message: "Sign in to view this build log" })
 		return
 	}
 
@@ -301,6 +611,10 @@ app.delete("/logs/:userId", async (req, res) => {
 		res.status(400).json({ status: "failed", message: "Invalid user id" })
 		return
 	}
+	if (!canReadLogs(userId, res)) {
+		res.status(401).json({ status: "failed", message: "Sign in to view this build log" })
+		return
+	}
 	try {
 		await clearLogHistory(userId)
 		res.json({ status: "success" })
@@ -312,8 +626,25 @@ app.delete("/logs/:userId", async (req, res) => {
 
 // ── Deploy a Git repository ─────────────────────────────────────────────────
 
+/**
+ * Queues a job and puts it in the build line. Undoes both, and refunds, if the
+ * push fails, so a user is never charged for a job that does not exist.
+ */
+const enqueueJob = async (queue: string, job: { id: string; charge?: JobCharge } & Record<string, unknown>) => {
+	const redis = await getRedisClient()
+	await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${job.id}`, "queued", { EX: STATUS_TTL_SECONDS })
+	await joinLine(job.id)
+	try {
+		await redis.rPush(queue, JSON.stringify(job))
+	} catch (error) {
+		await leaveLine(job.id).catch(() => { })
+		throw error
+	}
+}
+
 app.post(
 	"/deploy",
+	requireAccountWhenBilling,
 	rateLimit({ name: "deploy", limit: Number(process.env.DEPLOY_RATE_LIMIT || 5), windowSeconds: 60 * 60 }),
 	async (req, res) => {
 		const validation = validateRepositoryUrl((req.body as { url?: unknown } | undefined)?.url)
@@ -322,19 +653,23 @@ app.post(
 			return
 		}
 
-		const userId = resolveUserId(req)
+		const userId = resolveUserId(req, res)
 		const id = genId()
 		const outputPath = path.join(stagingRoot, id)
 		const deploymentUrl = buildDeploymentUrl(req, id)
 
-		let redis
 		try {
-			redis = await getRedisClient()
+			await getRedisClient()
 		} catch (error) {
 			console.error("[deploy] Redis unavailable:", (error as Error).message)
 			res.status(503).json({ status: "failed", message: "Deployment service is temporarily unavailable" })
 			return
 		}
+
+		// Charged before the clone, which is the expensive part of this request.
+		// Every failure below refunds.
+		const charge = await chargeForBuild(res, "deploy")
+		if (charge === null) return
 
 		try {
 			await fs.mkdir(stagingRoot, { recursive: true })
@@ -344,6 +679,7 @@ app.post(
 				.clone(validation.url, outputPath, ["--depth", "1", "--single-branch"])
 		} catch (error) {
 			await fs.rm(outputPath, { recursive: true, force: true }).catch(() => { })
+			await refundCharge(id, charge)
 			console.error("[deploy] Clone failed:", (error as Error).message)
 			res.status(400).json({ status: "failed", message: "Failed to clone repository. Check that the URL is public and correct." })
 			return
@@ -365,6 +701,7 @@ app.post(
 				}))
 			}
 		} catch (error) {
+			await refundCharge(id, charge)
 			console.error("[deploy] Repository upload failed:", error)
 			res.status(500).json({ status: "failed", message: "Failed to stage repository files" })
 			return
@@ -373,21 +710,22 @@ app.post(
 		}
 
 		try {
-			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "queued", { EX: STATUS_TTL_SECONDS })
-			await redis.rPush(DEPLOY_QUEUE, JSON.stringify({
+			await enqueueJob(DEPLOY_QUEUE, {
 				id,
 				userId,
 				url: validation.url,
 				deploymentUrl,
-				assetBase: assetBaseFor(id)
-			}))
+				assetBase: assetBaseFor(id),
+				charge
+			})
 		} catch (error) {
+			await refundCharge(id, charge)
 			console.error("[deploy] Queue push failed:", (error as Error).message)
 			res.status(503).json({ status: "failed", message: "Failed to queue deployment" })
 			return
 		}
 
-		res.status(202).json({ status: "success", id, userId, url: deploymentUrl })
+		res.status(202).json({ status: "success", id, userId, url: deploymentUrl, charged: charge?.tokens ?? 0 })
 	}
 )
 
@@ -395,6 +733,7 @@ app.post(
 
 app.post(
 	"/prompt",
+	requireAccountWhenBilling,
 	rateLimit({ name: "prompt", limit: Number(process.env.PROMPT_RATE_LIMIT || 3), windowSeconds: 60 * 60 }),
 	async (req, res) => {
 		const raw = (req.body as { prompt?: unknown } | undefined)?.prompt
@@ -408,27 +747,30 @@ app.post(
 			return
 		}
 
-		const userId = resolveUserId(req)
+		const userId = resolveUserId(req, res)
 		const id = genId()
 		const deploymentUrl = buildDeploymentUrl(req, id)
 
+		const charge = await chargeForBuild(res, "prompt")
+		if (charge === null) return
+
 		try {
-			const redis = await getRedisClient()
-			await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "queued", { EX: STATUS_TTL_SECONDS })
-			await redis.rPush(PROMPT_QUEUE, JSON.stringify({
+			await enqueueJob(PROMPT_QUEUE, {
 				id,
 				userId,
 				prompt,
 				deploymentUrl,
-				assetBase: assetBaseFor(id)
-			}))
+				assetBase: assetBaseFor(id),
+				charge
+			})
 		} catch (error) {
+			await refundCharge(id, charge)
 			console.error("[prompt] Queue push failed:", (error as Error).message)
 			res.status(503).json({ status: "failed", message: "Generation service is temporarily unavailable" })
 			return
 		}
 
-		res.status(202).json({ status: "success", id, userId, url: deploymentUrl })
+		res.status(202).json({ status: "success", id, userId, url: deploymentUrl, charged: charge?.tokens ?? 0 })
 	}
 )
 
@@ -469,10 +811,16 @@ app.get("/{*splat}", async (req, res) => {
 	}
 
 	if (deploymentStatus === "queued" || deploymentStatus === "building") {
+		const position = deploymentStatus === "queued"
+			? await linePosition(deploymentId).then((line) => line.position).catch(() => null)
+			: null
+		const message = position
+			? `Your site is #${position} in the build queue. It starts as soon as the builds ahead of it finish.`
+			: "Your site is still building."
 		res.status(202)
 			.type("html")
 			.setHeader("Cache-Control", "no-store")
-		res.send(`<!doctype html><meta charset="utf-8"><title>Building deployment</title><meta http-equiv="refresh" content="3"><body style="font-family:system-ui;padding:2rem"><p>Your site is still building. This page refreshes automatically.</p></body>`)
+		res.send(`<!doctype html><meta charset="utf-8"><title>Building deployment</title><meta http-equiv="refresh" content="3"><body style="font-family:system-ui;padding:2rem"><p>${message} This page refreshes automatically.</p></body>`)
 		return
 	}
 	if (deploymentStatus === "failed") {

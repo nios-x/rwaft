@@ -55,6 +55,17 @@ services:
       - key: CLOUDINARY_API_SECRET
         sync: false
 
+      # Metered mode: Google sign-in required, builds cost tokens.
+      - key: PROD
+        value: "true"
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      # Webhook endpoint: https://rwaft.onrender.com/billing/webhook
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+
       # Per-hour caps per user/IP. Both endpoints start real builds, so these
       # are the difference between a demo and someone else's free build farm.
       - key: DEPLOY_RATE_LIMIT
@@ -104,11 +115,11 @@ services:
       - key: CLOUDINARY_API_SECRET
         sync: false
 
-      # At least one AI provider key is required for the /prompt flow.
+      # A Gemini key is required for the /prompt flow.
       - key: GEMINI_API_KEY
         sync: false
-      - key: OPENROUTER_API_KEY
-        sync: false
+      - key: AI_MODEL
+        value: gemini-3.8-flash
 
       # Installing and building a real React app takes minutes. The old 60s
       # timeout killed npm mid-download, which is what corrupted node_modules.

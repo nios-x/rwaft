@@ -9,7 +9,7 @@
 [![Runtime: Bun & Node.js](https://img.shields.io/badge/Runtime-Bun%20%7C%20Node.js%2020-f472b6.svg)](https://bun.sh)
 [![Queue: Redis](https://img.shields.io/badge/Queue-Redis%20BLMOVE-red.svg)](https://redis.io)
 [![Storage: Cloudinary CDN](https://img.shields.io/badge/Storage-Cloudinary%20CDN-3b82f6.svg)](https://cloudinary.com)
-[![AI Engine: Gemini / OpenRouter](https://img.shields.io/badge/AI%20Engine-Gemini%20%2F%20OpenRouter-10b981.svg)](https://ai.google.dev)
+[![AI Engine: Gemini](https://img.shields.io/badge/AI%20Engine-Gemini-10b981.svg)](https://ai.google.dev)
 [![Frontend: Next.js 16](https://img.shields.io/badge/Frontend-Next.js%2016%20(App%20Router)-black.svg)](https://nextjs.org)
 
 </div>
@@ -76,7 +76,7 @@ flowchart TB
     subgraph WorkerPool ["Build Services Worker (build-services)"]
         DeployWorker["🔨 Deploy Worker (CRA / Vite Builder)"]
         PromptWorker["🤖 Prompt Worker (AI Scaffolder & Repair Loop)"]
-        AIEngine["🧠 Gemini / OpenRouter Tool Call Controller"]
+        AIEngine["🧠 Gemini Tool Call Controller"]
         BuildSandbox["📦 Sandboxed Build Filesystem"]
     end
 
@@ -155,46 +155,16 @@ flowchart TB
   - **Vite**: Seamless modern bundling with TypeScript compilation.
   - **Create React App (CRA)**: Automatic webpack patching to disable Jest-worker parallel Terser minification (preventing node 20+ thread worker crashes), disabling ESLint build blockers, and suppressing source-map overhead.
 
-### 5. Autonomous AI Engine with Self-Healing Build Loop
-The AI worker is not a simple one-shot template generator; it is an **agentic iterative builder**:
-1. **Scaffolding**: Clones a clean Vite + React + TypeScript base template, resets unnecessary starter code, and injects modern React 19 dependencies.
-2. **Tool-Assisted Execution (`generateToolCalls`)**:
-   - Model receives custom tool declarations (`search_files`, `read_file`, `write_file`, `patch_file`, `run_command`, `finish`).
-   - Generates precise multi-file code modifications across components, styles, utilities, and assets.
-3. **Closed-Loop Error Diagnosis & Automated Repair**:
-   - Executes `npm run build` inside the sandbox.
-   - If the compiler fails (TypeScript type mismatches, missing imports, unresolved packages, invalid JSX), the worker captures stderr and stdout diagnostics.
-   - **Diagnostic Classifier**: Analyzes whether the error is TypeScript contract misalignment, module export drift, package resolution failure, or Vite asset syntax.
-   - Feeds the structured diagnostics back into the AI provider for iterative targeted patching (up to **6 automated repair iterations**, `MAX_BUILD_REPAIRS`).
-   - Once the build passes with exit code `0`, proceeds to deployment.
+### 5. AI Engine: Plan → Design Schema → Pages
+Generation follows the pattern the open-source app builders converge on (Bolt's single-response artifacts, Dyad's `<dyad-write>` tags, open-lovable's `<file>` blocks, Lovable's "design system first"): the model is handed everything it needs and answers with whole files, instead of exploring the project through tool calls.
 
-```
-       ┌───────────────────────────────┐
-       │   1. Scaffold Base Project    │
-       └───────────────┬───────────────┘
-                       │
-       ┌───────────────▼───────────────┐
-       │  2. AI Generates Multi-File   │◄────────────────┐
-       │      Code Modifications       │                 │
-       └───────────────┬───────────────┘                 │
-                       │                                 │
-       ┌───────────────▼───────────────┐                 │
-       │    3. Apply File Patches      │                 │
-       └───────────────┬───────────────┘                 │
-                       │                                 │
-       ┌───────────────▼───────────────┐                 │
-       │  4. Execute `npm run build`   │                 │
-       └───────────────┬───────────────┘                 │
-                       │                                 │
-              [Build Successful?]                        │
-             /                   \                       │
-          (Yes)                 (No)                     │
-           /                       \                     │
-┌─────────▼───────────┐   ┌─────────▼─────────────────┐  │
-│ 5. Upload to CDN &  │   │ 5b. Classify Diagnostics  ├──┘
-│    Mark 'ready'     │   │  & Feedback to AI (Max 6x)│
-└─────────────────────┘   └───────────────────────────┘
-```
+1. **Plan** (`lib/plan.ts`, 1 call, runs *during* `npm install`): the request becomes a JSON plan: name, tagline, layout (`site` with header/footer, or `bare` full-screen for games and tools), the page list with ordered sections, shared data notes, and the **design schema** (14 palette roles, a font pair from a vetted Google Fonts list, a radius). Every field is validated; colours are contrast-checked and corrected (≥ 7:1 body text, ≥ 4.5:1 on buttons).
+2. **Foundation** (`lib/foundation.ts`, 0 calls): code writes `src/design.ts` (the schema the site reads), Tailwind v4 tokens in `src/index.css` (`bg-primary`, `text-muted-foreground`, `font-heading`, `rounded-ui`), a themed component kit (`Button`, `Card`, `Badge`, `Input`, `Section`), the layout with responsive navigation, and the router.
+3. **Pages** (`lib/pages.ts`, 1 call per page, in parallel): each page writer gets the plan, the tokens, the kit's exact imports and the other routes, and returns complete files in `<file path="...">` tags. Raw colours are forbidden, so every page stays on one palette.
+4. **Checks** (0 calls unless something is broken): every file is parsed with Bun's TSX parser; invented `lucide-react` icons are aliased to a real one; dangling imports are caught. Only a broken file goes back to the model, alone, with the exact error and position.
+5. **Build**: `vite build`; a failure that names a file gets a single-file repair. The agentic tool loop (`generateToolCalls`) remains only as the last resort, and now applies each edit as it makes it.
+
+A one-page game typically costs **2 model calls** (plan + page); a 4-page site costs 5, written concurrently.
 
 ### 6. Two-Tier Cloud Storage & Asset Distribution
 - **Tier 1 — Source Staging (`rwaft/<id>/`)**: Raw source files are uploaded from Git clones in concurrent chunks (`UPLOAD_BATCH_SIZE = 10`) to Cloudinary raw storage, allowing worker nodes to fetch sources independently of API servers.
@@ -248,7 +218,7 @@ sequenceDiagram
     participant API as Backend Gateway
     participant Redis as Redis Queue
     participant Worker as Build Worker
-    participant AI as Gemini / OpenRouter
+    participant AI as Gemini
     participant Cloud as Cloudinary
 
     Developer->>Front: "Build an interactive Kanban board in Dark Mode"
@@ -359,7 +329,7 @@ rwaft/
 │
 ├── build-services/                   # Asynchronous build & AI generation worker
 │   ├── lib/
-│   │   ├── ai.ts                     # Gemini/OpenRouter tool declarations & response parser
+│   │   ├── ai.ts                     # Gemini tool declarations & response parser
 │   │   ├── config.ts                 # Redis & Cloudinary config, shared queue names
 │   │   ├── helper.ts                 # Recursive file crawler
 │   │   ├── joblog.ts                 # Per-user log pub/sub (AsyncLocalStorage job context)
@@ -419,6 +389,13 @@ files are git-ignored and are excluded from Docker images.
 | `STATUS_TTL_SECONDS` | `number` | No | How long deployment status is retained | `86400` |
 | `SSE_HISTORY_LIMIT` | `number` | No | Log events replayed to a reconnecting browser | `300` |
 | `TRUST_PROXY_HOPS` | `number` | No | Proxy hops to trust for client IP and protocol | `1` |
+| `PROD` | `bool` | No | `true` meters builds: Google sign-in required, each build costs tokens, failed builds are refunded. `false` keeps every build free and anonymous use working | `false` |
+| `GOOGLE_CLIENT_ID` | `string` | **Yes** (`PROD=true`) | OAuth Web client ID. Add each frontend origin under *Authorized JavaScript origins*. Sign-in is hidden without it | — |
+| `DEPLOY_TOKEN_COST` / `PROMPT_TOKEN_COST` | `number` | No | Credits charged per repo deploy / prompt build (one message) | `1` / `1` |
+| `SIGNUP_TOKENS` | `number` | No | Credits granted once when an account is created | `5` |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | `string` | No | Enable **Buy tokens**. Webhook endpoint: `<PUBLIC_BASE_URL>/billing/webhook` (`checkout.session.completed`, `checkout.session.async_payment_succeeded`) | — |
+| `TOKEN_PACKS` | `string` | No | `id:tokens:price-in-cents`, comma separated | `starter:50:500,builder:150:1200,studio:400:2800` |
+| `STRIPE_CURRENCY` | `string` | No | Checkout currency | `usd` |
 
 ### Build worker (`build-services`)
 
@@ -427,9 +404,7 @@ files are git-ignored and are excluded from Docker images.
 | `REDIS_URL` | `string` | **Yes** | Same Redis instance as the API | — |
 | `CLOUDINARY_*` | `string` | **Yes** | Same Cloudinary settings as the API | — |
 | `GEMINI_API_KEY` | `string` | **Yes**† | Google Gemini key. `GEMINI_API_KEY1`…`9` add rotation across free-tier keys | — |
-| `OPENROUTER_API_KEY` | `string` | **Yes**† | OpenRouter key. `OPENROUTER_API_KEY1`…`7` add rotation | — |
-| `AI_MODEL` | `string` | No | Preferred Gemini model | `gemini-3.7-flash` |
-| `OPENROUTER_MODEL` | `string` | No | Preferred OpenRouter model | `nvidia/nemotron-3.5-lightning:free` |
+| `AI_MODEL` | `string` | No | Preferred Gemini model | `gemini-3.8-flash` |
 | `BUILD_ROOT` | `string` | No | Scratch space for user builds — keep this off the app directory | `<tmp>/rwaft-builds` |
 | `INSTALL_TIMEOUT_MS` | `number` | No | Timeout for `npm install` | `600000` (10 min) |
 | `BUILD_TIMEOUT_MS` | `number` | No | Timeout for `npm run build` | `600000` (10 min) |
@@ -438,13 +413,23 @@ files are git-ignored and are excluded from Docker images.
 | `MAX_BUILD_REPAIRS` | `number` | No | AI repair attempts before a build is failed | `6` |
 | `PORT` | `number` | No | Only set if the host requires an open port; enables a `/health` probe | unset |
 
-† At least one AI provider key is required for the `/prompt` flow.
+† A Gemini key is required for the `/prompt` flow.
 
 ### Frontend (`frontend`)
 
 | Variable | Type | Required | Description | Default |
 | :--- | :---: | :---: | :--- | :--- |
 | `NEXT_PUBLIC_BACKEND_URL` | `string` | **Yes** (prod) | Origin of the API. Inlined at build time, so it must be set **before** the production build runs. There is no hardcoded production fallback | dev `http://localhost:3000` |
+
+---
+
+## 🎟️ Accounts, Tokens & the Build Line
+
+- **Sign-in.** The browser gets a Google ID token from Google Identity Services and posts it to `POST /auth/google`. The API verifies it against Google's published keys (signature, issuer, audience, expiry, verified email), creates the account on first sign-in (`rwaft:user:g-<sub>`), and returns an opaque session token. Only the token's SHA-256 is stored.
+- **Metering (`PROD=true`).** `/deploy` and `/prompt` require a session and atomically deduct tokens (a Lua script) before any work starts, so two tabs cannot spend the same balance. The charge rides on the job; if the build fails, the worker refunds it exactly once per job, even if a crash makes the job run twice. `PROD=false` skips all of this.
+- **Buying tokens.** `POST /billing/checkout` creates a Stripe Checkout Session and the browser is redirected to Stripe. Tokens are credited only from the signed webhook, at most once per session. All provider-specific code lives in `backend-services/lib/billing.ts`.
+- **Place in line.** Builds run one at a time per worker slot. Every job joins a shared sorted set when it is queued and leaves it when its build starts, so `GET /queue/:id` returns its position, how many are waiting and how many are running. The console and the "still building" page both show it.
+- **Granting tokens by hand:** `redis-cli HINCRBY rwaft:user:g-<google-sub> tokens 50`.
 
 ---
 
@@ -503,7 +488,7 @@ console.
 - **[Node.js](https://nodejs.org)** (v20+) and npm — the worker shells out to npm to build user projects
 - **[Git](https://git-scm.com)**
 - **[Redis](https://redis.io)** locally or on Upstash
-- **Cloudinary** credentials, and a **Gemini** or **OpenRouter** key
+- **Cloudinary** credentials, and a **Gemini** API key
 
 ### Step 1: Clone
 ```bash
@@ -538,7 +523,7 @@ cd build-services && bun install && bun run dev
 
 **Terminal 3 — frontend:**
 ```bash
-cd frontend && npm install && npm run dev -- -p 3001
+cd frontend && npm install && npm run dev
 ```
 
 Visit **[http://localhost:3001](http://localhost:3001)**.
@@ -572,7 +557,14 @@ for minutes and needs disk — so they must scale and restart independently.
 
 ### Option 2: Docker
 
-Two images, built from the repository root:
+**Whole stack locally** (Redis, API, worker, frontend) with Docker Compose. It reads secrets from `backend-services/.env` and `build-services/.env` and points both services at its own Redis:
+
+```bash
+docker compose up --build             # free mode: http://localhost:3001
+PROD=true docker compose up --build   # metered: Google sign-in + tokens
+```
+
+**Individual images**, built from the repository root:
 
 ```bash
 docker build -f Dockerfile.api    -t rwaft-api .

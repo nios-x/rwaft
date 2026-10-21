@@ -14,12 +14,19 @@ import {
 	PROMPT_QUEUE,
 	DEPLOY_PROCESSING,
 	PROMPT_PROCESSING,
-	DEPLOYMENT_STATUS_PREFIX
+	DEPLOYMENT_STATUS_PREFIX,
+	BUILD_WAITING,
+	BUILD_ACTIVE,
+	userKey,
+	refundKey
 } from "./lib/config.ts"
 import { getAllFileNames } from "./lib/helper.ts"
 import { uploadFile } from "./lib/upload.ts"
 import { generateToolCalls } from "./lib/ai.ts"
-import { applyOperations, releaseJobState } from "./lib/tools.ts"
+import { releaseJobState } from "./lib/tools.ts"
+import { planApp, type AppPlan } from "./lib/plan.ts"
+import { writeFoundation } from "./lib/foundation.ts"
+import { generatePages, repairFromBuildFailure } from "./lib/pages.ts"
 import {
 	runWithJobContext,
 	jobLog,
@@ -89,6 +96,8 @@ interface JobPayload {
 	 * applied during the build, not at serve time.
 	 */
 	assetBase?: string
+	/** Tokens the API took for this job; returned if the build fails. */
+	charge?: { userId: string; tokens: number }
 }
 
 let shuttingDown = false
@@ -285,7 +294,11 @@ const buildFromCloudinary = async (id: string, assetBase: string) => {
 
 const TEMPLATE_REPO = process.env.TEMPLATE_REPO || "https://github.com/nios-x/vite-template"
 
-const scaffoldViteProject = async (projectDir: string) => {
+/**
+ * `install: false` leaves `npm install` to the caller, so the prompt flow can
+ * run it alongside planning, which needs no files at all.
+ */
+const scaffoldViteProject = async (projectDir: string, { install = true } = {}) => {
 	await fs.rm(projectDir, { recursive: true, force: true })
 	await fs.mkdir(root, { recursive: true })
 	jobLog("Scaffolding a fresh Vite + React + TypeScript project...")
@@ -397,7 +410,7 @@ const scaffoldViteProject = async (projectDir: string) => {
 
 	await fs.rm(path.join(projectDir, "vite.config.js"), { force: true })
 
-	await installDependencies(projectDir, "--legacy-peer-deps")
+	if (install) await installDependencies(projectDir, "--legacy-peer-deps")
 }
 
 const MAX_BUILD_REPAIRS = Number(process.env.MAX_BUILD_REPAIRS || 6)
@@ -635,22 +648,17 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 const installAndBuildPromptProject = async (
 	projectDir: string,
 	prompt: string,
-	initialOperations: Awaited<ReturnType<typeof generateToolCalls>>,
+	plan: AppPlan,
 	assetBase: string
 ) => {
 	// Deterministic dependency repairs don't consume an AI attempt: they cost a
 	// single npm call, and burning a model round-trip (plus free-tier quota) on
 	// "install the package the error just named" is pure waste.
 	let deterministicRepairs = 0
-	let appliedInitialOperations = false
 	let unrepairedFailure: string | undefined
 
 	for (let attempt = 0; attempt <= MAX_BUILD_REPAIRS; attempt++) {
 		try {
-			if (!appliedInitialOperations) {
-				appliedInitialOperations = true
-				await applyOperations(projectDir, initialOperations)
-			}
 			await normalizeGeneratedProject(projectDir)
 			await installDependencies(projectDir, "--legacy-peer-deps")
 			// npm reporting "up to date" only means node_modules matches
@@ -704,6 +712,14 @@ const installAndBuildPromptProject = async (
 			}
 
 			jobLog(`Build step failed - asking the AI to repair (${attempt + 1}/${MAX_BUILD_REPAIRS})`, "warn")
+
+			// Most failures name the file at fault. Send just that file and the
+			// error: one request, instead of an agent rediscovering the project.
+			if (await repairFromBuildFailure(projectDir, plan, prompt, failure)) {
+				unrepairedFailure = undefined
+				continue
+			}
+
 			const failureGuidance = describeBuildFailure(failure)
 			const repairPrompt = `A project step failed. Fix the project using the file tools.
 
@@ -725,14 +741,9 @@ Inspect the relevant files first and make all required changes in one repair pas
 				jobLog(`AI returned no repair operations (attempt ${attempt + 1}/${MAX_BUILD_REPAIRS}), retrying...`, "warn")
 				continue
 			}
+			// Already on disk: the agent applies each edit as it makes it.
 			unrepairedFailure = undefined
-			jobLog(`Applying ${repairOperations.length} repair operations`)
-			try {
-				await applyOperations(projectDir, repairOperations)
-			} catch (repairError) {
-				const message = repairError instanceof Error ? repairError.message : String(repairError)
-				jobLog(`Repair application partially failed; re-attempting build: ${message}`, "warn")
-			}
+			jobLog(`Applied ${repairOperations.length} repair operations`)
 		}
 	}
 }
@@ -799,11 +810,38 @@ function parsePayload(raw: string, label: string): JobPayload | null {
 			url: parsed.url,
 			prompt: parsed.prompt,
 			deploymentUrl: parsed.deploymentUrl,
-			assetBase: typeof parsed.assetBase === "string" ? parsed.assetBase : `/${parsed.id}/`
+			assetBase: typeof parsed.assetBase === "string" ? parsed.assetBase : `/${parsed.id}/`,
+			charge: typeof parsed.charge?.userId === "string" && Number.isInteger(parsed.charge?.tokens) && parsed.charge.tokens > 0
+				? { userId: parsed.charge.userId, tokens: parsed.charge.tokens }
+				: undefined
 		}
 	} catch (error) {
 		console.error(`[${label}] Discarding malformed payload: ${(error as Error).message}`)
 		return null
+	}
+}
+
+/** Credits a refund at most once per job, even if a crash makes the job run twice. */
+const REFUND_SCRIPT = `
+if redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[2]) then
+	return redis.call('HINCRBY', KEYS[2], 'tokens', ARGV[1])
+end
+return -1
+`
+const REFUND_MARKER_TTL_SECONDS = 7 * 24 * 60 * 60
+
+/** The user got nothing from a failed build, so the tokens it cost go back. */
+async function refundFailedJob(redis: RedisLike, payload: JobPayload) {
+	const { charge } = payload
+	if (!charge) return
+	try {
+		const reply = Number(await redis.sendCommand([
+			"EVAL", REFUND_SCRIPT, "2", refundKey(payload.id), userKey(charge.userId),
+			String(charge.tokens), String(REFUND_MARKER_TTL_SECONDS)
+		]))
+		if (reply >= 0) jobLog(`Refunded ${charge.tokens} credit${charge.tokens === 1 ? "" : "s"} for the failed build`, "warn")
+	} catch (error) {
+		console.error(`[billing] Refund for ${payload.id} failed:`, (error as Error).message)
 	}
 }
 
@@ -852,6 +890,10 @@ async function pump(
 				// deadline — and the status stays "queued", which is what the
 				// proxy's waiting page already renders.
 				await withBuildSlot(async () => {
+					// Out of the waiting line, into the running set: this is what
+					// moves everyone behind it up a place.
+					await redis.zRem(BUILD_WAITING, id).catch(() => { })
+					await redis.zAdd(BUILD_ACTIVE, { score: Date.now(), value: id }).catch(() => { })
 					jobStatus("building")
 					jobLog(`Starting ${kind} job ${id}`)
 					await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "building", { EX: STATUS_TTL_SECONDS })
@@ -867,7 +909,10 @@ async function pump(
 				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: STATUS_TTL_SECONDS }).catch(() => { })
 				jobLog(`Deployment ${id} failed: ${message}`, "error")
 				jobStatus("failed", { error: message })
+				await refundFailedJob(redis, payload)
 			} finally {
+				await redis.zRem(BUILD_WAITING, id).catch(() => { })
+				await redis.zRem(BUILD_ACTIVE, id).catch(() => { })
 				releaseJobState(projectDir)
 				await fs.rm(projectDir, { recursive: true, force: true }).catch(() => { })
 				// Ack last: until this runs, a crash leaves the job recoverable.
@@ -891,20 +936,29 @@ const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESS
 	if (!payload.prompt) throw new Error("Prompt job carried no prompt text")
 	const projectDir = path.join(root, payload.id)
 
-	await scaffoldViteProject(projectDir)
+	await scaffoldViteProject(projectDir, { install: false })
 
+	// 1. Plan: pages and the design schema, in one call. It needs no files, so
+	//    it runs while npm installs the scaffold instead of after it.
+	jobLog("Planning your app: pages, colours and fonts…")
+	const [plan] = await Promise.all([
+		planApp(payload.prompt),
+		installDependencies(projectDir, "--legacy-peer-deps")
+	])
+	jobLog(`Planned ${plan.pages.length} page${plan.pages.length === 1 ? "" : "s"} (${plan.pages.map((page) => page.name).join(", ")}) · ${plan.design.mood} · ${plan.design.fonts.heading} + ${plan.design.fonts.body}`)
+
+	// 2. Foundation: design tokens, component kit, layout and router, by code.
+	await writeFoundation(projectDir, plan)
+
+	// 3. Pages: one call per page, in parallel, against the same design schema.
 	jobLog("Asking the AI to write your application...")
-	// The design skill rides along with the first pass only: it shapes what
-	// gets written, and a later repair pass is about making it compile.
-	const operations = await generateToolCalls(payload.prompt, projectDir, {
-		skills: ["frontend-design", "tailwind-design-system"]
-	})
-	jobLog(`AI produced ${operations.length} file operations`)
+	const files = await generatePages(projectDir, plan, payload.prompt)
+	jobLog(`AI wrote ${files.length} files across ${plan.pages.length} page${plan.pages.length === 1 ? "" : "s"}`)
 
 	await installAndBuildPromptProject(
 		projectDir,
 		payload.prompt,
-		operations,
+		plan,
 		payload.assetBase || `/${payload.id}/`
 	)
 	await uploadBuildOutput(payload.id, projectDir)

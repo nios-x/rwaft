@@ -29,7 +29,11 @@ import { run, INSTALL_TIMEOUT_MS } from "./run.ts"
 /** Runtime packages the scaffold guarantees. Kept in sync with the scaffold. */
 export const RUNTIME_DEPENDENCIES: Record<string, string> = {
 	"react": "^19.1.0",
-	"react-dom": "^19.1.0"
+	"react-dom": "^19.1.0",
+	// The generated foundation (lib/foundation.ts) routes with react-router and
+	// draws its icons with lucide, so both are part of the scaffold's contract.
+	"react-router-dom": "^7.18.0",
+	"lucide-react": "^1.60.0"
 }
 
 /** Build-time packages the scaffold guarantees. */

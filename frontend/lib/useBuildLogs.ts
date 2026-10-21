@@ -62,7 +62,7 @@ export interface BuildLogs {
  * history on every connect so a reconnect is seamless — which means duplicates
  * are expected, and are filtered here on the server-assigned `jobId:seq`.
  */
-export function useBuildLogs(userId: string | null): BuildLogs {
+export function useBuildLogs(userId: string | null, sessionToken: string | null = null): BuildLogs {
 	const [lines, setLines] = useState<LogLine[]>([])
 	const [connected, setConnected] = useState(false)
 	const [status, setStatus] = useState<DeploymentStatus | null>(null)
@@ -83,14 +83,19 @@ export function useBuildLogs(userId: string | null): BuildLogs {
 		if (userId && isBackendConfigured) {
 			// Also drop the server-side history, otherwise the next reconnect
 			// replays everything we just cleared.
-			void fetch(`${BACKEND_URL}/logs/${userId}`, { method: "DELETE" }).catch(() => { })
+			void fetch(`${BACKEND_URL}/logs/${userId}`, {
+				method: "DELETE",
+				headers: sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}
+			}).catch(() => { })
 		}
-	}, [userId])
+	}, [userId, sessionToken])
 
 	useEffect(() => {
 		if (!userId || !isBackendConfigured) return
 
-		const source = new EventSource(`${BACKEND_URL}/logs/${userId}`)
+		// EventSource cannot send headers, so an account's stream authenticates in the URL.
+		const query = sessionToken ? `?access_token=${encodeURIComponent(sessionToken)}` : ""
+		const source = new EventSource(`${BACKEND_URL}/logs/${userId}${query}`)
 
 		source.onopen = () => setConnected(true)
 		source.onerror = () => setConnected(false) // EventSource retries by itself
@@ -145,7 +150,7 @@ export function useBuildLogs(userId: string | null): BuildLogs {
 			source.close()
 			setConnected(false)
 		}
-	}, [userId])
+	}, [userId, sessionToken])
 
 	return { lines, connected, status, statusJobId, deployedUrl, failure, clear }
 }

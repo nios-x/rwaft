@@ -20,6 +20,11 @@ export const PROMPT_QUEUE = "rwaft:prompt"
 export const DEPLOY_PROCESSING = "rwaft:deploy:processing"
 export const PROMPT_PROCESSING = "rwaft:prompt:processing"
 export const DEPLOYMENT_STATUS_PREFIX = "rwaft:deployment-status:"
+/** Build line: waiting jobs scored by enqueue time, running ones by start time. */
+export const BUILD_WAITING = "rwaft:builds:waiting"
+export const BUILD_ACTIVE = "rwaft:builds:active"
+export const userKey = (userId: string) => `rwaft:user:${userId}`
+export const refundKey = (jobId: string) => `rwaft:billing:refunded:${jobId}`
 
 const redisUrl = process.env.REDIS_URL
 

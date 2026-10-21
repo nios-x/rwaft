@@ -1,0 +1,66 @@
+"use client"
+
+import { STATE_LABEL, relativeTime, type BuildView } from "../../lib/builds"
+import { buildTitle } from "../../lib/recentBuilds"
+import { PromptBox, type PromptBoxProps } from "./PromptBox"
+
+/** Real starting points for someone who has never written a spec. */
+const EXAMPLES = [
+	"A menu page for a small café",
+	"A habit tracker with streaks",
+	"An RSVP page for a party",
+	"A portfolio for a photographer",
+]
+
+interface HomeProps {
+	prompt: PromptBoxProps
+	builds: BuildView[]
+	onOpen: (id: string) => void
+}
+
+export function Home({ prompt, builds, onOpen }: HomeProps) {
+	return (
+		<main className="home">
+			<section className="hero" aria-labelledby="hero-title">
+				<h1 id="hero-title">What should we build?</h1>
+				<p className="hero-sub">Describe an app in plain words. rwaft writes it, builds it and hosts it, and you watch the real build happen.</p>
+				<PromptBox {...prompt} size="hero" />
+				{prompt.mode === "prompt" && !prompt.blocked && (
+					<div className="examples" aria-label="Example prompts">
+						{EXAMPLES.map((example) => (
+							<button
+								key={example}
+								type="button"
+								className="example"
+								onClick={() => { prompt.setValue(example); prompt.inputRef.current?.focus() }}
+							>
+								{example}
+							</button>
+						))}
+					</div>
+				)}
+			</section>
+
+			{builds.length > 0 && (
+				<section className="projects" aria-labelledby="projects-title">
+					<h2 id="projects-title">Your builds</h2>
+					<ul className="project-grid">
+						{builds.map((build) => (
+							<li key={build.id}>
+								<button type="button" className="project" onClick={() => onOpen(build.id)}>
+									<span className="project-title">{buildTitle(build)}</span>
+									<span className="project-meta">
+										<span className="status" data-state={build.state}>
+											{build.state === "line" && build.position ? `#${build.position} in line` : STATE_LABEL[build.state]}
+										</span>
+										<span>{build.kind === "prompt" ? "Prompt" : "Repo"} · {relativeTime(build.at)}</span>
+									</span>
+								</button>
+							</li>
+						))}
+					</ul>
+				</section>
+			)}
+		</main>
+	)
+}

@@ -1,0 +1,627 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-20T15:17:52.962Z",
+  "title": "Design System: rwaft",
+  "extensions": {
+    "colorMeta": {
+      "ink": {
+        "role": "primary",
+        "displayName": "Ink Black",
+        "canonical": "oklch(14.5% 0.002 286.1)",
+        "dark": "#fafafa",
+        "tonalRamp": [
+          "#0a0a0b",
+          "#26262b",
+          "#52525b",
+          "#71717a",
+          "#a8a8b2",
+          "#d4d4d8",
+          "#e8e8eb",
+          "#f4f4f5"
+        ]
+      },
+      "accent": {
+        "role": "secondary",
+        "displayName": "Build Violet",
+        "canonical": "oklch(56.2% 0.251 283.7)",
+        "dark": "#8b72ff",
+        "tonalRamp": [
+          "oklch(15% 0.087 283.7)",
+          "oklch(26% 0.123 283.7)",
+          "oklch(38% 0.163 283.7)",
+          "oklch(50% 0.203 283.7)",
+          "oklch(62% 0.197 283.7)",
+          "oklch(74% 0.157 283.7)",
+          "oklch(85% 0.120 283.7)",
+          "oklch(95% 0.087 283.7)"
+        ]
+      },
+      "accent-ink": {
+        "role": "secondary",
+        "displayName": "Violet Ink",
+        "canonical": "oklch(48.7% 0.240 281.5)",
+        "dark": "#b9a9ff",
+        "tonalRamp": [
+          "oklch(15% 0.087 281.5)",
+          "oklch(26% 0.123 281.5)",
+          "oklch(38% 0.163 281.5)",
+          "oklch(50% 0.203 281.5)",
+          "oklch(62% 0.197 281.5)",
+          "oklch(74% 0.157 281.5)",
+          "oklch(85% 0.120 281.5)",
+          "oklch(95% 0.087 281.5)"
+        ]
+      },
+      "accent-soft": {
+        "role": "secondary",
+        "displayName": "Violet Mist",
+        "canonical": "oklch(95.4% 0.024 296.1)",
+        "dark": "rgba(139, 114, 255, 0.14)",
+        "tonalRamp": [
+          "oklch(15% 0.024 296.1)",
+          "oklch(26% 0.024 296.1)",
+          "oklch(38% 0.024 296.1)",
+          "oklch(50% 0.024 296.1)",
+          "oklch(62% 0.024 296.1)",
+          "oklch(74% 0.024 296.1)",
+          "oklch(85% 0.024 296.1)",
+          "oklch(95% 0.024 296.1)"
+        ]
+      },
+      "line-c": {
+        "role": "tertiary",
+        "displayName": "Queue Magenta",
+        "canonical": "oklch(52.5% 0.199 4.0)",
+        "dark": "#f472b6",
+        "tonalRamp": [
+          "oklch(15% 0.087 4)",
+          "oklch(26% 0.123 4)",
+          "oklch(38% 0.163 4)",
+          "oklch(50% 0.199 4)",
+          "oklch(62% 0.197 4)",
+          "oklch(74% 0.157 4)",
+          "oklch(85% 0.120 4)",
+          "oklch(95% 0.087 4)"
+        ]
+      },
+      "build-c": {
+        "role": "tertiary",
+        "displayName": "Build Orange",
+        "canonical": "oklch(70.5% 0.187 47.6)",
+        "dark": "#f97316",
+        "tonalRamp": [
+          "oklch(15% 0.087 47.6)",
+          "oklch(26% 0.123 47.6)",
+          "oklch(38% 0.163 47.6)",
+          "oklch(50% 0.187 47.6)",
+          "oklch(62% 0.187 47.6)",
+          "oklch(74% 0.157 47.6)",
+          "oklch(85% 0.120 47.6)",
+          "oklch(95% 0.087 47.6)"
+        ]
+      },
+      "build-ink": {
+        "role": "tertiary",
+        "displayName": "Build Ink",
+        "canonical": "oklch(55.5% 0.146 49.0)",
+        "dark": "#fdba74",
+        "tonalRamp": [
+          "oklch(15% 0.087 49)",
+          "oklch(26% 0.123 49)",
+          "oklch(38% 0.146 49)",
+          "oklch(50% 0.146 49)",
+          "oklch(62% 0.146 49)",
+          "oklch(74% 0.146 49)",
+          "oklch(85% 0.120 49)",
+          "oklch(95% 0.087 49)"
+        ]
+      },
+      "live-c": {
+        "role": "tertiary",
+        "displayName": "Live Green",
+        "canonical": "oklch(62.7% 0.170 149.2)",
+        "dark": "#22c55e",
+        "tonalRamp": [
+          "oklch(15% 0.087 149.2)",
+          "oklch(26% 0.123 149.2)",
+          "oklch(38% 0.163 149.2)",
+          "oklch(50% 0.170 149.2)",
+          "oklch(62% 0.170 149.2)",
+          "oklch(74% 0.157 149.2)",
+          "oklch(85% 0.120 149.2)",
+          "oklch(95% 0.087 149.2)"
+        ]
+      },
+      "live-ink": {
+        "role": "tertiary",
+        "displayName": "Live Ink",
+        "canonical": "oklch(52.7% 0.137 150.1)",
+        "dark": "#86efac",
+        "tonalRamp": [
+          "oklch(15% 0.087 150.1)",
+          "oklch(26% 0.123 150.1)",
+          "oklch(38% 0.137 150.1)",
+          "oklch(50% 0.137 150.1)",
+          "oklch(62% 0.137 150.1)",
+          "oklch(74% 0.137 150.1)",
+          "oklch(85% 0.120 150.1)",
+          "oklch(95% 0.087 150.1)"
+        ]
+      },
+      "fail-c": {
+        "role": "tertiary",
+        "displayName": "Fail Red",
+        "canonical": "oklch(57.7% 0.215 27.3)",
+        "dark": "#ef4444",
+        "tonalRamp": [
+          "oklch(15% 0.087 27.3)",
+          "oklch(26% 0.123 27.3)",
+          "oklch(38% 0.163 27.3)",
+          "oklch(50% 0.203 27.3)",
+          "oklch(62% 0.197 27.3)",
+          "oklch(74% 0.157 27.3)",
+          "oklch(85% 0.120 27.3)",
+          "oklch(95% 0.087 27.3)"
+        ]
+      },
+      "fail-ink": {
+        "role": "tertiary",
+        "displayName": "Fail Ink",
+        "canonical": "oklch(50.5% 0.190 27.5)",
+        "dark": "#fca5a5",
+        "tonalRamp": [
+          "oklch(15% 0.087 27.5)",
+          "oklch(26% 0.123 27.5)",
+          "oklch(38% 0.163 27.5)",
+          "oklch(50% 0.190 27.5)",
+          "oklch(62% 0.190 27.5)",
+          "oklch(74% 0.157 27.5)",
+          "oklch(85% 0.120 27.5)",
+          "oklch(95% 0.087 27.5)"
+        ]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Canvas",
+        "canonical": "oklch(98.5% 0 0)",
+        "dark": "#030305",
+        "tonalRamp": [
+          "#0a0a0b",
+          "#26262b",
+          "#52525b",
+          "#71717a",
+          "#a8a8b2",
+          "#d4d4d8",
+          "#e8e8eb",
+          "#f4f4f5"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface",
+        "canonical": "oklch(100% 0 0)",
+        "dark": "#131316",
+        "tonalRamp": [
+          "#0a0a0b",
+          "#26262b",
+          "#52525b",
+          "#71717a",
+          "#a8a8b2",
+          "#d4d4d8",
+          "#e8e8eb",
+          "#f4f4f5"
+        ]
+      },
+      "surface-2": {
+        "role": "neutral",
+        "displayName": "Sunken",
+        "canonical": "oklch(96.7% 0.001 286.4)",
+        "dark": "#1b1b1f",
+        "tonalRamp": [
+          "#0a0a0b",
+          "#26262b",
+          "#52525b",
+          "#71717a",
+          "#a8a8b2",
+          "#d4d4d8",
+          "#e8e8eb",
+          "#f4f4f5"
+        ]
+      },
+      "surface-3": {
+        "role": "neutral",
+        "displayName": "Deep",
+        "canonical": "oklch(93.2% 0.004 286.3)",
+        "dark": "#26262b",
+        "tonalRamp": [
+          "#0a0a0b",
+          "#26262b",
+          "#52525b",
+          "#71717a",
+          "#a8a8b2",
+          "#d4d4d8",
+          "#e8e8eb",
+          "#f4f4f5"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(92.6% 0.004 286.3)",
+        "dark": "#24242a",
+        "tonalRamp": [
+          "#0a0a0b",
+          "#26262b",
+          "#52525b",
+          "#71717a",
+          "#a8a8b2",
+          "#d4d4d8",
+          "#e8e8eb",
+          "#f4f4f5"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Hairline Strong",
+        "canonical": "oklch(87.1% 0.005 286.3)",
+        "dark": "#34343b",
+        "tonalRamp": [
+          "#0a0a0b",
+          "#26262b",
+          "#52525b",
+          "#71717a",
+          "#a8a8b2",
+          "#d4d4d8",
+          "#e8e8eb",
+          "#f4f4f5"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Text",
+        "canonical": "oklch(14.5% 0.002 286.1)",
+        "dark": "#fafafa",
+        "tonalRamp": [
+          "#0a0a0b",
+          "#26262b",
+          "#52525b",
+          "#71717a",
+          "#a8a8b2",
+          "#d4d4d8",
+          "#e8e8eb",
+          "#f4f4f5"
+        ]
+      },
+      "text-2": {
+        "role": "neutral",
+        "displayName": "Text Muted",
+        "canonical": "oklch(44.2% 0.015 285.8)",
+        "dark": "#a8a8b2",
+        "tonalRamp": [
+          "#0a0a0b",
+          "#26262b",
+          "#52525b",
+          "#71717a",
+          "#a8a8b2",
+          "#d4d4d8",
+          "#e8e8eb",
+          "#f4f4f5"
+        ]
+      },
+      "text-3": {
+        "role": "neutral",
+        "displayName": "Text Faint",
+        "canonical": "oklch(55.2% 0.014 285.9)",
+        "dark": "#8b8b95",
+        "tonalRamp": [
+          "#0a0a0b",
+          "#26262b",
+          "#52525b",
+          "#71717a",
+          "#a8a8b2",
+          "#d4d4d8",
+          "#e8e8eb",
+          "#f4f4f5"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The Home question \"What should we build?\" only; 34px at <=640px."
+      },
+      "numeral": {
+        "displayName": "Numeral",
+        "purpose": "Place in line (\"#2\") in the queued preview state."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Preview-state headings (\"This build didn't finish\")."
+      },
+      "title-sm": {
+        "displayName": "Title Small",
+        "purpose": "Project-card titles, two-line clamp."
+      },
+      "body-lg": {
+        "displayName": "Body Large",
+        "purpose": "Hero sub-line, max 52ch."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Base app text and chat replies (1.6 line-height in chat)."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Primary pill buttons."
+      },
+      "label-sm": {
+        "displayName": "Label Small",
+        "purpose": "Chips, example chips, mode and view switches."
+      },
+      "status": {
+        "displayName": "Status",
+        "purpose": "Status pill labels."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Raw build output and the Log tab's per-line timestamps only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-box",
+        "value": "0 1px 2px rgba(10, 10, 20, 0.04), 0 16px 40px -18px rgba(30, 20, 70, 0.18)",
+        "dark": "0 0 0 1px var(--line), 0 20px 50px -24px rgba(0, 0, 0, 0.8)",
+        "purpose": "Prompt box at rest; project cards on hover."
+      },
+      {
+        "name": "shadow-pop",
+        "value": "0 1px 3px rgba(10, 10, 20, 0.06), 0 20px 44px -16px rgba(10, 10, 20, 0.25)",
+        "dark": "0 0 0 1px var(--line-strong), 0 20px 44px -16px rgba(0, 0, 0, 0.75)",
+        "purpose": "Account menu and token shop."
+      },
+      {
+        "name": "segment-thumb",
+        "value": "0 1px 2px rgba(10, 10, 20, 0.1)",
+        "purpose": "Selected segment of the mode and view switches."
+      },
+      {
+        "name": "focus-halo",
+        "value": "0 0 0 4px var(--accent-soft)",
+        "purpose": "Added to shadow-box while the prompt box has focus."
+      },
+      {
+        "name": "focus-ring",
+        "value": "outline: 2px solid var(--accent); outline-offset: 2px",
+        "purpose": "Every :focus-visible control."
+      },
+      {
+        "name": "frost-header",
+        "value": "background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(18px)",
+        "purpose": "Build-screen header over the fluid field."
+      },
+      {
+        "name": "frost-workspace",
+        "value": "background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(24px)",
+        "purpose": "Workspace over the fluid field so chat stays legible."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Menu pop-in and the raw-log chevron rotation."
+      },
+      {
+        "name": "state-transition",
+        "value": "150ms ease",
+        "purpose": "Hover/focus changes of border, colour, background, opacity; send lifts 1px."
+      },
+      {
+        "name": "pop-in",
+        "value": "150ms ease-out, from opacity 0 and translateY(-4px)",
+        "purpose": "Account menu entrance."
+      },
+      {
+        "name": "pulse",
+        "value": "1.2s ease-in-out infinite, opacity to 0.35",
+        "purpose": "Building status dot, live step core, typing dots."
+      },
+      {
+        "name": "pulse-slow",
+        "value": "1.6s ease-in-out infinite, opacity to 0.35",
+        "purpose": "Shared-line chip dot in the header."
+      },
+      {
+        "name": "spin",
+        "value": "800ms linear infinite",
+        "purpose": "Building-state spinner (always with the stage list)."
+      },
+      {
+        "name": "fluid-field",
+        "value": "WebGL simplex-noise beams at half resolution; theme cross-fades by easing 8% per frame",
+        "purpose": "Full-bleed backdrop; paused while the tab is hidden; one still frame under reduced motion; radial-gradient fallback without WebGL."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "animation and transition durations 0.001ms, one iteration",
+        "purpose": "prefers-reduced-motion: reduce."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "split",
+        "value": "900px",
+        "purpose": "At or below: chat and preview take turns via the header Chat/Preview switch; queue chip leaves the build header."
+      },
+      {
+        "name": "phone",
+        "value": "640px",
+        "purpose": "At or below: compact header (back chevron, short status, no queue/token chips, avatar-only account), short mode labels, 34px hero, shop as bottom sheet."
+      }
+    ],
+    "themes": {
+      "mechanism": "Tokens live on :root / :root[data-theme=\"light\"] and :root[data-theme=\"dark\"] in frontend/app/globals.css; the theme is set on <html data-theme> before first paint from localStorage \"rwaft:theme\", else prefers-color-scheme. Dark values are the frontmatter *-dark keys (build-c is shared). Dark mode redefines tokens only, never rules."
+    },
+    "backdrop": {
+      "source": "frontend/app/_components/FluidBackground.tsx",
+      "description": "User-supplied simplex-noise \"fluid field\" fragment shader drawn with raw WebGL at half resolution. Dark: blue-to-violet beams (rgb .15,.25,.85 to .4,.2,.9) at 0.7 strength over a #030305-like base. Light: pale washes (rgb .62,.70,1 to .78,.66,1) mixed at 0.42 over near-white. Theme changes cross-fade. Overlays: SVG fractal-noise grain (opacity .08 dark / .05 light, overlay blend) and 45-degree 1px lines every 12px (opacity .2). Visible on Home; frosted behind the workspace. Paused while hidden; one still frame under reduced motion; two radial gradients without WebGL."
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one filled ink action per view (e.g. \"Try again\" in a failed preview; repeated only as per-row price buttons in the token shop).",
+      "html": "<button class=\"ds-btn-primary\">Try again</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border:0;border-radius:999px;background:var(--ink);color:var(--on-ink);font-family:var(--font-sans),Geist,system-ui,sans-serif;font-size:13.5px;font-weight:600;white-space:nowrap;cursor:pointer;transition:opacity 150ms ease}.ds-btn-primary:hover{opacity:.85}.ds-btn-primary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-btn-primary:disabled{opacity:.4;cursor:not-allowed}"
+    },
+    {
+      "name": "Text Button",
+      "kind": "button",
+      "refersTo": "button-text",
+      "description": "Every secondary action: underlined muted text, no fill.",
+      "html": "<button class=\"ds-text-btn\">See where it stopped</button>",
+      "css": ".ds-text-btn{padding:0;border:0;background:none;color:var(--text-2);font-family:var(--font-sans),Geist,system-ui,sans-serif;font-size:13px;font-weight:500;text-decoration:underline;text-underline-offset:3px;cursor:pointer}.ds-text-btn:hover{color:var(--text)}.ds-text-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "34px quiet square for copy, reload, open-in-new-tab and the theme toggle.",
+      "html": "<button class=\"ds-icon-btn\" aria-label=\"Copy link\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect x=\"5.4\" y=\"5.4\" width=\"7.4\" height=\"7.4\" rx=\"1.4\"/><path d=\"M10.4 5.4V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v5.4a1 1 0 0 0 1 1h1.4\"/></svg></button>",
+      "css": ".ds-icon-btn{display:inline-grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:10px;background:transparent;color:var(--text-2);cursor:pointer;transition:background-color 150ms ease,color 150ms ease}.ds-icon-btn svg{width:17px;height:17px}.ds-icon-btn:hover{background:var(--surface-2);color:var(--text)}.ds-icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-icon-btn:disabled{opacity:.35;cursor:not-allowed}"
+    },
+    {
+      "name": "Prompt Box",
+      "kind": "input",
+      "refersTo": "prompt-box",
+      "description": "Home prompt: borderless growing textarea, segmented mode switch, cost, ink send circle; violet border and halo on focus.",
+      "html": "<form class=\"ds-prompt\"><textarea rows=\"3\" placeholder=\"Describe the app you want, who it's for, and what it should do…\"></textarea><div class=\"ds-prompt-bar\"><div class=\"ds-mode\" role=\"radiogroup\" aria-label=\"What are you sending?\"><button type=\"button\" role=\"radio\" aria-checked=\"true\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M8 2.4 9.3 6.4l4 1.3-4 1.3L8 13l-1.3-4-4-1.3 4-1.3L8 2.4Z\"/></svg>Describe an app</button><button type=\"button\" role=\"radio\" aria-checked=\"false\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3.8 2.8h7.4a1 1 0 0 1 1 1v9.4H5.3a1.5 1.5 0 0 1-1.5-1.5V2.8Z\"/><path d=\"M5.3 10.8h6.9\"/></svg>GitHub repo</button></div><span class=\"ds-cost\">5 tokens</span><button type=\"submit\" class=\"ds-send\" aria-label=\"Start build\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M8 12.6V3.6M4.4 7.2 8 3.6l3.6 3.6\"/></svg></button></div></form>",
+      "css": ".ds-prompt{width:min(740px,100%);padding:14px 14px 10px;border:1px solid var(--line);border-radius:20px;background:var(--surface);box-shadow:var(--shadow-box);font-family:var(--font-sans),Geist,system-ui,sans-serif;transition:border-color 150ms ease,box-shadow 150ms ease}.ds-prompt:focus-within{border-color:var(--accent);box-shadow:var(--shadow-box),0 0 0 4px var(--accent-soft)}.ds-prompt textarea{display:block;width:100%;min-height:84px;padding:4px 6px;border:0;background:transparent;color:var(--text);font:inherit;font-size:15.5px;line-height:1.5;resize:none;caret-color:var(--accent)}.ds-prompt textarea:focus{outline:none}.ds-prompt textarea::placeholder{color:var(--text-3)}.ds-prompt-bar{display:flex;align-items:center;gap:10px;margin-top:8px}.ds-mode{display:flex;gap:2px;margin-right:auto;padding:3px;border-radius:999px;background:var(--surface-2)}.ds-mode button{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border:0;border-radius:999px;background:transparent;color:var(--text-2);font:inherit;font-size:12.5px;font-weight:500;cursor:pointer}.ds-mode button svg{width:13px;height:13px}.ds-mode button:hover{color:var(--text)}.ds-mode button[aria-checked=true]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(10,10,20,.1)}.ds-mode button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-cost{font-size:12px;color:var(--text-3);white-space:nowrap}.ds-send{display:grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:999px;background:var(--ink);color:var(--on-ink);cursor:pointer;transition:opacity 150ms ease,transform 150ms ease}.ds-send svg{width:17px;height:17px}.ds-send:hover{transform:translateY(-1px)}.ds-send:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-send:disabled{opacity:.25;cursor:not-allowed}"
+    },
+    {
+      "name": "Status Pills",
+      "kind": "chip",
+      "refersTo": "status-building",
+      "description": "The only way a build state is drawn: dot plus label on the state's soft tint; the dot pulses only while building.",
+      "html": "<div style=\"display:flex;gap:8px;flex-wrap:wrap\"><span class=\"ds-status\" data-state=\"line\">#2 in line</span><span class=\"ds-status\" data-state=\"building\">Building</span><span class=\"ds-status\" data-state=\"live\">Live</span><span class=\"ds-status\" data-state=\"failed\">Failed</span></div>",
+      "css": ".ds-status{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font-family:var(--font-sans),Geist,system-ui,sans-serif;font-size:11.5px;font-weight:600;white-space:nowrap}.ds-status::before{content:\"\";width:6px;height:6px;border-radius:999px;background:currentColor}.ds-status[data-state=line]{background:var(--line-soft);color:var(--line-c)}.ds-status[data-state=building]{background:var(--build-soft);color:var(--build-ink)}.ds-status[data-state=building]::before{animation:ds-pulse 1.2s ease-in-out infinite}.ds-status[data-state=live]{background:var(--live-soft);color:var(--live-ink)}.ds-status[data-state=failed]{background:var(--fail-soft);color:var(--fail-ink)}@keyframes ds-pulse{50%{opacity:.35}}"
+    },
+    {
+      "name": "Header Chips",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Shared-line chip with a pulsing orange dot, and the token-balance chip button.",
+      "html": "<div style=\"display:flex;gap:8px\"><span class=\"ds-chip\"><span class=\"ds-chip-dot\"></span>1 building · 2 waiting</span><button class=\"ds-chip ds-chip--button\" aria-label=\"37 tokens. Buy tokens\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><ellipse cx=\"8\" cy=\"5\" rx=\"4.6\" ry=\"2\"/><path d=\"M3.4 5v6c0 1.1 2.1 2 4.6 2s4.6-.9 4.6-2V5M3.4 8c0 1.1 2.1 2 4.6 2s4.6-.9 4.6-2\"/></svg> 37</button></div>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--text-2);font-family:var(--font-sans),Geist,system-ui,sans-serif;font-size:12.5px;font-weight:500;white-space:nowrap;font-variant-numeric:tabular-nums}.ds-chip svg{width:14px;height:14px}.ds-chip--button{cursor:pointer}.ds-chip--button:hover{border-color:var(--line-strong);color:var(--text)}.ds-chip--button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-chip-dot{width:7px;height:7px;border-radius:999px;background:var(--build-c);animation:ds-pulse 1.6s ease-in-out infinite}@keyframes ds-pulse{50%{opacity:.35}}"
+    },
+    {
+      "name": "Example Chip",
+      "kind": "chip",
+      "refersTo": "chip-example",
+      "description": "Home starting points; tapping one fills and focuses the prompt.",
+      "html": "<button class=\"ds-example\">A habit tracker with streaks</button>",
+      "css": ".ds-example{height:32px;padding:0 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--text-2);font-family:var(--font-sans),Geist,system-ui,sans-serif;font-size:13px;cursor:pointer;transition:border-color 150ms ease,color 150ms ease}.ds-example:hover{border-color:var(--line-strong);color:var(--text)}.ds-example:focus-visible{outline:2px solid var(--accent);outline-offset:2px}"
+    },
+    {
+      "name": "Panel Bar",
+      "kind": "nav",
+      "refersTo": "tab-selected",
+      "description": "Preview/Log tabs (selected tab in ink, log counter) beside the address bar with its state dot.",
+      "html": "<div class=\"ds-panel-bar\"><div class=\"ds-tabs\" role=\"tablist\" aria-label=\"View\"><button role=\"tab\" aria-selected=\"true\">Preview</button><button role=\"tab\" aria-selected=\"false\">Log<span class=\"ds-count\">20</span></button></div><div class=\"ds-address\"><span class=\"ds-dot\" data-state=\"building\"></span><span class=\"ds-address-text\">rwaft.app/k3f9x2qa/</span></div></div>",
+      "css": ".ds-panel-bar{display:flex;align-items:center;gap:6px;width:min(640px,100%);font-family:var(--font-sans),Geist,system-ui,sans-serif;}.ds-tabs{display:flex;gap:2px;padding:3px;border:1px solid var(--line);border-radius:11px;background:var(--surface)}.ds-tabs button{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:var(--text-2);font:inherit;font-size:13px;font-weight:500;cursor:pointer}.ds-tabs button:hover{color:var(--text)}.ds-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-tabs button[aria-selected=true]{background:var(--ink);color:var(--on-ink)}.ds-count{min-width:18px;padding:0 5px;border-radius:999px;background:var(--surface-3);color:var(--text-2);font-size:10.5px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums}.ds-address{display:flex;align-items:center;gap:8px;flex:1;min-width:0;height:36px;padding:0 12px;border:1px solid var(--line);border-radius:11px;background:var(--surface);color:var(--text-2);font-size:13px}.ds-address-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-dot{width:7px;height:7px;flex:none;border-radius:999px;background:var(--text-3)}.ds-dot[data-state=line]{background:var(--line-c)}.ds-dot[data-state=building]{background:var(--build-c)}.ds-dot[data-state=live]{background:var(--live-c)}.ds-dot[data-state=failed]{background:var(--fail-c)}"
+    },
+    {
+      "name": "Project Card",
+      "kind": "card",
+      "refersTo": "card-project",
+      "description": "Recent build on Home: two-line title, status pill and kind/time meta; hover darkens the hairline and adds shadow-box.",
+      "html": "<button class=\"ds-project\"><span class=\"ds-project-title\">A menu page for a small café</span><span class=\"ds-project-meta\"><span class=\"ds-status\" data-state=\"live\">Live</span><span>Prompt · 4m ago</span></span></button>",
+      "css": ".ds-project{display:grid;gap:12px;width:260px;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--text);font-family:var(--font-sans),Geist,system-ui,sans-serif;text-align:left;cursor:pointer;transition:border-color 150ms ease,box-shadow 150ms ease}.ds-project:hover{border-color:var(--line-strong);box-shadow:var(--shadow-box)}.ds-project:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-project-title{font-size:14.5px;font-weight:600;line-height:1.35}.ds-project-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--text-3)}.ds-status{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;font-family:var(--font-sans),Geist,system-ui,sans-serif;font-size:11.5px;font-weight:600;white-space:nowrap}.ds-status::before{content:\"\";width:6px;height:6px;border-radius:999px;background:currentColor}.ds-status[data-state=line]{background:var(--line-soft);color:var(--line-c)}.ds-status[data-state=building]{background:var(--build-soft);color:var(--build-ink)}.ds-status[data-state=building]::before{animation:ds-pulse 1.2s ease-in-out infinite}.ds-status[data-state=live]{background:var(--live-soft);color:var(--live-ink)}.ds-status[data-state=failed]{background:var(--fail-soft);color:var(--fail-ink)}@keyframes ds-pulse{50%{opacity:.35}}"
+    },
+    {
+      "name": "Chat Reply",
+      "kind": "custom",
+      "refersTo": "msg-you",
+      "description": "Your bubble, then a plain-words rwaft reply carrying its raw log lines (mono, coloured by level) in a disclosure.",
+      "html": "<div class=\"ds-thread\"><div class=\"ds-msg ds-msg--you\"><p>A menu page for a small café, with prices and a map</p><span class=\"ds-time\">08:09 pm</span></div><div class=\"ds-msg\" data-tone=\"warn\"><p>The build hit an error. The AI is reading it and fixing the code (try 1 of 6).</p><details class=\"ds-raw-wrap\" open><summary><svg class=\"ds-chev\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m6.5 4.5 3.5 3.5-3.5 3.5\"/></svg>2 log lines</summary><code class=\"ds-raw\" data-level=\"warn\">Build step failed - asking the AI to repair (1/6)</code><code class=\"ds-raw\">Applying 2 repair operations</code></details></div></div>",
+      "css": ".ds-thread{display:flex;flex-direction:column;gap:16px;width:380px;font-family:var(--font-sans),Geist,system-ui,sans-serif;color:var(--text)}.ds-msg{font-size:14px;line-height:1.6}.ds-msg p{margin:0}.ds-msg--you{align-self:flex-end;max-width:88%;padding:10px 14px;border-radius:16px 16px 4px 16px;background:var(--surface-2)}.ds-time{display:block;margin-top:4px;font-size:11px;color:var(--text-3);text-align:right}.ds-msg[data-tone=warn]>p{color:var(--build-ink)}.ds-raw-wrap{margin-top:4px}.ds-raw-wrap summary{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-3);list-style:none;cursor:pointer}.ds-raw-wrap summary::-webkit-details-marker{display:none}.ds-raw-wrap summary:hover{color:var(--text-2)}.ds-raw-wrap summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-raw-wrap[open] summary{margin-bottom:6px}.ds-chev{width:12px;height:12px;transition:transform 150ms cubic-bezier(.16,1,.3,1)}.ds-raw-wrap[open] .ds-chev{transform:rotate(90deg)}.ds-raw{display:block;padding:0 10px;background:var(--surface-2);font-family:var(--font-mono),'Geist Mono',ui-monospace,monospace;font-size:12px;line-height:1.65;color:var(--text-2);white-space:pre-wrap}.ds-raw:first-of-type{padding-top:8px;border-radius:10px 10px 0 0}.ds-raw:last-of-type{padding-bottom:8px;border-radius:0 0 10px 10px}.ds-raw[data-level=warn]{color:var(--build-ink)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Frosted Workbench",
+    "overview": "rwaft is a plain, quiet workbench laid over a slow field of light. The pattern is the one the user pinned: Lovable/Bolt, kept simple. Home is one question (\"What should we build?\"), one large prompt box, a row of example chips and the maker's recent builds. The build screen is a chat column on the left and a preview panel on the right. Nothing sits on screen that isn't the build. The surfaces are white (or near-black) with 1px hairlines. There is one black action and one violet accent, and four status colours carry the whole state model. Type is Geist throughout.\n\nThe only atmosphere is the backdrop: a full-bleed WebGL simplex-noise \"fluid field\". It draws blue-to-violet beams on #030305 in dark mode and pale lavender washes on white in light mode, with an 8% overlay of grain and a fine 45° line texture on top. On Home it shows through openly. Behind the workspace it is frosted: the workspace and the build header are tinted with `color-mix` of the canvas and blurred, so the field reads only as a faint glow and chat text stays legible. This is the system's one indulgence, and everything above it stays flat and quiet so it can be afforded.\n\nPRODUCT.md's principle 4 (\"Density over emptiness\") predates the user's explicit later request for a simple Lovable/Bolt-style UI, and that pinned request is the current direction. The two meet like this: Home is deliberately sparse, and the density lives in the workspace, which shows the real state: the plain-words step replies, the raw log lines inside each one, the position in line, the stage list, elapsed time, cost and balance. Light and dark are both first-class. The theme lives on `<html data-theme>`, is set before first paint, and dark mode redefines tokens only, never rules.",
+    "keyCharacteristics": [
+      "Near-white `#fafafa` / near-black `#030305` canvas, white or `#131316` surfaces, 1px hairlines.",
+      "One black (ink) primary action per view; every secondary action is an underlined text button.",
+      "One violet accent, used for links, focus, caret, selection and identity touches only.",
+      "Four status colours (line, building, live, failed), always shown in the same dot-plus-label pill.",
+      "Geist for everything, with Geist Mono only for raw build output.",
+      "The fluid-field backdrop shows on Home and is frosted behind the workspace.",
+      "Pills and softly rounded rectangles. Shadows only on the prompt box and floating layers."
+    ],
+    "rules": [
+      {
+        "name": "The One Ink Rule",
+        "body": "Each view has exactly one filled black action. On Home it is send. In a failed preview it is \"Try again\". In the chat column it is send, which is dimmed to 25% until there is something to send. Everything else (Dismiss, Close, See where it stopped, the chat's own Try again) is an underlined text button. The one place the ink repeats is a list of equivalent choices, such as the shop's per-pack price buttons, where it is one action offered per row.",
+        "section": "colors"
+      },
+      {
+        "name": "The Violet Is For Pointing Rule",
+        "body": "The accent marks where you are (focus, caret, selection) and where you can go (links). It is never a fill for buttons, never a status and never a decoration, apart from the logo dot and the avatar disc.",
+        "section": "colors"
+      },
+      {
+        "name": "The Four States Rule",
+        "body": "Line, building, live and failed are the whole state vocabulary, and each always uses its own colour triple. Don't invent a fifth state colour, and don't use the status colours for anything that isn't a build state, a log level or the matching tone of feedback.",
+        "section": "colors"
+      },
+      {
+        "name": "The Machine Text Rule",
+        "body": "Monospace is only for raw build output, which includes the log tab's per-line timestamps. Every other number or time (chat timestamps, elapsed time, token balances, tab counts, queue counts) stays in Geist. Figures that update live (elapsed time, balances, counts, the queue numeral) also use `tabular-nums`.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Loud Line Rule",
+        "body": "Display size is used once, for the Home question. Every other heading is 18px or smaller, so the build's content stays the subject.",
+        "section": "typography"
+      },
+      {
+        "name": "The Taking Turns Rule",
+        "body": "Below 900px, chat and preview are never squeezed side by side. Only one is shown at a time, and the header switch is the way between them.",
+        "section": "layout"
+      },
+      {
+        "name": "The Frost Rule",
+        "body": "Every surface that holds reading text over the fluid field is frosted (canvas `color-mix` plus `backdrop-filter` blur), or is an opaque `surface`. Text never sits on the raw shader, except on Home, where the canvas is calm and the type is large.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Still Field Rule",
+        "body": "Under `prefers-reduced-motion`, the shader renders one fixed frame and all pulses, spins and transitions collapse to effectively zero. The field also stops drawing while the tab is hidden, and falls back to two static radial gradients when WebGL is unavailable.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep each view to one filled ink action, and make every other action an underlined text button.",
+      "Do draw every build state with the shared status pill (dot plus label), using the short form (\"#2\", \"Building\", \"Live\", \"Failed\") in the phone header.",
+      "Do count everything ahead of a queued build (running plus waiting) when writing queue copy, and say that it starts automatically.",
+      "Do offer \"Try again\" on every failed state (it restores the original prompt or repo into the box), together with a route to the log (\"See where it stopped\").",
+      "Do frost any reading surface over the fluid field (canvas `color-mix` at 82–86% plus an 18–24px `backdrop-filter` blur), and keep the field visible only on Home.",
+      "Do define every colour as a token on `:root[data-theme]`, and change only tokens for dark mode, never rules.",
+      "Do keep the shader to one still frame, and turn off all pulses and spins, under `prefers-reduced-motion`.",
+      "Do use Geist Mono only for raw build output, and Geist for every other number, with `tabular-nums` on figures that update live."
+    ],
+    "donts": [
+      "Don't add a second filled black button to a view, or fill a button with the violet accent.",
+      "Don't use the four status colours for decoration, categories or anything that isn't a build state, a log level or the matching feedback tone.",
+      "Don't put reading text directly on the raw shader in the workspace, or turn the frost down until the beams compete with chat.",
+      "Don't show the queue chip or the token chip in the phone header; the balance belongs in the account menu there.",
+      "Don't put chat and preview side by side below 900px.",
+      "Don't replace the real build with a spinner alone. The building state's spinner always sits with the stage list read from the real log.",
+      "Don't add display-size type anywhere except the Home question."
+    ]
+  }
+}

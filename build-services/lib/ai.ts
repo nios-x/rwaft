@@ -2,7 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import OpenAI from "openai"
 import type { ChatCompletionTool, ChatCompletionMessageParam } from "openai/resources/chat/completions"
-import { executeToolRequest } from "./tools.ts"
+import { executeOperation, executeToolRequest } from "./tools.ts"
 import { jobLog } from "./joblog.ts"
 import { composeSystemPrompt } from "./skills.ts"
 import "./config.ts"
@@ -13,15 +13,10 @@ function getGeminiClient(apiKey: string): OpenAI {
 	return new OpenAI({
 		baseURL: process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/",
 		apiKey,
-		fetch: globalThis.fetch
-	})
-}
-
-function getOpenRouterClientForKey(apiKey: string): OpenAI {
-	return new OpenAI({
-		baseURL: "https://openrouter.ai/api/v1",
-		apiKey,
-		fetch: globalThis.fetch
+		fetch: globalThis.fetch,
+		// The SDK otherwise retries 429/5xx twice more on the SAME key, hidden
+		// from the log. Retries belong to callWithRetry's round robin.
+		maxRetries: 0
 	})
 }
 
@@ -33,20 +28,20 @@ interface ModelEntry {
 	provider: string
 }
 
-let nextGeminiKey = 0
+/**
+ * Process-wide round-robin position. Every attempt (a new request, a retry,
+ * a parallel page call, an agent turn) takes the next key, so load spreads
+ * evenly over all keys instead of one key absorbing every retry.
+ */
+let roundRobin = 0
 
 const DEFAULT_GEMINI_MODELS = [
-	"gemini-3.7-flash",
+	"gemini-3.8-flash",
 	"gemini-3.6-flash",
 	"gemini-3.5-flash"
 ]
 
 interface GeminiApiKey {
-	key: string
-	label: string
-}
-
-interface OpenRouterApiKey {
 	key: string
 	label: string
 }
@@ -72,56 +67,25 @@ function getGeminiApiKeys(): GeminiApiKey[] {
 	})
 }
 
-function getOpenRouterApiKeys(): OpenRouterApiKey[] {
-	const entries: OpenRouterApiKey[] = []
-	for (let index = 7; index >= 1; index--) {
-		const key = process.env[`OPENROUTER_API_KEY${index}`]
-		if (key) entries.push({ key, label: `OpenRouter key ${index}` })
-	}
-	if (process.env.OPENROUTER_API_KEY) {
-		entries.unshift({ key: process.env.OPENROUTER_API_KEY, label: "OpenRouter default key" })
-	}
-
-	const seen = new Set<string>()
-	return entries.filter(entry => {
-		if (seen.has(entry.key)) return false
-		seen.add(entry.key)
-		return true
-	})
-}
-
 function getModelChain(): ModelEntry[] {
 	const geminiKeys = getGeminiApiKeys()
 	const chain: ModelEntry[] = []
+	if (geminiKeys.length === 0) return chain
 
-	// Try OpenRouter first, but move to Gemini after five failed requests.
-	const openRouterModel = process.env.OPENROUTER_MODEL || "nvidia/nemotron-3.5-lightning:free"
-	for (const entry of getOpenRouterApiKeys()) {
-		chain.push({
-			client: () => getOpenRouterClientForKey(entry.key),
-			model: openRouterModel!,
+	const configuredModel = process.env.AI_MODEL
+	const models = configuredModel
+		? [configuredModel, ...DEFAULT_GEMINI_MODELS.filter(model => model !== configuredModel)]
+		: DEFAULT_GEMINI_MODELS
+
+	// Every key gets a turn on the preferred model before any key drops down
+	// to an older one. Which key goes first is callWithRetry's round robin.
+	for (const model of models) {
+		chain.push(...geminiKeys.map(entry => ({
+			client: () => getGeminiClient(entry.key),
+			model,
 			provider: entry.label
-		})
+		})))
 	}
-
-	if (geminiKeys.length > 0) {
-		const start = nextGeminiKey % geminiKeys.length
-		nextGeminiKey = (nextGeminiKey + 1) % geminiKeys.length
-		const rotatedKeys = [...geminiKeys.slice(start), ...geminiKeys.slice(0, start)]
-		const configuredModel = process.env.AI_MODEL
-		const models = configuredModel
-			? [configuredModel, ...DEFAULT_GEMINI_MODELS.filter(model => model !== configuredModel)]
-			: DEFAULT_GEMINI_MODELS
-
-		for (const model of models) {
-			chain.push(...rotatedKeys.map(entry => ({
-				client: () => getGeminiClient(entry.key),
-				model,
-				provider: entry.label
-			})))
-		}
-	}
-
 	return chain
 }
 
@@ -180,11 +144,19 @@ function compactMessages(messages: ChatCompletionMessageParam[]): void {
 // ── Retry helper ────────────────────────────────────────────────────────────
 
 const MAX_RETRIES = parseInt(process.env.AI_MAX_RETRIES || "3", 10)
-const MAX_OPENROUTER_ATTEMPTS = 7
 const RETRY_BASE_MS = 2_000
 const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 60_000)
 
 async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
+
+/**
+ * Process-wide memory of rate-limited keys. Without it every call re-asks each
+ * exhausted key in turn, so a build with five calls paid five rounds of 429s
+ * before reaching a key that still had quota.
+ */
+const cooldownUntil = new Map<string, number>()
+const MINUTE_COOLDOWN_MS = 60_000
+const DAILY_COOLDOWN_MS = 6 * 60 * 60_000
 
 function isRetryable(error: unknown): boolean {
 	if (error && typeof error === "object" && "status" in error) {
@@ -208,58 +180,89 @@ function getErrorResponse(error: unknown): string {
 async function callWithRetry(
 	modelChain: ModelEntry[],
 	messages: ChatCompletionMessageParam[],
-	tools: ChatCompletionTool[],
-	exhaustedEntries: Set<string>
+	tools: ChatCompletionTool[] | undefined,
+	exhaustedEntries: Set<string>,
+	timeoutMs = AI_TIMEOUT_MS,
+	reasoningEffort?: "low" | "medium" | "high"
 ) {
-	let openRouterFailures = 0
+	// Dropped for the rest of this call if a model rejects the parameter.
+	let effort = reasoningEffort
+	if (modelChain.length === 0) {
+		throw new Error("No Gemini API key configured — set GEMINI_API_KEY in build-services/.env")
+	}
 
-	for (const entry of modelChain) {
-		const entryId = `${entry.model}:${entry.provider}`
-		if (exhaustedEntries.has(entryId)) continue
-		const isOpenRouter = entry.provider.startsWith("OpenRouter")
-		if (isOpenRouter && openRouterFailures >= MAX_OPENROUTER_ATTEMPTS) continue
+	const idOf = (entry: ModelEntry) => `${entry.model}:${entry.provider}`
+	const models = [...new Set(modelChain.map((entry) => entry.model))]
 
-		const client = entry.client()
-		for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-			if (isOpenRouter && openRouterFailures >= MAX_OPENROUTER_ATTEMPTS) break
+	for (const model of models) {
+		const keys = modelChain.filter((entry) => entry.model === model)
+		// Each key gets up to MAX_RETRIES tries on this model, one at a time in
+		// rotation, never the same key twice in a row while another is usable.
+		const budget = keys.length * MAX_RETRIES
+		let timeouts = 0
+		let failuresThisPass = 0
+
+		for (let attempt = 1; attempt <= budget; attempt++) {
+			const now = Date.now()
+			const live = keys.filter((entry) => !exhaustedEntries.has(idOf(entry)))
+			if (live.length === 0) break
+			// Rate-limited keys sit out their cooldown, unless every key is cooling.
+			const ready = live.filter((entry) => (cooldownUntil.get(idOf(entry)) ?? 0) <= now)
+			const pool = ready.length > 0 ? ready : live
+			const entry = pool[roundRobin++ % pool.length]!
+			const entryId = idOf(entry)
+
 			const controller = new AbortController()
-			const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS)
+			const timer = setTimeout(() => controller.abort(), timeoutMs)
 			try {
 				jobLog(`  [ai] Calling ${entry.model} via ${entry.provider} (attempt ${attempt})`)
-				const response = await client.chat.completions.create({
+				const response = await entry.client().chat.completions.create({
 					model: entry.model,
 					messages,
-					tools
+					...(tools ? { tools } : {}),
+					...(effort ? { reasoning_effort: effort } : {})
 				}, { signal: controller.signal })
 				return response
 			} catch (error: unknown) {
 				const status = (error as any)?.status
 				const timedOut = controller.signal.aborted
-				const message = timedOut
-					? `request timed out after ${AI_TIMEOUT_MS}ms`
-					: (error as Error).message?.slice(0, 100)
 				const errorResponse = getErrorResponse(error)
-				if (isOpenRouter) openRouterFailures++
-				jobLog(`  ⚠ ${entry.model} error (${status || "timeout"}): ${message}`, "warn")
+				if (status === 400 && effort && /reasoning/i.test(`${(error as Error).message} ${errorResponse}`)) {
+					jobLog(`  [ai] ${entry.model} does not accept reasoning_effort; retrying without it`, "warn")
+					effort = undefined
+					attempt--
+					continue
+				}
+				const message = timedOut
+					? `request timed out after ${timeoutMs}ms`
+					: (error as Error).message?.slice(0, 100)
+				jobLog(`  ⚠ ${entry.model} error (${status || "timeout"}) via ${entry.provider}: ${message}`, "warn")
 				if (errorResponse) jobLog(`  [ai] Provider response: ${errorResponse}`, "warn")
-				if (isOpenRouter && openRouterFailures >= MAX_OPENROUTER_ATTEMPTS) {
-					jobLog(`  [ai] OpenRouter reached ${MAX_OPENROUTER_ATTEMPTS} failed requests; switching to Gemini`, "warn")
+
+				if (status === 429) {
+					// A daily quota will not come back within this job; a per-minute one will.
+					const daily = /per.?day|daily/i.test(`${message} ${errorResponse}`)
+					cooldownUntil.set(entryId, Date.now() + (daily ? DAILY_COOLDOWN_MS : MINUTE_COOLDOWN_MS))
+				} else if (timedOut) {
+					// A model that stalls twice is slow right now, not unlucky: try the next one.
+					if (++timeouts >= 2) break
+				} else if (!isRetryable(error)) {
+					// 400/401/403/404: this key (or this model on it) will not work. Drop it.
+					exhaustedEntries.add(entryId)
 				}
 
-				if (!timedOut && (status === 429 || !isRetryable(error) || attempt === MAX_RETRIES)) {
-					// Non-retryable or exhausted retries → try next model
-					break
+				// Back off once per full pass over the keys, not after every failure.
+				if (++failuresThisPass >= pool.length) {
+					failuresThisPass = 0
+					const delay = RETRY_BASE_MS * Math.pow(2, Math.min(3, Math.floor(attempt / Math.max(1, pool.length))))
+					jobLog(`  [ai] Every key failed this round; retrying in ${delay}ms...`)
+					await sleep(delay)
 				}
-				if (attempt === MAX_RETRIES) break
-				const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1)
-				jobLog(`  [ai] Retrying in ${delay}ms...`)
-				await sleep(delay)
 			} finally {
 				clearTimeout(timer)
 			}
 		}
-		exhaustedEntries.add(entryId)
-		jobLog(`  [ai] Model ${entry.model} exhausted, trying next fallback...`)
+		jobLog(`  [ai] ${model} unavailable on every key, trying the next model...`, "warn")
 	}
 	throw new Error("All AI models exhausted — no successful response")
 }
@@ -454,6 +457,11 @@ export interface GenerateOptions {
 	skills?: string[]
 }
 
+/**
+ * The agentic tool loop. No longer the main generation path (see pages.ts):
+ * it stays as the last-resort build repair. Every write is applied to disk as
+ * it happens, so the returned operations are a record, not work to apply.
+ */
 export async function generateToolCalls(prompt: string, projectDir: string, options: GenerateOptions = {}): Promise<FileOperation[]> {
 	const modelChain = getModelChain()
 	const systemPrompt = await composeSystemPrompt(SYSTEM_PROMPT, options.skills ?? [])
@@ -517,6 +525,7 @@ export async function generateToolCalls(prompt: string, projectDir: string, opti
 
 			const toolName = call.function.name
 			let result = "OK"
+			const stagedBefore = operations.length
 			// Alias for the switch — keep 'name' available for args.name
 			const name = toolName
 
@@ -665,6 +674,22 @@ export async function generateToolCalls(prompt: string, projectDir: string, opti
 				}
 			}
 
+			// Apply a write the moment the model makes it. Staging every write
+			// until the loop ended meant the model's own read_file calls returned
+			// stale content and its `npm run build` built the untouched scaffold,
+			// which it then reported as "Build succeeded".
+			if (operations.length > stagedBefore) {
+				const operation = operations[operations.length - 1]!
+				try {
+					await executeOperation(projectDir, operation)
+				} catch (error) {
+					// Reported back so the model can correct it, and dropped from the
+					// returned list so the caller never counts it as a change.
+					operations.pop()
+					result = `ERROR: ${error instanceof Error ? error.message : String(error)}`
+				}
+			}
+
 			messages.push({
 				role: "tool",
 				tool_call_id: call.id,
@@ -697,4 +722,47 @@ export async function generateToolCalls(prompt: string, projectDir: string, opti
 	}
 
 	return operations
+}
+
+// ── Plain completions (the main generation path) ────────────────────────────
+
+/** Generation writes whole files in one response, which takes longer than a tool turn. */
+const GENERATION_TIMEOUT_MS = Number(process.env.AI_GENERATION_TIMEOUT_MS || 180_000)
+
+export interface CompleteOptions {
+	system: string
+	user: string
+	/** Shown in the log, e.g. "plan" or "page Home". */
+	label: string
+	timeoutMs?: number
+}
+
+/**
+ * Gemini 3 spends most of a response "thinking". These calls are fully
+ * specified structured work, so a low effort is several times faster with no
+ * visible loss; AI_REASONING_EFFORT overrides it ("" sends no parameter).
+ */
+const REASONING_EFFORT = (process.env.AI_REASONING_EFFORT ?? "low") as "low" | "medium" | "high" | ""
+
+/**
+ * One request, one answer, no tools: how Bolt, Dyad and open-lovable generate.
+ * Everything the model needs is in the prompt, so it never spends a turn
+ * discovering the project, and the whole answer arrives in a single response.
+ */
+export async function complete({ system, user, label, timeoutMs = GENERATION_TIMEOUT_MS }: CompleteOptions): Promise<string> {
+	const started = Date.now()
+	const response = await callWithRetry(
+		getModelChain(),
+		[{ role: "system", content: system }, { role: "user", content: user }],
+		undefined,
+		new Set<string>(),
+		timeoutMs,
+		REASONING_EFFORT || undefined
+	)
+	const content = response.choices[0]?.message?.content ?? ""
+	const usage = response.usage
+	const tokens = usage ? ` · ${usage.prompt_tokens} in / ${usage.completion_tokens} out tokens` : ""
+	jobLog(`  [ai] ${label}: ${((Date.now() - started) / 1_000).toFixed(1)}s${tokens}`)
+	if (!content.trim()) throw new Error(`The model returned an empty answer for ${label}`)
+	return content
 }

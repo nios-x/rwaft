@@ -12,3 +12,7 @@ build
 builds
 outputs
 *.log
+
+# Design review captures and decision-page scratch
+.impeccable/review/
+.impeccable/mocks/

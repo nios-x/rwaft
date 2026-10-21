@@ -1,0 +1,94 @@
+# Local stack: Redis, the API, the build worker and the frontend.
+#
+#   docker compose up --build             # free mode: every build is free
+#   PROD=true docker compose up --build   # metered: Google sign-in + tokens
+#
+# Secrets (Cloudinary, AI keys, GOOGLE_CLIENT_ID, Stripe) come from the same
+# .env files the services use outside Docker. Values set under `environment`
+# below win over those files, which is what points both services at the Redis
+# in this stack rather than whatever REDIS_URL a local .env names.
+#
+# Open http://localhost:3001 for the console. The API is on :3000. If those
+# ports are taken, move both: API_PORT=3100 WEB_PORT=3101 docker compose up --build
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    # Append-only persistence and no eviction: token balances live in here and
+    # must survive a restart and never be evicted under memory pressure.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    ports:
+      # Loopback only, for redis-cli (e.g. granting tokens by hand).
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    env_file:
+      - path: ./backend-services/.env
+        required: false
+    environment:
+      REDIS_URL: redis://redis:6379
+      PUBLIC_BASE_URL: http://localhost:${API_PORT:-3000}
+      FRONTEND_ORIGIN: http://localhost:${WEB_PORT:-3001}
+      # Path-based deployment URLs (http://localhost:<API_PORT>/<id>/); a wildcard
+      # domain from a local .env would point at production DNS.
+      DEPLOYMENT_WILDCARD: "false"
+      PROD: ${PROD:-false}
+      # Local testing only: lets signed-in users add free test credits while no
+      # payment provider is configured. Refused automatically once Stripe is set.
+      ALLOW_TEST_CREDITS: ${ALLOW_TEST_CREDITS:-false}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - path: ./build-services/.env
+        required: false
+    environment:
+      REDIS_URL: redis://redis:6379
+      BUILD_ROOT: /tmp/rwaft-builds
+      BUILD_CONCURRENCY: "1"
+      BUILD_HEAP_MB: "1024"
+    volumes:
+      - builds:/tmp/rwaft-builds
+      # npm's cache outlives container rebuilds, so a prompt build installs the
+      # scaffold from disk instead of downloading ~45 packages every time.
+      - npm-cache:/home/bun/.npm
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Inlined into the browser bundle: it must be reachable from the host.
+        NEXT_PUBLIC_BACKEND_URL: http://localhost:${API_PORT:-3000}
+    ports:
+      - "${WEB_PORT:-3001}:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  builds:
+  npm-cache:

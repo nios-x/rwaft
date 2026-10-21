@@ -244,6 +244,9 @@ export async function installDependencies(projectDir: string, extraFlags = ""): 
 		"--no-fund",
 		"--no-progress",
 		"--loglevel=warn",
+		// Every prompt build installs the same scaffold. With a warm cache this
+		// skips the registry round-trip per package; a cold cache still downloads.
+		"--prefer-offline",
 		extraFlags
 	].filter(Boolean).join(" ")
 

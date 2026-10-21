@@ -36,7 +36,9 @@ COPY build-services ./build-services
 # hundreds of megabytes and the application directory on a PaaS instance is
 # small. Declaring it a volume also keeps heavy build I/O off the image layer.
 ENV BUILD_ROOT=/tmp/rwaft-builds
-RUN mkdir -p /tmp/rwaft-builds && chown -R bun:bun /app /tmp/rwaft-builds
+# ~/.npm is created here so a cache volume mounted over it inherits bun's
+# ownership; a fresh volume on a missing path would be root-owned and unwritable.
+RUN mkdir -p /tmp/rwaft-builds /home/bun/.npm && chown -R bun:bun /app /tmp/rwaft-builds /home/bun/.npm
 USER bun
 VOLUME ["/tmp/rwaft-builds"]
 

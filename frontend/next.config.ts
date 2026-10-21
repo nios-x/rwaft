@@ -13,6 +13,9 @@ import type { NextConfig } from "next";
  */
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // The Docker image (frontend/Dockerfile) sets this to ship only the traced
+  // server files. Vercel builds leave it unset and use their own output.
+  output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   poweredByHeader: false,
   async headers() {
     return [
