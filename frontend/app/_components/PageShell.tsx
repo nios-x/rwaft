@@ -9,7 +9,9 @@ import { SiteNav, type InfoPath } from "./SiteNav"
 /**
  * Metadata for a standalone page. Next merges metadata shallowly, so a page
  * that sets only its canonical would still inherit the home page's og:url and
- * title; this sets the whole Open Graph block for the page itself.
+ * title; this sets the whole Open Graph block for the page itself. The image
+ * comes from the `opengraph-image.tsx` beside each page, which this block
+ * would otherwise hide.
  */
 export function pageMetadata(path: string, title: string, description: string): Metadata {
 	return {
@@ -17,7 +19,7 @@ export function pageMetadata(path: string, title: string, description: string): 
 		description,
 		alternates: { canonical: path },
 		openGraph: { type: "article", url: path, siteName: SITE_NAME, title, description, locale: "en_US" },
-		twitter: { card: "summary", title, description },
+		twitter: { card: "summary_large_image", title, description },
 	}
 }
 

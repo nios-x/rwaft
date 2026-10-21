@@ -99,6 +99,20 @@ app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS || 1))
 app.disable("x-powered-by")
 
 app.use(securityHeaders)
+
+/**
+ * The wildcard DNS record that sends `<id>.<domain>` here also catches `www`
+ * unless www has a record of its own, and "www" is not a deployment id, so it
+ * answered 404 where people expect the console. Send it to the bare domain.
+ */
+if (USE_WILDCARD_SUBDOMAINS) {
+	const wwwHost = `www.${DEPLOYMENT_DOMAIN.toLowerCase()}`
+	app.use((req, res, next) => {
+		if (req.hostname.toLowerCase() !== wwwHost) return next()
+		res.redirect(301, `https://${DEPLOYMENT_DOMAIN}${req.originalUrl}`)
+	})
+}
+
 /**
  * The origin allowlist guards the API, not the static hosting.
  *
