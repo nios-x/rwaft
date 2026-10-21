@@ -1,6 +1,6 @@
 import Link from "next/link"
-import { AUTHOR_HANDLE, AUTHOR_URL, SOURCE_URL } from "../../lib/site"
-import { GitHubIcon, Mark } from "./Icons"
+import { CONTACT_EMAIL, CONTACT_URL } from "../../lib/site"
+import { MailIcon, Mark } from "./Icons"
 
 /**
  * Shared by the home screen and the legal pages. Plain links, so crawlers can
@@ -21,14 +21,13 @@ export function SiteFooter() {
 						<li><Link href="/faq">FAQ</Link></li>
 						<li><Link href="/privacy">Privacy</Link></li>
 						<li><Link href="/terms">Terms</Link></li>
-						<li><a href={SOURCE_URL} rel="noopener">GitHub</a></li>
 					</ul>
 				</nav>
 				<div className="site-footer-end">
 					<p className="site-footer-copy">© {new Date().getFullYear()} rwaft</p>
-					<a href={AUTHOR_URL} className="site-footer-author" rel="noopener" target="_blank">
-						<GitHubIcon className="site-footer-author-icon" />
-						<span>Built by <strong>{AUTHOR_HANDLE}</strong></span>
+					<a href={CONTACT_URL} className="site-footer-contact">
+						<MailIcon className="site-footer-contact-icon" />
+						<span>{CONTACT_EMAIL}</span>
 					</a>
 				</div>
 			</div>

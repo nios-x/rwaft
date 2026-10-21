@@ -93,7 +93,6 @@ function getGeminiApiKeys(): GeminiApiKey[] {
 function getModelChain(): ModelEntry[] {
 	const geminiKeys = getGeminiApiKeys()
 	const chain: ModelEntry[] = []
-	if (geminiKeys.length === 0) return chain
 
 	const configuredModel = process.env.AI_MODEL
 	const models = configuredModel
@@ -109,6 +108,20 @@ function getModelChain(): ModelEntry[] {
 			model,
 			provider: entry.label
 		})))
+	}
+
+	// Any OpenAI-compatible API (OpenRouter, Groq, DeepSeek, ...), tried after
+	// every Gemini model. A Gemini overload hits every key at once, so only a
+	// second provider gets a build through it.
+	const fallbackUrl = process.env.AI_FALLBACK_BASE_URL
+	const fallbackKey = process.env.AI_FALLBACK_API_KEY
+	const fallbackModel = process.env.AI_FALLBACK_MODEL
+	if (fallbackUrl && fallbackKey && fallbackModel) {
+		chain.push({
+			client: () => new OpenAI({ baseURL: fallbackUrl, apiKey: fallbackKey, maxRetries: 0 }),
+			model: fallbackModel,
+			provider: "fallback provider"
+		})
 	}
 	return chain
 }
@@ -203,12 +216,23 @@ const OVERLOAD_COOLDOWN_MS = 60_000
 
 const isCooling = (until: Map<string, number>, id: string, now: number) => (until.get(id) ?? 0) > now
 
+/** A 400 that is about the key or its project (billing, region), not the request. */
+const KEY_PROBLEM = /api[ _]?key|FAILED_PRECONDITION|billing/i
+
 function isRetryable(error: unknown): boolean {
 	if (error && typeof error === "object" && "status" in error) {
 		const status = (error as any).status
-		return status === 429 || status === 503 || status === 500 || status === 502
+		return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504
 	}
 	return false
+}
+
+/** How long Google asked us to wait on a 429: RetryInfo's "retryDelay": "37s", or a Retry-After header. */
+function retryAfterMs(error: unknown, errorResponse: string): number | undefined {
+	const delay = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(errorResponse)?.[1]
+	const header = error instanceof OpenAI.APIError ? error.headers?.["retry-after"] : undefined
+	const seconds = Number(delay ?? header)
+	return seconds > 0 ? Math.min(seconds * 1_000, DAILY_COOLDOWN_MS) : undefined
 }
 
 function getErrorResponse(error: unknown): string {
@@ -242,6 +266,7 @@ async function callWithRetry(
 		&& !isCooling(rejectedUntil, entry.provider, now)
 	const models = [...new Set(modelChain.map((entry) => entry.model))]
 	let attempt = 0
+	let lastFailure = ""
 
 	// A round gives every model one pass over its keys. Rounds rather than one
 	// model's keys × MAX_RETRIES, so an overloaded model costs a few calls, not
@@ -260,7 +285,7 @@ async function callWithRetry(
 			// Each usable key at most once per pass, in rotation.
 			const tried = new Set<string>()
 			let overloads = 0
-			let timeouts = 0
+			let stalls = 0
 
 			while (true) {
 				const now = Date.now()
@@ -297,15 +322,23 @@ async function callWithRetry(
 					const message = timedOut
 						? `request timed out after ${timeoutMs}ms`
 						: (error as Error).message?.slice(0, 160)
-					jobLog(`  ⚠ ${entry.model} error (${status || "timeout"}) via ${entry.provider}: ${message}`, "warn")
+					const detail = `${message} ${errorResponse}`
+					const code = status ?? (timedOut ? "timeout" : "network")
+					lastFailure = `${entry.model} via ${entry.provider} (${code}): ${message}`
+					jobLog(`  ⚠ ${entry.model} error (${code}) via ${entry.provider}: ${message}`, "warn")
 
 					if (status === 429) {
-						// A daily quota will not come back within this job; a per-minute one will.
-						const daily = /per.?day|daily/i.test(`${message} ${errorResponse}`)
-						cooldownUntil.set(entryId, Date.now() + (daily ? DAILY_COOLDOWN_MS : MINUTE_COOLDOWN_MS))
-					} else if (timedOut) {
-						// A model that stalls twice is slow right now, not unlucky: try the next one.
-						if (++timeouts >= 2) break
+						if (/per.?day|daily/i.test(detail)) {
+							// A daily quota will not come back within this job: skip the pair until it might.
+							rejectedUntil.set(entryId, Date.now() + DAILY_COOLDOWN_MS)
+						} else {
+							// A per-minute one will. Google usually says when; otherwise assume a minute.
+							cooldownUntil.set(entryId, Date.now() + (retryAfterMs(error, errorResponse) ?? MINUTE_COOLDOWN_MS))
+						}
+					} else if (status === undefined) {
+						// A stall or a dropped connection says nothing about the key. Twice on
+						// one model means it is slow right now, not unlucky: try the next one.
+						if (++stalls >= 2) break
 					} else if (isRetryable(error)) {
 						if (++overloads >= OVERLOAD_SWITCH) {
 							overloadedUntil.set(model, Date.now() + OVERLOAD_COOLDOWN_MS)
@@ -313,8 +346,8 @@ async function callWithRetry(
 						}
 					} else {
 						if (errorResponse) jobLog(`  [ai] Provider response: ${errorResponse}`, "warn")
-						if (status === 401 || status === 403 || (status === 400 && /api[ _]?key/i.test(`${message} ${errorResponse}`))) {
-							// The key itself is bad (invalid, expired, leaked, API not enabled): no model will take it.
+						if (status === 401 || status === 403 || (status === 400 && KEY_PROBLEM.test(detail))) {
+							// The key itself is bad (invalid, expired, leaked, API not enabled, no billing): no model will take it.
 							rejectedUntil.set(entry.provider, Date.now() + REJECTED_COOLDOWN_MS)
 						} else if (status === 404) {
 							// This key cannot reach this model, and will not on the next call either.
@@ -335,12 +368,17 @@ async function callWithRetry(
 
 		if (!modelChain.some((entry) => usable(entry, Date.now()))) break
 		if (round < MAX_RETRIES) {
-			const delay = RETRY_BASE_MS * Math.pow(2, Math.min(3, round + 1))
+			const backoff = RETRY_BASE_MS * Math.pow(2, Math.min(3, round + 1))
+			// Jitter, as Google's retry guidance asks: pages that failed together
+			// should not all come back at the same moment and fail together again.
+			const delay = Math.round(backoff / 2 + Math.random() * (backoff / 2))
 			jobLog(`  [ai] Every model failed this round; retrying in ${delay}ms...`)
 			await sleep(delay)
 		}
 	}
-	throw new Error("All AI models exhausted — no successful response")
+	throw new Error(lastFailure
+		? `All AI models failed. Last error: ${lastFailure}`
+		: "All AI models exhausted: every key is rejected or out of quota (see the warnings above)")
 }
 
 // ── Tool-call shape returned to the caller ──────────────────────────────────

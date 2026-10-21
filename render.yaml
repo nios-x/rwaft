@@ -167,6 +167,15 @@ services:
         sync: false
       - key: AI_MODEL
         value: gemini-3.8-flash
+      # Optional second provider (any OpenAI-compatible API), tried after every
+      # Gemini model: a Gemini overload (503) hits every key at once. All three
+      # must be set; leave them empty to stay Gemini-only.
+      - key: AI_FALLBACK_BASE_URL
+        sync: false
+      - key: AI_FALLBACK_API_KEY
+        sync: false
+      - key: AI_FALLBACK_MODEL
+        sync: false
 
       # Installing and building a real React app takes minutes. The old 60s
       # timeout killed npm mid-download, which is what corrupted node_modules.

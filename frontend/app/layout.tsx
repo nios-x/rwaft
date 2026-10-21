@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Geist, Geist_Mono } from "next/font/google";
-import { SITE_DESCRIPTION, SITE_NAME, SITE_TITLE, SITE_URL, SOURCE_URL } from "../lib/site";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_TITLE, SITE_URL } from "../lib/site";
 import { THEME_BOOT_SCRIPT } from "../lib/useTheme";
 import "./globals.css";
 
@@ -93,7 +93,6 @@ const JSON_LD = {
       name: SITE_NAME,
       url: SITE_URL,
       logo: `${SITE_URL}/icon-512.png`,
-      sameAs: [SOURCE_URL],
     },
   ],
 };

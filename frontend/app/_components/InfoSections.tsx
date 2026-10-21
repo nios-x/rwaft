@@ -112,7 +112,11 @@ export function PricingPlans({ pricing }: { pricing: Pricing }) {
 			<h1 id="pricing-title" className="land-title">Pricing</h1>
 			{pricing.billing ? (
 				<>
-					<p className="land-lead">Pay per chat, with no subscription. Every chat is one complete build, and a build that fails costs nothing.</p>
+					<p className="land-lead">
+						{packs.length > 0
+							? "Start with free credits, then buy a credit pack when you need more. No subscription. Every chat is one complete build."
+							: "Start with free credits. Every chat is one complete build."}
+					</p>
 					<ul className="land-grid land-plans">
 						<li className="land-card land-plan">
 							<h2>Free</h2>
@@ -138,11 +142,11 @@ export function PricingPlans({ pricing }: { pricing: Pricing }) {
 					</ul>
 					<ul className="land-notes">
 						<li>A chat costs {plural(pricing.costs.prompt, "credit")}. Deploying a GitHub repository costs {plural(pricing.costs.deploy, "credit")}.</li>
-						<li>Failed builds are refunded automatically.</li>
+						<li>If a build fails, its credits are refunded automatically.</li>
 						<li>
 							{packs.length > 0
 								? "Buy credits any time from the credits menu once you're signed in. Payment is handled by Dodo Payments."
-								: "Credit packs go on sale once payments are switched on."}
+								: "Paid credit packs aren't on sale yet."}
 						</li>
 					</ul>
 				</>

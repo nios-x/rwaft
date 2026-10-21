@@ -1107,7 +1107,6 @@ a.brand {
 /* ── Footer (home and standalone pages) ────────────────────────────────── */
 
 .site-footer {
-  border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   backdrop-filter: blur(24px);
 }
@@ -1156,7 +1155,7 @@ a.brand {
   color: var(--text-3);
 }
 
-.site-footer-author {
+.site-footer-contact {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1169,23 +1168,18 @@ a.brand {
   transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
 }
 
-.site-footer-author strong {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.site-footer-author:hover {
+.site-footer-contact:hover {
   color: var(--text);
   border-color: var(--text-3);
   background: color-mix(in srgb, var(--text) 5%, transparent);
 }
 
-.site-footer-author:focus-visible {
+.site-footer-contact:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 2px;
 }
 
-.site-footer-author-icon {
+.site-footer-contact-icon {
   width: 14px;
   height: 14px;
 }
