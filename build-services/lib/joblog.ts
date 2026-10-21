@@ -175,6 +175,16 @@ export function jobLog(message: string, level: LogLevel = "info"): void {
 	consoleFor(level)(text)
 }
 
+/**
+ * Emits a line to the container log only, tagged with the job like jobLog.
+ * For detail the user should never see: providers, keys, retries.
+ */
+export function serverLog(message: string, level: LogLevel = "info"): void {
+	const context = currentJob()
+	const text = truncate(message)
+	consoleFor(level)(context ? `[${context.kind} ${context.jobId}] ${text}` : text)
+}
+
 /** Emits raw child-process output, split into lines and stripped of noise. */
 export function jobOutput(chunk: string, level: LogLevel = "info"): void {
 	for (const rawLine of chunk.split(/\r?\n/)) {

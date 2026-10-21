@@ -3,7 +3,7 @@ import path from "path"
 import OpenAI from "openai"
 import type { ChatCompletionTool, ChatCompletionMessageParam } from "openai/resources/chat/completions"
 import { executeOperation, executeToolRequest } from "./tools.ts"
-import { jobLog } from "./joblog.ts"
+import { jobLog, serverLog } from "./joblog.ts"
 import { composeSystemPrompt } from "./skills.ts"
 import "./config.ts"
 
@@ -300,7 +300,7 @@ async function callWithRetry(
 				const controller = new AbortController()
 				const timer = setTimeout(() => controller.abort(), timeoutMs)
 				try {
-					jobLog(`  [ai] Calling ${entry.model} via ${entry.provider} (attempt ${++attempt})`)
+					serverLog(`  [ai] Calling ${entry.model} via ${entry.provider} (attempt ${++attempt})`)
 					const response = await entry.client().chat.completions.create({
 						model: entry.model,
 						messages,
@@ -313,7 +313,7 @@ async function callWithRetry(
 					const timedOut = controller.signal.aborted
 					const errorResponse = getErrorResponse(error)
 					if (status === 400 && effort && /reasoning/i.test(`${(error as Error).message} ${errorResponse}`)) {
-						jobLog(`  [ai] ${entry.model} does not accept reasoning_effort; retrying without it`, "warn")
+						serverLog(`  [ai] ${entry.model} does not accept reasoning_effort; retrying without it`, "warn")
 						effort = undefined
 						attempt--
 						continue
@@ -325,7 +325,7 @@ async function callWithRetry(
 					const detail = `${message} ${errorResponse}`
 					const code = status ?? (timedOut ? "timeout" : "network")
 					lastFailure = `${entry.model} via ${entry.provider} (${code}): ${message}`
-					jobLog(`  ⚠ ${entry.model} error (${code}) via ${entry.provider}: ${message}`, "warn")
+					serverLog(`  ⚠ ${entry.model} error (${code}) via ${entry.provider}: ${message}`, "warn")
 
 					if (status === 429) {
 						if (/per.?day|daily/i.test(detail)) {
@@ -345,7 +345,7 @@ async function callWithRetry(
 							break
 						}
 					} else {
-						if (errorResponse) jobLog(`  [ai] Provider response: ${errorResponse}`, "warn")
+						if (errorResponse) serverLog(`  [ai] Provider response: ${errorResponse}`, "warn")
 						if (status === 401 || status === 403 || (status === 400 && KEY_PROBLEM.test(detail))) {
 							// The key itself is bad (invalid, expired, leaked, API not enabled, no billing): no model will take it.
 							rejectedUntil.set(entry.provider, Date.now() + REJECTED_COOLDOWN_MS)
@@ -361,7 +361,7 @@ async function callWithRetry(
 					clearTimeout(timer)
 				}
 			}
-			jobLog(overloads >= OVERLOAD_SWITCH
+			serverLog(overloads >= OVERLOAD_SWITCH
 				? `  [ai] ${model} is overloaded, trying the next model...`
 				: `  [ai] ${model} unavailable on every key, trying the next model...`, "warn")
 		}
@@ -372,13 +372,15 @@ async function callWithRetry(
 			// Jitter, as Google's retry guidance asks: pages that failed together
 			// should not all come back at the same moment and fail together again.
 			const delay = Math.round(backoff / 2 + Math.random() * (backoff / 2))
-			jobLog(`  [ai] Every model failed this round; retrying in ${delay}ms...`)
+			serverLog(`  [ai] Every model failed this round; retrying in ${delay}ms...`)
 			await sleep(delay)
 		}
 	}
-	throw new Error(lastFailure
-		? `All AI models failed. Last error: ${lastFailure}`
-		: "All AI models exhausted: every key is rejected or out of quota (see the warnings above)")
+	// The job's error reaches the user, so the provider detail stays in the server log.
+	serverLog(lastFailure
+		? `  [ai] All AI models failed. Last error: ${lastFailure}`
+		: "  [ai] All AI models exhausted: every key is rejected or out of quota", "error")
+	throw new Error("The AI service is busy right now. Please try again in a few minutes.")
 }
 
 // ── Tool-call shape returned to the caller ──────────────────────────────────
