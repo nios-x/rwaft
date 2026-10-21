@@ -72,7 +72,6 @@ function LiveCheck() {
 		<picture className="live-check">
 			<source media="(prefers-reduced-motion: reduce)" srcSet={still} />
 			{/* A plain img: next/image would re-encode the animation, and this one is decorative. */}
-			{/* eslint-disable-next-line @next/next/no-img-element */}
 			<img src={settled ? still : "/animations/live-check.webp"} alt="" width={28} height={28} />
 		</picture>
 	)
