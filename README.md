@@ -642,7 +642,7 @@ would request its bundles from `/assets/...` and render a blank page.
       it also switches itself off once Stripe is configured)
 - [ ] **Worker AI keys:** `GEMINI_API_KEY` plus as many `GEMINI_API_KEY1…8` as
       you have; calls rotate across them round robin
-- [ ] **Wildcard hosting:** `*.soumyajaiswal.me` DNS points at the API and is
+- [ ] **Wildcard hosting:** `*.rwaft.live` DNS points at the API and is
       added as a custom domain on it, with `DEPLOYMENT_WILDCARD=true`
 - [ ] **CI** (`.github/workflows/ci.yml`) is green before merging: Render and
       Vercel deploy `main` immediately

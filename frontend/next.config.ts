@@ -1,4 +1,7 @@
 import type { NextConfig } from "next";
+import { SITE_URL } from "./lib/site";
+
+const canonicalHost = new URL(SITE_URL).host;
 
 /**
  * The browser talks to the API directly using NEXT_PUBLIC_BACKEND_URL.
@@ -17,6 +20,18 @@ const nextConfig: NextConfig = {
   // server files. Vercel builds leave it unset and use their own output.
   output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   poweredByHeader: false,
+  // www and the bare domain would otherwise be indexed as two sites competing
+  // for the same queries. A no-op until www is pointed at this deployment.
+  async redirects() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: `www.${canonicalHost}` }],
+        destination: `${SITE_URL}/:path*`,
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

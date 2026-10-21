@@ -35,16 +35,18 @@ services:
       # Comma-separated exact origins allowed to call this API from a browser.
       # There is no wildcard default in production: unset means every browser
       # request is refused with 403 and no Access-Control-Allow-Origin header.
+      # rwaft.live is the console's domain; www redirects to it before any API
+      # call, and rwaft.vercel.app stays listed while it still serves the console.
       - key: FRONTEND_ORIGIN
-        value: https://rwaft.vercel.app
+        value: https://rwaft.live,https://rwaft.vercel.app
 
-      # User-facing deployments are served from <id>.soumyajaiswal.me. That
-      # needs a wildcard DNS record for *.soumyajaiswal.me pointing at this
-      # service AND *.soumyajaiswal.me added as a custom domain here, so Render
+      # User-facing deployments are served from <id>.rwaft.live. That
+      # needs a wildcard DNS record for *.rwaft.live pointing at this
+      # service AND *.rwaft.live added as a custom domain here, so Render
       # issues the wildcard certificate. The API itself stays on
       # rwaft.onrender.com.
       - key: DEPLOYMENT_DOMAIN
-        value: soumyajaiswal.me
+        value: rwaft.live
       - key: DEPLOYMENT_WILDCARD
         value: "true"
 

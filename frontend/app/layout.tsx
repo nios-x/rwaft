@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Geist, Geist_Mono } from "next/font/google";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_TITLE, SITE_URL, SOURCE_URL } from "../lib/site";
 import { THEME_BOOT_SCRIPT } from "../lib/useTheme";
 import "./globals.css";
 
@@ -21,9 +22,81 @@ const mono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const googleVerification = process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION?.trim();
+const bingVerification = process.env.NEXT_PUBLIC_BING_SITE_VERIFICATION?.trim();
+
 export const metadata: Metadata = {
-  title: "rwaft · Describe an app, get a link",
-  description: "Describe an app in plain words. rwaft writes it, builds it, and hosts it, and you watch the real build as it happens.",
+  metadataBase: new URL(SITE_URL),
+  title: { default: SITE_TITLE, template: `%s · ${SITE_NAME}` },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: [
+    "AI website builder",
+    "AI app builder",
+    "prompt to app",
+    "text to website",
+    "React app generator",
+    "deploy React app",
+    "Vite",
+    "rwaft",
+  ],
+  // The root layout's canonical is inherited by every route below it. That is
+  // right while the console is a single page; a new page must set its own.
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: SITE_NAME,
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1, "max-video-preview": -1 },
+  },
+  // Search Console and Bing Webmaster Tools ownership tags, emitted only when
+  // set. A DNS TXT record on rwaft.live verifies just as well without these.
+  verification: {
+    google: googleVerification || undefined,
+    other: bingVerification ? { "msvalidate.01": bingVerification } : undefined,
+  },
+  category: "technology",
+  formatDetection: { telephone: false, email: false, address: false },
+};
+
+/**
+ * Structured data. WebSite is what Google reads for the site name shown above
+ * a result; Organization ties the logo and the source repository to it. No
+ * ratings, reviews or usage figures: none exist, and none may be invented.
+ */
+const JSON_LD = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${SITE_URL}/#website`,
+      url: SITE_URL,
+      name: SITE_NAME,
+      description: SITE_DESCRIPTION,
+      inLanguage: "en",
+      publisher: { "@id": `${SITE_URL}/#organization` },
+    },
+    {
+      "@type": "Organization",
+      "@id": `${SITE_URL}/#organization`,
+      name: SITE_NAME,
+      url: SITE_URL,
+      logo: `${SITE_URL}/icon-512.png`,
+      sameAs: [SOURCE_URL],
+    },
+  ],
 };
 
 export const viewport: Viewport = {
@@ -54,6 +127,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       </head>
       <body>
         <div hidden dangerouslySetInnerHTML={{ __html: CONTRACT }} />
+        <script
+          type="application/ld+json"
+          // `<` is escaped so no string in the payload can close the script tag.
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD).replace(/</g, "\\u003c") }}
+        />
         {children}
       </body>
     </html>
