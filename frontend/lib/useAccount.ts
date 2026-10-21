@@ -19,7 +19,7 @@ export interface AuthConfig {
 	currency: string
 	packs: TokenPack[]
 	/** The payment provider recharges go through, or null while none is connected. */
-	payments: "stripe" | null
+	payments: "dodo" | null
 	/** Local testing: a free top-up button while no provider is connected. */
 	testCredits: boolean
 	/** True when the API has a GitHub OAuth App, so finished apps can be pushed to GitHub. */

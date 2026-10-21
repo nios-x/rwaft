@@ -141,7 +141,7 @@ export function PricingPlans({ pricing }: { pricing: Pricing }) {
 						<li>Failed builds are refunded automatically.</li>
 						<li>
 							{packs.length > 0
-								? "Buy credits any time from the credits menu once you're signed in. Payment is handled by Stripe."
+								? "Buy credits any time from the credits menu once you're signed in. Payment is handled by Dodo Payments."
 								: "Credit packs go on sale once payments are switched on."}
 						</li>
 					</ul>

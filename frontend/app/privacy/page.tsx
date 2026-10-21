@@ -10,7 +10,7 @@ export const metadata = pageMetadata(
 /**
  * Written from what the code actually does: the Google profile fields the API
  * stores, hashed 30-day sessions, ~24h log history, Cloudinary for files and
- * Stripe for card payments. Change the code, change this page.
+ * Dodo Payments for card payments. Change the code, change this page.
  */
 export default function PrivacyPage() {
 	return (
@@ -41,8 +41,8 @@ export default function PrivacyPage() {
 					24 hours.
 				</li>
 				<li>
-					<strong>Credits and purchases.</strong> Your credit balance and a record of each purchase. Card payments are
-					handled by Stripe; we never see or store your card number.
+					<strong>Credits and purchases.</strong> Your credit balance and a record of each purchase. Payments are
+					handled by Dodo Payments; we never see or store your card number.
 				</li>
 				<li>
 					<strong>Technical data.</strong> Your IP address and basic request details, used to enforce rate limits, stop
@@ -77,7 +77,7 @@ export default function PrivacyPage() {
 					<strong>Hosting providers</strong> (currently Render for the API and builds, and Vercel for this website),
 					including the database that holds accounts and credits.
 				</li>
-				<li><strong>Stripe</strong>, which processes payments.</li>
+				<li><strong>Dodo Payments</strong>, which processes payments as the merchant of record. We share your name and email with it when you buy credits.</li>
 			</ul>
 
 			<h2>Your sites are public</h2>

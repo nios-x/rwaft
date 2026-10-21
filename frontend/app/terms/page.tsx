@@ -43,6 +43,10 @@ export default function TermsPage() {
 					Purchased credits are prepaid, can&apos;t be transferred, have no cash value and are not refundable, except
 					for failed builds as described above or where the law requires otherwise.
 				</li>
+				<li>
+					Purchases are processed by Dodo Payments, which acts as the merchant of record and handles payment, sales tax
+					and receipts.
+				</li>
 				<li>We may change prices or the free allowance in future. A change never reduces credits you already hold.</li>
 			</ul>
 

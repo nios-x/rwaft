@@ -26,8 +26,8 @@ export const userKey = (userId: string) => `rwaft:user:${userId}`
 export const sessionKey = (tokenHash: string) => `rwaft:session:${tokenHash}`
 /** Set once per job when its tokens are refunded, so a retry cannot refund twice. */
 export const refundKey = (jobId: string) => `rwaft:billing:refunded:${jobId}`
-/** Set once per Stripe Checkout Session, so a redelivered webhook cannot credit twice. */
-export const fulfilledKey = (checkoutId: string) => `rwaft:billing:fulfilled:${checkoutId}`
+/** Set once per Dodo payment, so a redelivered webhook cannot credit twice. */
+export const fulfilledKey = (paymentId: string) => `rwaft:billing:fulfilled:${paymentId}`
 
 // ── GitHub export ───────────────────────────────────────────────────────────
 /** A generated app's source, written by the worker when the build goes live. Expires on its own. */

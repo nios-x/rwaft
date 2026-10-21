@@ -393,9 +393,11 @@ files are git-ignored and are excluded from Docker images.
 | `GOOGLE_CLIENT_ID` | `string` | **Yes** (`PROD=true`) | OAuth Web client ID. Add each frontend origin under *Authorized JavaScript origins*. Sign-in is hidden without it | — |
 | `DEPLOY_TOKEN_COST` / `PROMPT_TOKEN_COST` | `number` | No | Credits charged per repo deploy / prompt build (one message) | `1` / `1` |
 | `SIGNUP_TOKENS` | `number` | No | Credits granted once when an account is created | `5` |
-| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | `string` | No | Enable **Buy tokens**. Webhook endpoint: `<PUBLIC_BASE_URL>/billing/webhook` (`checkout.session.completed`, `checkout.session.async_payment_succeeded`) | — |
+| `DODO_PAYMENTS_API_KEY` / `DODO_PAYMENTS_WEBHOOK_KEY` | `string` | No | Enable **Buy credits** (with `DODO_PRODUCTS`). Webhook endpoint: `<PUBLIC_BASE_URL>/billing/webhook` (`payment.succeeded`) | — |
+| `DODO_PAYMENTS_ENVIRONMENT` | `string` | No | `test_mode` or `live_mode`; must match the key's prefix | `test_mode` |
+| `DODO_PRODUCTS` | `string` | No | Pack id → Dodo one-time product id, e.g. `starter:pdt_…,builder:pdt_…`. Packs without one are hidden | — |
 | `TOKEN_PACKS` | `string` | No | `id:tokens:price-in-cents`, comma separated | `starter:50:500,builder:150:1200,studio:400:2800` |
-| `STRIPE_CURRENCY` | `string` | No | Checkout currency | `usd` |
+| `BILLING_CURRENCY` | `string` | No | Currency pack prices are displayed in; match the Dodo products | `usd` |
 
 ### Build worker (`build-services`)
 
@@ -430,7 +432,7 @@ files are git-ignored and are excluded from Docker images.
 
 - **Sign-in.** The browser gets a Google ID token from Google Identity Services and posts it to `POST /auth/google`. The API verifies it against Google's published keys (signature, issuer, audience, expiry, verified email), creates the account on first sign-in (`rwaft:user:g-<sub>`), and returns an opaque session token. Only the token's SHA-256 is stored.
 - **Metering (`PROD=true`).** `/deploy` and `/prompt` require a session and atomically deduct tokens (a Lua script) before any work starts, so two tabs cannot spend the same balance. The charge rides on the job; if the build fails, the worker refunds it exactly once per job, even if a crash makes the job run twice. `PROD=false` skips all of this.
-- **Buying tokens.** `POST /billing/checkout` creates a Stripe Checkout Session and the browser is redirected to Stripe. Tokens are credited only from the signed webhook, at most once per session. All provider-specific code lives in `backend-services/lib/billing.ts`.
+- **Buying tokens.** `POST /billing/checkout` creates a Dodo Payments Checkout Session for the pack's Dodo product and the browser is redirected to Dodo. Tokens are credited only from the signed `payment.succeeded` webhook (Standard Webhooks signature), at most once per payment, with the amount taken from the server's own pack map rather than the payload. All provider-specific code lives in `backend-services/lib/billing.ts`.
 - **Place in line.** Builds run one at a time per worker slot. Every job joins a shared sorted set when it is queued and leaves it when its build starts, so `GET /queue/:id` returns its position, how many are waiting and how many are running. The console and the "still building" page both show it.
 - **Granting tokens by hand:** `redis-cli HINCRBY rwaft:user:g-<google-sub> tokens 50`.
 
@@ -651,11 +653,14 @@ would request its bundles from `/assets/...` and render a blank page.
 - [ ] **Credits:** `PROD=true` on the API *after* sign-in works (with no
       client ID nobody can sign in, so nobody can build); defaults are 5 free
       credits and 1 per message (`SIGNUP_TOKENS`, `PROMPT_TOKEN_COST`)
-- [ ] **Recharge:** `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` set and a
-      webhook pointing at `<PUBLIC_BASE_URL>/billing/webhook`; until then the
-      recharge panel shows the packs as "Soon"
+- [ ] **Recharge:** one Dodo one-time product per pack (same price as
+      `TOKEN_PACKS`), `DODO_PAYMENTS_API_KEY` + `DODO_PAYMENTS_WEBHOOK_KEY` +
+      `DODO_PRODUCTS` set, `DODO_PAYMENTS_ENVIRONMENT=live_mode` with a live
+      key, and a Dodo webhook for `payment.succeeded` pointing at
+      `<PUBLIC_BASE_URL>/billing/webhook`; until then the recharge panel shows
+      the packs as "Soon"
 - [ ] `ALLOW_TEST_CREDITS` is **unset** in production (it mints free credits;
-      it also switches itself off once Stripe is configured)
+      it also switches itself off once Dodo is configured)
 - [ ] **Worker AI keys:** `GEMINI_API_KEY` plus as many `GEMINI_API_KEY1…8` as
       you have; calls rotate across them round robin
 - [ ] **Wildcard hosting:** `*.rwaft.live` DNS points at the API and is

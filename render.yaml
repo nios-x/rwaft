@@ -74,10 +74,17 @@ services:
         value: "1"
       - key: DEPLOY_TOKEN_COST
         value: "1"
-      - key: STRIPE_SECRET_KEY
+      # Buying credits through Dodo Payments. Webhook endpoint:
+      # https://rwaft.onrender.com/billing/webhook (event payment.succeeded).
+      - key: DODO_PAYMENTS_API_KEY
         sync: false
-      # Webhook endpoint: https://rwaft.onrender.com/billing/webhook
-      - key: STRIPE_WEBHOOK_SECRET
+      - key: DODO_PAYMENTS_WEBHOOK_KEY
+        sync: false
+      # live_mode with a dodo_live_ key; test_mode with a dodo_test_ key.
+      - key: DODO_PAYMENTS_ENVIRONMENT
+        value: live_mode
+      # starter:pdt_…,builder:pdt_…,studio:pdt_… (one Dodo product per pack).
+      - key: DODO_PRODUCTS
         sync: false
       # "Push to GitHub": a GitHub OAuth App whose callback URL is
       # https://rwaft.onrender.com/github/callback. Hidden until both are set.

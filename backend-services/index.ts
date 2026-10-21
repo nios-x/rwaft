@@ -35,10 +35,10 @@ import {
 	CURRENCY,
 	TOKEN_PACKS,
 	createCheckoutSession,
-	fulfilCheckout,
+	fulfilPayment,
 	isCheckoutConfigured,
-	verifyStripeSignature,
-	type CheckoutSession
+	verifyDodoSignature,
+	type DodoPayment
 } from "./lib/billing.ts"
 import { joinLine, leaveLine, linePosition } from "./lib/queue.ts"
 import {
@@ -118,19 +118,24 @@ app.use(securityHeaders)
  */
 app.use(["/health", "/healthz", "/session", "/status", "/queue", "/logs", "/deploy", "/prompt", "/auth", "/billing/checkout", "/billing/test-credits", "/github"], corsmiddlewares)
 
-// ── Stripe webhook ──────────────────────────────────────────────────────────
+// ── Dodo Payments webhook ───────────────────────────────────────────────────
 //
 // Registered ahead of the JSON parser: the signature covers the exact bytes
-// Stripe sent, so this route needs the raw body. Server-to-server, so it sits
+// Dodo sent, so this route needs the raw body. Server-to-server, so it sits
 // outside the browser origin allowlist.
 app.post("/billing/webhook", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
 	const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
-	if (!verifyStripeSignature(raw, req.header("stripe-signature"))) {
-		res.status(400).json({ status: "failed", message: "Invalid signature" })
+	const signed = verifyDodoSignature(raw, {
+		id: req.header("webhook-id"),
+		timestamp: req.header("webhook-timestamp"),
+		signature: req.header("webhook-signature")
+	})
+	if (!signed) {
+		res.status(401).json({ status: "failed", message: "Invalid signature" })
 		return
 	}
 
-	let event: { type?: string; data?: { object?: CheckoutSession } }
+	let event: { type?: string; data?: DodoPayment }
 	try {
 		event = JSON.parse(raw.toString("utf-8"))
 	} catch {
@@ -138,18 +143,20 @@ app.post("/billing/webhook", express.raw({ type: "application/json", limit: "1mb
 		return
 	}
 
-	if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
-		const session = event.data?.object
-		if (!session?.id) {
-			res.status(400).json({ status: "failed", message: "Event carried no session" })
+	// Every other event is acknowledged and ignored. Refunds are handled by
+	// hand: the credits may already be spent.
+	if (event.type === "payment.succeeded") {
+		const payment = event.data
+		if (!payment?.payment_id) {
+			res.status(400).json({ status: "failed", message: "Event carried no payment" })
 			return
 		}
 		try {
-			const result = await fulfilCheckout(session)
-			console.log(`[billing] ${event.type} ${session.id}: ${result}`)
+			const result = await fulfilPayment(payment)
+			console.log(`[billing] ${event.type} ${payment.payment_id}: ${result}`)
 		} catch (error) {
-			// A non-2xx makes Stripe retry, which is what we want when Redis blips.
-			console.error(`[billing] Fulfilment of ${session.id} failed:`, (error as Error).message)
+			// A non-2xx makes Dodo retry, which is what we want when Redis blips.
+			console.error(`[billing] Fulfilment of ${payment.payment_id} failed:`, (error as Error).message)
 			res.status(503).json({ status: "failed" })
 			return
 		}
@@ -343,7 +350,7 @@ app.get("/auth/config", (_req, res) => {
 		// even before a payment provider is connected; `payments` says whether
 		// they can actually be bought.
 		packs: BILLING_ENABLED ? TOKEN_PACKS : [],
-		payments: BILLING_ENABLED && isCheckoutConfigured ? "stripe" : null,
+		payments: BILLING_ENABLED && isCheckoutConfigured ? "dodo" : null,
 		testCredits: TEST_CREDITS_ENABLED,
 		github: isGitHubConfigured
 	})
@@ -477,7 +484,7 @@ app.post("/billing/checkout", async (req, res) => {
 		return
 	}
 
-	// Stripe sends the buyer back to the page they came from. The Origin header
+	// Dodo sends the buyer back to the page they came from. The Origin header
 	// has already passed the CORS allowlist above, so this cannot be pointed at
 	// an arbitrary site.
 	const returnOrigin = (req.header("origin") || (process.env.FRONTEND_ORIGIN || "").split(",")[0] || "")

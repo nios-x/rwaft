@@ -31,7 +31,6 @@ export const metadata: Metadata = {
   description: SITE_DESCRIPTION,
   applicationName: SITE_NAME,
   keywords: [
-    "AI website builder",
     "AI app builder",
     "prompt to app",
     "text to website",

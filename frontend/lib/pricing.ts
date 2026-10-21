@@ -52,7 +52,7 @@ export async function getPricing(): Promise<Pricing> {
 			costs: { prompt: Number(data.costs.prompt) || 0, deploy: Number(data.costs.deploy) || 0 },
 			currency: typeof data.currency === "string" ? data.currency : DEFAULT_PRICING.currency,
 			packs: Array.isArray(data.packs) ? data.packs.filter(isPack) : [],
-			payments: data.payments === "stripe" ? "stripe" : null,
+			payments: data.payments === "dodo" ? "dodo" : null,
 		}
 	} catch {
 		return DEFAULT_PRICING

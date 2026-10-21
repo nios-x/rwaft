@@ -3,7 +3,7 @@
 #   docker compose up --build             # free mode: every build is free
 #   PROD=true docker compose up --build   # metered: Google sign-in + tokens
 #
-# Secrets (Cloudinary, AI keys, GOOGLE_CLIENT_ID, Stripe) come from the same
+# Secrets (Cloudinary, AI keys, GOOGLE_CLIENT_ID, Dodo Payments) come from the same
 # .env files the services use outside Docker. Values set under `environment`
 # below win over those files, which is what points both services at the Redis
 # in this stack rather than whatever REDIS_URL a local .env names.
@@ -45,7 +45,7 @@ services:
       DEPLOYMENT_WILDCARD: "false"
       PROD: ${PROD:-false}
       # Local testing only: lets signed-in users add free test credits while no
-      # payment provider is configured. Refused automatically once Stripe is set.
+      # payment provider is configured. Refused automatically once Dodo is set.
       ALLOW_TEST_CREDITS: ${ALLOW_TEST_CREDITS:-false}
     ports:
       - "${API_PORT:-3000}:3000"

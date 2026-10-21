@@ -23,7 +23,7 @@ The pipeline is not hidden. Where other prompt-to-app tools show a spinner, rwaf
 - Builds take minutes, not seconds. The maker waits and watches.
 - Builds run one at a time per worker. When someone else's build is running, a new job waits in a shared line and should show its place in it.
 - With `PROD=true`, building requires a Google account and costs tokens (deploy and prompt have separate costs; new accounts get a signup grant). Failed builds are refunded. With `PROD=false` everything is free and anonymous use works.
-- Tokens are bought in packs through a hosted checkout. Stripe is implemented today; Dodo Payments is the planned provider.
+- Tokens are bought in packs through a hosted checkout. The provider is Dodo Payments (merchant of record).
 
 ## Capabilities and Constraints
 

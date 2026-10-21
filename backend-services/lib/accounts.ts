@@ -9,7 +9,7 @@ import type { GoogleProfile } from "./google.ts"
  *
  * PROD=true turns metering on: a build needs a signed-in Google account and
  * costs tokens. PROD=false (the default) leaves every build free and keeps
- * anonymous use working, so local development needs no Google or Stripe setup.
+ * anonymous use working, so local development needs no Google or Dodo setup.
  * Signing in still works in free mode when GOOGLE_CLIENT_ID is set.
  *
  * Everything lives in Redis next to the queues. That instance runs with

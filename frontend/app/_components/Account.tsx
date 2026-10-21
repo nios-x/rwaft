@@ -195,7 +195,7 @@ export function TokenShop({ auth }: { auth: AccountState }) {
 			{error && <p className="field-error shop-error" role="alert">{error}</p>}
 			<p className="shop-foot">
 				{canPay
-					? "Payment happens on Stripe's checkout page. Credits arrive as soon as it confirms."
+					? "Payment happens on Dodo Payments' secure checkout page. Credits arrive as soon as it confirms."
 					: "Online payment isn't connected yet. Credits can be bought here as soon as the site's payment provider is set up."}
 			</p>
 		</div>

@@ -24,7 +24,7 @@ export function Home({ prompt, builds, onOpen }: HomeProps) {
 			<section className="hero" id="start" aria-labelledby="hero-title">
 				{/* The eyebrow is part of the heading so the page's h1 names what rwaft is. */}
 				<h1 id="hero-title">
-					<span className="hero-eyebrow">AI website builder</span>
+					
 					What should we build?
 				</h1>
 				<p className="hero-sub">Describe an app in plain words. rwaft writes it, builds it and hosts it at its own link, and you watch the real build happen.</p>

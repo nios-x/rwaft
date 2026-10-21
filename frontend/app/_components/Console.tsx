@@ -80,11 +80,16 @@ export function Console({ footer }: ConsoleProps) {
     if (settledAny && billing) void refresh()
   }, [builds, billing, refresh])
 
-  // Stripe returns here with ?checkout=…; the webhook may land a moment after
-  // the browser does, so the balance is re-read a few times.
+  // Dodo returns here with ?checkout=… plus its own payment status; the
+  // webhook may land a moment after the browser does, so the balance is
+  // re-read a few times. A declined or expired payment comes back on the
+  // success URL too, so its status decides.
   useEffect(() => {
-    const result = new URLSearchParams(window.location.search).get("checkout")
-    if (result !== "success" && result !== "cancelled") return
+    const params = new URLSearchParams(window.location.search)
+    const checkout = params.get("checkout")
+    if (checkout !== "success" && checkout !== "cancelled") return
+    const status = params.get("status")
+    const result = checkout === "cancelled" || status === "failed" || status === "cancelled" || status === "expired" ? "cancelled" : "success"
     window.history.replaceState(null, "", window.location.pathname)
     let attempts = 0
     const timer = setInterval(() => {
@@ -226,8 +231,8 @@ export function Console({ footer }: ConsoleProps) {
       {checkoutNotice && (
         <p className="banner" data-tone={checkoutNotice} role="status">
           {checkoutNotice === "success"
-            ? "Payment received. Your credits are added as soon as Stripe confirms, usually within a few seconds."
-            : "Checkout was cancelled. You were not charged."}
+            ? "Payment received. Your credits are added as soon as the payment confirms, usually within a few seconds."
+            : "The payment didn't go through. You were not charged."}
           <button type="button" className="text-btn" onClick={() => setCheckoutNotice(null)}>Dismiss</button>
         </p>
       )}
