@@ -628,6 +628,24 @@ would request its bundles from `/assets/...` and render a blank page.
 - [ ] Worker plan has enough RAM and CPU for a real `npm install`
 - [ ] Real `.env` files are not committed (they are git-ignored and
       `.dockerignore`d)
+- [ ] **Google sign-in:** API `GOOGLE_CLIENT_ID` is the *Client ID*
+      (`…apps.googleusercontent.com`), never the `GOCSPX-…` secret, and the
+      console's origin (e.g. `https://rwaft.vercel.app`) is listed under the
+      OAuth client's **Authorized JavaScript origins**
+- [ ] **Credits:** `PROD=true` on the API *after* sign-in works (with no
+      client ID nobody can sign in, so nobody can build); defaults are 5 free
+      credits and 1 per message (`SIGNUP_TOKENS`, `PROMPT_TOKEN_COST`)
+- [ ] **Recharge:** `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` set and a
+      webhook pointing at `<PUBLIC_BASE_URL>/billing/webhook`; until then the
+      recharge panel shows the packs as "Soon"
+- [ ] `ALLOW_TEST_CREDITS` is **unset** in production (it mints free credits;
+      it also switches itself off once Stripe is configured)
+- [ ] **Worker AI keys:** `GEMINI_API_KEY` plus as many `GEMINI_API_KEY1…8` as
+      you have; calls rotate across them round robin
+- [ ] **Wildcard hosting:** `*.soumyajaiswal.me` DNS points at the API and is
+      added as a custom domain on it, with `DEPLOYMENT_WILDCARD=true`
+- [ ] **CI** (`.github/workflows/ci.yml`) is green before merging: Render and
+      Vercel deploy `main` immediately
 
 ---
 

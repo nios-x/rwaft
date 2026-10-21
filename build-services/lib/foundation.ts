@@ -385,6 +385,7 @@ function indexHtml(plan: AppPlan): string {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="${plan.design.palette.background}" />
     <meta name="description" content="${escapeHtml(plan.tagline || plan.name)}" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>${escapeHtml(plan.name)}</title>
@@ -394,6 +395,17 @@ function indexHtml(plan: AppPlan): string {
     <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>
+`
+}
+
+/**
+ * The product's initial on a tile of its primary colour. Without it every
+ * deployed site 404s on /favicon.ico and shows a blank tab icon.
+ */
+function favicon(plan: AppPlan): string {
+	const { primary, primaryForeground } = plan.design.palette
+	const initial = escapeHtml((plan.name.match(/[A-Za-z0-9]/)?.[0] ?? "R").toUpperCase())
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${primary}"/><text x="32" y="43" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34" font-weight="700" fill="${primaryForeground}">${initial}</text></svg>
 `
 }
 
@@ -420,6 +432,7 @@ export async function writeFoundation(projectDir: string, plan: AppPlan): Promis
 		"src/App.tsx": appModule(plan),
 		"src/components/Layout.tsx": plan.layout === "bare" ? BARE_LAYOUT : SITE_LAYOUT,
 		"index.html": indexHtml(plan),
+		"public/favicon.svg": favicon(plan),
 		...KIT,
 	}
 	for (const [file, content] of Object.entries(files)) {

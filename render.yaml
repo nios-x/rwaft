@@ -55,7 +55,11 @@ services:
       - key: CLOUDINARY_API_SECRET
         sync: false
 
-      # Metered mode: Google sign-in required, builds cost tokens.
+      # Metered mode: Google sign-in required, 5 free credits, 1 per message.
+      # Set GOOGLE_CLIENT_ID first: with PROD=true and no client ID, nobody can
+      # sign in, so nobody can build. Blueprint values only apply when the
+      # blueprint is synced; an existing service keeps its dashboard value.
+      # ALLOW_TEST_CREDITS must never be set here.
       - key: PROD
         value: "true"
       - key: GOOGLE_CLIENT_ID
@@ -115,8 +119,27 @@ services:
       - key: CLOUDINARY_API_SECRET
         sync: false
 
-      # A Gemini key is required for the /prompt flow.
+      # A Gemini key is required for the /prompt flow. Every attempt goes to
+      # the next configured key (round robin), and a rate-limited key sits out
+      # its cooldown, so more free-tier keys means fewer stalls. Leave unused
+      # ones empty.
       - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY1
+        sync: false
+      - key: GEMINI_API_KEY2
+        sync: false
+      - key: GEMINI_API_KEY3
+        sync: false
+      - key: GEMINI_API_KEY4
+        sync: false
+      - key: GEMINI_API_KEY5
+        sync: false
+      - key: GEMINI_API_KEY6
+        sync: false
+      - key: GEMINI_API_KEY7
+        sync: false
+      - key: GEMINI_API_KEY8
         sync: false
       - key: AI_MODEL
         value: gemini-3.8-flash

@@ -1,0 +1,56 @@
+name: CI
+
+# Render and Vercel deploy main as soon as it moves, so this is the gate: the
+# API and worker must typecheck and the console must lint and build before a
+# change is worth merging.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  services:
+    name: ${{ matrix.service }} typecheck
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - backend-services
+          - build-services
+    defaults:
+      run:
+        working-directory: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.x
+      # The Dockerfiles install with --frozen-lockfile; so does CI, so a
+      # lockfile drift fails here instead of in the image build.
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+
+  frontend:
+    name: frontend lint + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      # Any absolute URL will do: the value is only inlined into the bundle.
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_BACKEND_URL: https://api.example.invalid
+          NEXT_TELEMETRY_DISABLED: "1"
