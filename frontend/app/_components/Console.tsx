@@ -107,6 +107,11 @@ export function Console({ footer }: ConsoleProps) {
   const balance = auth.account?.tokens ?? 0
   const short = billing && signedIn && balance < cost
   const value = mode === "deploy" ? repositoryUrl : promptText
+  // Inside a finished app, the chat box changes that app. A failed change
+  // retries against the same version it was changing.
+  const editTarget = build?.kind === "prompt" && mode === "prompt"
+    ? build.state === "live" ? build.id : build.state === "failed" ? build.parentId : undefined
+    : undefined
 
   const handleSubmit = async (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault()
@@ -126,7 +131,7 @@ export function Console({ footer }: ConsoleProps) {
       const response = await fetch(`${BACKEND_URL}/${mode === "deploy" ? "deploy" : "prompt"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-User-Id": userId, ...auth.authHeaders() },
-        body: JSON.stringify(mode === "deploy" ? { url: source, userId } : { prompt: source, userId }),
+        body: JSON.stringify(mode === "deploy" ? { url: source, userId } : { prompt: source, userId, ...(editTarget ? { from: editTarget } : {}) }),
       })
       const result = await readApiJson<{ id?: string; url?: string; message?: string; code?: string; balance?: number; charged?: number }>(response)
 
@@ -137,7 +142,7 @@ export function Console({ footer }: ConsoleProps) {
       if (response.status === 401 && result.code === "sign_in_required") void refresh()
       if (!response.ok || !result.id || !result.url) throw new Error(result.message || "The build could not be started")
 
-      addRecentBuild({ id: result.id, kind: mode, url: result.url, at: Date.now(), charged: result.charged ?? 0, source })
+      addRecentBuild({ id: result.id, kind: mode, url: result.url, at: Date.now(), charged: result.charged ?? 0, source, ...(editTarget ? { parentId: editTarget } : {}) })
       setOpenId(result.id)
       setView("chat")
       if (mode === "prompt") setPromptText("")
@@ -257,6 +262,8 @@ export function Console({ footer }: ConsoleProps) {
           failure={build.state === "failed" && statusJobId === build.id ? failure : null}
           billing={billing}
           prompt={{ ...promptBase, inputRef: chatInput }}
+          editing={Boolean(editTarget)}
+          onOpen={open}
           onRetry={() => retry(build)}
           githubExport={Boolean(auth.config?.github)}
           requestHeaders={() => ({ ...(anonymousId ? { "X-User-Id": anonymousId } : {}), ...auth.authHeaders() })}

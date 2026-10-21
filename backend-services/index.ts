@@ -764,8 +764,8 @@ app.post(
 	requireAccountWhenBilling,
 	rateLimit({ name: "prompt", limit: PROMPT_RATE_LIMIT, windowSeconds: 60 * 60 }),
 	async (req, res) => {
-		const raw = (req.body as { prompt?: unknown } | undefined)?.prompt
-		const prompt = typeof raw === "string" ? raw.trim() : ""
+		const body = (req.body ?? {}) as { prompt?: unknown; from?: unknown }
+		const prompt = typeof body.prompt === "string" ? body.prompt.trim() : ""
 		if (!prompt) {
 			res.status(400).json({ status: "failed", message: "A prompt is required" })
 			return
@@ -773,6 +773,33 @@ app.post(
 		if (prompt.length > MAX_PROMPT_CHARS) {
 			res.status(400).json({ status: "failed", message: `Prompt must be ${MAX_PROMPT_CHARS} characters or fewer` })
 			return
+		}
+
+		// `from`: change that earlier build instead of starting a new app. Checked
+		// before charging, so a change that cannot happen costs nothing.
+		let baseId: string | undefined
+		if (body.from !== undefined && body.from !== null && body.from !== "") {
+			if (typeof body.from !== "string" || !isDeploymentId(body.from)) {
+				res.status(400).json({ status: "failed", message: "Invalid build to change" })
+				return
+			}
+			try {
+				const snapshot = await readSnapshot(body.from)
+				// Someone else's build answers exactly like an expired one.
+				if (!snapshot || !snapshot.hasFiles || !isRequester(snapshot.owner, req, res)) {
+					res.status(404).json({
+						status: "failed",
+						code: "source_expired",
+						message: "This app's code is no longer kept (it's kept for a day after each build), so it can't be changed. Go back home and describe the whole app to build it again."
+					})
+					return
+				}
+			} catch (error) {
+				console.error("[prompt] Source lookup failed:", (error as Error).message)
+				res.status(503).json({ status: "failed", message: "Generation service is temporarily unavailable" })
+				return
+			}
+			baseId = body.from
 		}
 
 		const userId = resolveUserId(req, res)
@@ -787,6 +814,7 @@ app.post(
 				id,
 				userId,
 				prompt,
+				...(baseId ? { baseId } : {}),
 				deploymentUrl,
 				assetBase: assetBaseFor(id),
 				charge
@@ -798,7 +826,7 @@ app.post(
 			return
 		}
 
-		res.status(202).json({ status: "success", id, userId, url: deploymentUrl, charged: charge?.tokens ?? 0 })
+		res.status(202).json({ status: "success", id, userId, url: deploymentUrl, charged: charge?.tokens ?? 0, ...(baseId ? { from: baseId } : {}) })
 	}
 )
 

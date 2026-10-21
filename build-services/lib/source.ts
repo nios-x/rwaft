@@ -1,8 +1,9 @@
 import fs from "node:fs/promises"
 import path from "node:path"
-import { gzipSync } from "node:zlib"
+import { gunzipSync, gzipSync } from "node:zlib"
 import { sourceKey, type createRedisClient } from "./config.ts"
 import { jobLog } from "./joblog.ts"
+import type { AppPlan } from "./plan.ts"
 
 type RedisLike = ReturnType<typeof createRedisClient>
 
@@ -44,11 +45,24 @@ async function listSourceFiles(projectDir: string): Promise<string[]> {
 }
 
 /**
+ * What a follow-up change needs besides the files: the plan the app was built
+ * from, and every request so far (the original prompt first), so the model
+ * knows what the app is for and what was already asked.
+ */
+export interface SourceMeta {
+	plan?: AppPlan
+	history: string[]
+}
+
+/** Requests kept with a snapshot. The oldest go first; the original prompt always stays. */
+const MAX_HISTORY = 12
+
+/**
  * Stores the project's source as gzipped JSON of `{ path, content }` pairs,
  * content base64 so binary assets survive. `owner` is the log channel id the
- * build ran under; only a request from that user may push it.
+ * build ran under; only a request from that user may push or change it.
  */
-export async function saveSourceSnapshot(redis: RedisLike, jobId: string, owner: string, projectDir: string) {
+export async function saveSourceSnapshot(redis: RedisLike, jobId: string, owner: string, projectDir: string, meta: SourceMeta) {
 	const fileNames = await listSourceFiles(projectDir)
 	if (fileNames.length === 0) throw new Error("the project has no source files")
 	if (fileNames.length > SOURCE_MAX_FILES) throw new Error(`the project has ${fileNames.length} files, over the ${SOURCE_MAX_FILES} limit`)
@@ -62,15 +76,53 @@ export async function saveSourceSnapshot(redis: RedisLike, jobId: string, owner:
 		throw new Error(`the source is ${Math.ceil(packed.length / 1024)} KB compressed, over the ${Math.floor(SOURCE_MAX_BYTES / 1024)} KB limit`)
 	}
 
+	const history = meta.history.length > MAX_HISTORY
+		? [meta.history[0]!, ...meta.history.slice(-(MAX_HISTORY - 1))]
+		: meta.history
 	const key = sourceKey(jobId)
 	await redis.multi()
 		.hSet(key, {
 			owner,
 			files: packed.toString("base64"),
 			fileCount: String(files.length),
-			createdAt: String(Date.now())
+			createdAt: String(Date.now()),
+			history: JSON.stringify(history),
+			...(meta.plan ? { plan: JSON.stringify(meta.plan) } : {})
 		})
 		.expire(key, SOURCE_TTL_SECONDS)
 		.exec()
-	jobLog(`Kept the source (${files.length} files) for ${Math.round(SOURCE_TTL_SECONDS / 3600)} hours so it can be pushed to GitHub`)
+	jobLog(`Kept the source (${files.length} files) for ${Math.round(SOURCE_TTL_SECONDS / 3600)} hours, so you can change this app or push it to GitHub`)
+}
+
+/**
+ * Writes a kept snapshot back into an empty project directory: the starting
+ * point of a follow-up change. Throws in plain words when it has expired,
+ * which fails the job and refunds it.
+ */
+export async function restoreSourceSnapshot(redis: RedisLike, jobId: string, projectDir: string): Promise<SourceMeta> {
+	const [packed, rawHistory, rawPlan] = await redis.hmGet(sourceKey(jobId), ["files", "history", "plan"])
+	if (!packed) throw new Error("This app's saved code has expired, so it can't be changed. Describe the whole app to build it again")
+
+	const files = JSON.parse(gunzipSync(Buffer.from(packed, "base64")).toString("utf-8")) as Array<{ path: string; content: string }>
+	const root = path.resolve(projectDir)
+	for (const file of files) {
+		const target = path.resolve(root, file.path)
+		// Written by this worker, but a path is still never allowed out of the project.
+		if (!target.startsWith(root + path.sep)) continue
+		await fs.mkdir(path.dirname(target), { recursive: true })
+		await fs.writeFile(target, Buffer.from(file.content, "base64"))
+	}
+
+	const parse = <T>(raw: string | null | undefined): T | undefined => {
+		try {
+			return raw ? JSON.parse(raw) as T : undefined
+		} catch {
+			return undefined
+		}
+	}
+	const history = parse<string[]>(rawHistory)
+	return {
+		plan: parse<AppPlan>(rawPlan),
+		history: Array.isArray(history) ? history.filter((entry) => typeof entry === "string") : []
+	}
 }

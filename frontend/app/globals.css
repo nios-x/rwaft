@@ -582,6 +582,14 @@ h2 {
   justify-items: center;
 }
 
+/* Google draws its button in an iframe whose page has a light colour scheme.
+   When the iframe's own scheme differs (ours is dark in dark mode), browsers
+   back it with an opaque white canvas: the white box around the button.
+   Matching the scheme lets it stay transparent in both themes. */
+.google-slot iframe {
+  color-scheme: light;
+}
+
 .banner {
   display: flex;
   align-items: center;
@@ -1332,6 +1340,14 @@ a.brand {
   font-size: 11px;
   color: var(--text-3);
   text-align: right;
+}
+
+.msg-kicker {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
 }
 
 .msg[data-tone="good"] strong {

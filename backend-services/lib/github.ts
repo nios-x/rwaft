@@ -114,15 +114,21 @@ export interface SourceFile {
 export interface SourceSnapshot {
 	owner: string
 	fileCount: number
-	/** Set once pushed; the files themselves are dropped at that point. */
+	/** Set once pushed. */
 	repoUrl?: string
+	/** Whether the files are still there to change (a push before follow-up changes existed dropped them). */
+	hasFiles: boolean
 }
 
 export async function readSnapshot(buildId: string): Promise<SourceSnapshot | null> {
 	const redis = await getRedisClient()
-	const [owner, fileCount, repoUrl] = await redis.hmGet(sourceKey(buildId), ["owner", "fileCount", "repoUrl"])
+	const key = sourceKey(buildId)
+	const [[owner, fileCount, repoUrl], hasFiles] = await Promise.all([
+		redis.hmGet(key, ["owner", "fileCount", "repoUrl"]),
+		redis.hExists(key, "files")
+	])
 	if (!owner) return null
-	return { owner, fileCount: Number(fileCount) || 0, repoUrl: repoUrl || undefined }
+	return { owner, fileCount: Number(fileCount) || 0, repoUrl: repoUrl || undefined, hasFiles: Boolean(hasFiles) }
 }
 
 export async function readSnapshotFiles(buildId: string): Promise<SourceFile[] | null> {
@@ -134,15 +140,12 @@ export async function readSnapshotFiles(buildId: string): Promise<SourceFile[] |
 }
 
 /**
- * The source has done its job once it is on GitHub. Keep only the repo link,
- * still under the snapshot's own expiry, so the console can show it.
+ * Records where the source went. The files stay, under the snapshot's own
+ * expiry: a pushed app can still be changed with a follow-up message.
  */
 export async function markSnapshotPushed(buildId: string, repoUrl: string): Promise<void> {
 	const redis = await getRedisClient()
-	await redis.multi()
-		.hDel(sourceKey(buildId), "files")
-		.hSet(sourceKey(buildId), "repoUrl", repoUrl)
-		.exec()
+	await redis.hSet(sourceKey(buildId), "repoUrl", repoUrl)
 }
 
 // ── Pushing ─────────────────────────────────────────────────────────────────

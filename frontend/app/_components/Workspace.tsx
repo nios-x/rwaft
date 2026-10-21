@@ -76,6 +76,10 @@ interface WorkspaceProps {
 	failure: string | null
 	billing: boolean
 	prompt: PromptBoxProps
+	/** The chat box sends a change to this app rather than starting a new one. */
+	editing: boolean
+	/** Opens another build's workspace, e.g. the version a change was made to. */
+	onOpen: (id: string) => void
 	/** Puts this build's prompt (or repo) back in the box, ready to send again. */
 	onRetry: () => void
 	/** Offer "Push to GitHub" on finished prompt builds; the API has a GitHub app. */
@@ -83,7 +87,7 @@ interface WorkspaceProps {
 	requestHeaders: () => Record<string, string>
 }
 
-function Chat({ build, lines, connected, failure, billing, prompt, onRetry, githubExport, requestHeaders }: Omit<WorkspaceProps, "stages" | "running">) {
+function Chat({ build, lines, connected, failure, billing, prompt, editing, onOpen, onRetry, githubExport, requestHeaders }: Omit<WorkspaceProps, "stages" | "running">) {
 	const thread = useRef<HTMLDivElement>(null)
 	const [pinned, setPinned] = useState(true)
 	const steps = useMemo(() => stepsFrom(lines, build.kind), [lines, build.kind])
@@ -108,6 +112,7 @@ function Chat({ build, lines, connected, failure, billing, prompt, onRetry, gith
 				aria-live="polite"
 			>
 				<div className="msg msg--you">
+					{build.parentId && <span className="msg-kicker">Change</span>}
 					<p>{build.source || (build.kind === "prompt" ? "Build me an app." : build.url)}</p>
 					<span className="msg-time">{clockTime(build.at)}</span>
 				</div>
@@ -138,6 +143,10 @@ function Chat({ build, lines, connected, failure, billing, prompt, onRetry, gith
 					<div className="msg" data-tone="good">
 						<p><strong>Your site is live.</strong> Share the link with anyone.</p>
 						<a className="msg-link" href={build.url} target="_blank" rel="noreferrer">{build.url} <ExternalIcon /></a>
+						{editing && <p>Want something different? Describe a change below and rwaft updates this app. This version stays live at its own link.</p>}
+						{build.parentId && (
+							<button type="button" className="text-btn msg-action" onClick={() => onOpen(build.parentId!)}>Open the version before this change</button>
+						)}
 						{githubExport && build.kind === "prompt" && (
 							<GitHubExport key={build.id} build={build} headers={requestHeaders} />
 						)}
@@ -159,7 +168,11 @@ function Chat({ build, lines, connected, failure, billing, prompt, onRetry, gith
 				)}
 			</div>
 
-			<PromptBox {...prompt} size="compact" placeholder={prompt.mode === "prompt" ? "Describe another app…" : "Paste a GitHub repo URL…"} />
+			<PromptBox
+				{...prompt}
+				size="compact"
+				placeholder={editing ? "Describe a change to this app…" : prompt.mode === "prompt" ? "Describe another app…" : "Paste a GitHub repo URL…"}
+			/>
 		</section>
 	)
 }

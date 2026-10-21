@@ -34,9 +34,9 @@ const STAGE_LABELS: Record<StageKey, string> = {
 
 /** First matching message moves the build to that stage. Order is the route's order. */
 const STAGE_PATTERNS: Array<[StageKey, RegExp]> = [
-	["setup", /^Starting (deploy|prompt) job|^Scaffolding a fresh|^Fetching repository files/],
+	["setup", /^Starting (deploy|prompt) job|^Scaffolding a fresh|^Fetching repository files|^Restoring your app/],
 	["planning", /^Planning your app|^Planned \d+ page/],
-	["writing", /^Asking the AI to write|^Writing the .+ page|\[ai\] Iteration/],
+	["writing", /^Asking the AI to write|^Asking the AI to make your change|^Writing the .+ page|\[ai\] Iteration/],
 	["installing", /^Installing dependencies|^Reinstalling dependencies|^Dependencies already match/],
 	["building", /^Building project/],
 	["publishing", /^Uploading \d+ build artifacts/]
@@ -65,6 +65,10 @@ export function annotate(message: string, kind: BuildKind, seen: Set<string>): s
 	if (/^Planning your app/.test(message)) return once("planning", "Planning the pages and picking a design: colours, fonts and layout.")
 	const planned = /^Planned (\d+) pages? \(([^)]*)\)/.exec(message)
 	if (planned) return once("planned", `The plan is ready: ${planned[1]} page${planned[1] === "1" ? "" : "s"} (${planned[2]}), all sharing one design.`)
+	if (/^Restoring your app/.test(message)) return once("setup", "Loading your app's current code.")
+	if (/^Asking the AI to make your change/.test(message)) return once("writing", "The AI is reading your app and making the change.")
+	const changed = /^Changed (\d+) files?: (.*)/.exec(message)
+	if (changed) return once("changed", `Changed ${changed[1]} file${changed[1] === "1" ? "" : "s"}. Now rebuilding the site with them.`)
 	if (/^Asking the AI to write/.test(message)) return once("writing", "The AI is writing your app's code. This is usually the longest step.")
 	const page = /^Writing the (.+) page/.exec(message)
 	if (page) return once(`page:${page[1]}`, `Writing the ${page[1]} page.`)

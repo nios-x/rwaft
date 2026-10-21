@@ -182,7 +182,7 @@ async function writeFiles(projectDir: string, files: ParsedFile[]) {
 }
 
 /** Sends one broken file back with its exact problem; returns the fixed file or null. */
-async function repairFile(system: string, brief: string, file: string, content: string, problem: string): Promise<string | null> {
+export async function repairFile(system: string, brief: string, file: string, content: string, problem: string): Promise<string | null> {
 	const answer = await complete({
 		system,
 		label: `fix ${file}`,
@@ -344,7 +344,8 @@ async function brokenImports(projectDir: string, files: string[]): Promise<Map<s
 /** Which page wrote each file, so a later repair can carry that page's brief. */
 const owners = new WeakMap<AppPlan, Map<string, string>>()
 
-const pageOwning = (plan: AppPlan, file: string) => {
+const pageOwning = (plan: AppPlan | undefined, file: string) => {
+	if (!plan) return undefined
 	const component = owners.get(plan)?.get(file)
 	return plan.pages.find((page) => page.component === component || file === `src/pages/${page.component}.tsx`)
 }
@@ -375,9 +376,10 @@ export async function generatePages(projectDir: string, plan: AppPlan, prompt: s
 /**
  * Build-failure repair that sends only the file the error names, instead of
  * starting an agent that has to rediscover the project. Returns true when it
- * changed something worth rebuilding.
+ * changed something worth rebuilding. `plan` is missing for a change to an app
+ * kept before plans were saved; the request alone then briefs the repair.
  */
-export async function repairFromBuildFailure(projectDir: string, plan: AppPlan, prompt: string, failure: string): Promise<boolean> {
+export async function repairFromBuildFailure(projectDir: string, plan: AppPlan | undefined, prompt: string, failure: string): Promise<boolean> {
 	const named = [...new Set([...failure.matchAll(/(src\/[\w./-]+\.(?:tsx|ts|css))/g)].map((match) => match[1]!))]
 		.filter((file) => file !== "src/main.tsx")
 	const system = await pageSystemPrompt()
@@ -388,7 +390,7 @@ export async function repairFromBuildFailure(projectDir: string, plan: AppPlan, 
 		const target = path.join(projectDir, file)
 		if (!(await exists(target))) continue
 		const page = pageOwning(plan, file)
-		const brief = page ? pageBrief(plan, page, prompt) : `The user asked for: ${prompt}`
+		const brief = plan && page ? pageBrief(plan, page, prompt) : `The user asked for: ${prompt}`
 		jobLog(`Build error in ${file}: asking the AI to fix that file`, "warn")
 		const content = await fs.readFile(target, "utf-8")
 		const fixed = await repairFile(system, brief, file, content, `The production build failed with:\n${excerpt}`)

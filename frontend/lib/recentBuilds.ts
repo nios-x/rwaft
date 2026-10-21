@@ -13,6 +13,8 @@ export interface RecentBuild {
 	charged: number
 	/** The prompt, or the repository URL, exactly as it was sent. */
 	source?: string
+	/** The build this one changed, when it was a follow-up change rather than a new app. */
+	parentId?: string
 	outcome?: BuildOutcome
 	/** Epoch ms when the outcome was first seen; drives the notification bell. */
 	settledAt?: number

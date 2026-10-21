@@ -37,7 +37,8 @@ import {
 } from "./lib/joblog.ts"
 import { run, installDependencies, buildProject } from "./lib/run.ts"
 import { withBuildSlot, buildSlotStats } from "./lib/jobslot.ts"
-import { saveSourceSnapshot } from "./lib/source.ts"
+import { restoreSourceSnapshot, saveSourceSnapshot } from "./lib/source.ts"
+import { editApp } from "./lib/edit.ts"
 import { assertNoUndefinedIdentifiers } from "./lib/validate.ts"
 import {
 	RUNTIME_DEPENDENCIES,
@@ -89,6 +90,8 @@ interface JobPayload {
 	userId: string
 	url?: string
 	prompt?: string
+	/** A prompt job that changes this earlier build instead of starting a new app. */
+	baseId?: string
 	deploymentUrl?: string
 	/**
 	 * Path the built site's assets will be served from ("/" for wildcard
@@ -649,7 +652,7 @@ const normalizeGeneratedProject = async (projectDir: string) => {
 const installAndBuildPromptProject = async (
 	projectDir: string,
 	prompt: string,
-	plan: AppPlan,
+	plan: AppPlan | undefined,
 	assetBase: string
 ) => {
 	// Deterministic dependency repairs don't consume an AI attempt: they cost a
@@ -810,6 +813,7 @@ function parsePayload(raw: string, label: string): JobPayload | null {
 			userId: typeof parsed.userId === "string" && parsed.userId ? parsed.userId : `anon-${parsed.id}`,
 			url: parsed.url,
 			prompt: parsed.prompt,
+			baseId: typeof parsed.baseId === "string" && /^[a-z0-9]{8}$/.test(parsed.baseId) ? parsed.baseId : undefined,
 			deploymentUrl: parsed.deploymentUrl,
 			assetBase: typeof parsed.assetBase === "string" ? parsed.assetBase : `/${parsed.id}/`,
 			charge: typeof parsed.charge?.userId === "string" && Number.isInteger(parsed.charge?.tokens) && parsed.charge.tokens > 0
@@ -933,17 +937,15 @@ const deployWorker = () => pump("deploy", "deploy", DEPLOY_QUEUE, DEPLOY_PROCESS
 	await cleanup(payload.id, projectDir)
 })
 
-const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESSING, async (payload, redis) => {
-	if (!payload.prompt) throw new Error("Prompt job carried no prompt text")
-	const projectDir = path.join(root, payload.id)
-
+/** A new app from a prompt: plan, foundation, then every page. */
+const createApp = async (projectDir: string, prompt: string) => {
 	await scaffoldViteProject(projectDir, { install: false })
 
 	// 1. Plan: pages and the design schema, in one call. It needs no files, so
 	//    it runs while npm installs the scaffold instead of after it.
 	jobLog("Planning your app: pages, colours and fonts…")
 	const [plan] = await Promise.all([
-		planApp(payload.prompt),
+		planApp(prompt),
 		installDependencies(projectDir, "--legacy-peer-deps")
 	])
 	jobLog(`Planned ${plan.pages.length} page${plan.pages.length === 1 ? "" : "s"} (${plan.pages.map((page) => page.name).join(", ")}) · ${plan.design.mood} · ${plan.design.fonts.heading} + ${plan.design.fonts.body}`)
@@ -953,23 +955,56 @@ const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESS
 
 	// 3. Pages: one call per page, in parallel, against the same design schema.
 	jobLog("Asking the AI to write your application...")
-	const files = await generatePages(projectDir, plan, payload.prompt)
+	const files = await generatePages(projectDir, plan, prompt)
 	jobLog(`AI wrote ${files.length} files across ${plan.pages.length} page${plan.pages.length === 1 ? "" : "s"}`)
+	return { plan: plan as AppPlan | undefined, history: [prompt] }
+}
+
+/** A follow-up change: the earlier build's kept source, plus one edit. */
+const changeApp = async (projectDir: string, request: string, baseId: string, redis: RedisLike) => {
+	await fs.rm(projectDir, { recursive: true, force: true })
+	await fs.mkdir(projectDir, { recursive: true })
+	jobLog("Restoring your app's current code…")
+	const base = await restoreSourceSnapshot(redis, baseId, projectDir)
+
+	// The edit reads and writes only src/, so npm can install alongside it.
+	jobLog("Asking the AI to make your change…")
+	await Promise.all([
+		editApp(projectDir, request, base.history),
+		installDependencies(projectDir, "--legacy-peer-deps")
+	])
+	return { plan: base.plan, history: [...base.history, request] }
+}
+
+/** Every request behind this build, for the repair passes that need to know what the app is for. */
+const describeRequests = (history: string[]) =>
+	history.length <= 1
+		? history[0] ?? ""
+		: `${history[0]}\n\nChanges asked for since, oldest first:\n${history.slice(1).map((entry) => `- ${entry}`).join("\n")}`
+
+const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESSING, async (payload, redis) => {
+	if (!payload.prompt) throw new Error("Prompt job carried no prompt text")
+	const projectDir = path.join(root, payload.id)
+
+	const { plan, history } = payload.baseId
+		? await changeApp(projectDir, payload.prompt, payload.baseId, redis)
+		: await createApp(projectDir, payload.prompt)
 
 	await installAndBuildPromptProject(
 		projectDir,
-		payload.prompt,
+		describeRequests(history),
 		plan,
 		payload.assetBase || `/${payload.id}/`
 	)
 	await uploadBuildOutput(payload.id, projectDir)
 
 	// The project directory is deleted when this job ends, so keep the source for
-	// "Push to GitHub". Best effort: the site is already uploaded. An `anon-` id
-	// was made up by the worker, so nobody could prove they own the build.
+	// follow-up changes and "Push to GitHub". Best effort: the site is already
+	// uploaded. An `anon-` id was made up by the worker, so nobody could prove
+	// they own the build.
 	if (!payload.userId.startsWith("anon-")) {
-		await saveSourceSnapshot(redis, payload.id, payload.userId, projectDir).catch((error) => {
-			jobLog(`Could not keep the source for GitHub export: ${(error as Error).message}`, "warn")
+		await saveSourceSnapshot(redis, payload.id, payload.userId, projectDir, { plan, history }).catch((error) => {
+			jobLog(`Could not keep the source for changes and GitHub export: ${(error as Error).message}`, "warn")
 		})
 	}
 })
