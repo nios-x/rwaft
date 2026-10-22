@@ -1421,11 +1421,14 @@ a.brand {
   aspect-ratio: 16 / 9;
 }
 
-/* Over the top corner, clear of the native controls along the bottom edge. */
+/* Over the top corner, clear of the native controls along the bottom edge.
+   The film is white in both themes, so the button stays dark in both. */
 .trailer-sound {
   position: absolute;
   top: 14px;
   left: 14px;
+  background: #0a0a0b;
+  color: #ffffff;
 }
 
 .trailer-sound svg {
