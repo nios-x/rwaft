@@ -42,8 +42,8 @@ export function TrailerPlayer({ src, poster, label }: { src: string; poster: str
 				className="trailer-video"
 				src={src}
 				poster={poster}
-				width={960}
-				height={540}
+				width={1920}
+				height={1080}
 				controls
 				playsInline
 				preload="auto"

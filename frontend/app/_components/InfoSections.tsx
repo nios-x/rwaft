@@ -87,9 +87,9 @@ const STACK = [
 	"Sign-in is with Google, and payments are handled by Dodo Payments",
 ]
 
-/** The product overview film, rendered from motion/ (motion/out/rwaft-overview-preview.mp4). */
+/** The product overview film, rendered from motion/ (motion/out/rwaft-overview.mp4, with its score). */
 export const TRAILER = {
-	src: "/video/rwaft-overview-preview.mp4",
+	src: "/video/rwaft-overview.mp4",
 	poster: "/video/rwaft-overview-poster.jpg",
 	duration: "PT29S",
 	uploaded: "2026-10-22",
