@@ -308,7 +308,7 @@
 .chip-count {
 	position: relative;
 	display: inline-block;
-	min-width: 62px;
+	min-width: 70px;
 	height: 18px;
 }
 

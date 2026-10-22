@@ -82,7 +82,7 @@ export const ELAPSED = [[T.build, 0], [B(14), 2], [B(16), 14], [B(18, 0.5), 94],
 
 /** The pricing page as the API's defaults configure it. */
 export const PLANS = [
-	{ name: "Free", price: "$0", detail: "<strong>5 credits</strong> when you sign up with Google: 5 chats" },
+	{ name: "Free", price: "$0", detail: "<strong>2 credits</strong> when you sign up with Google: 2 chats" },
 	{ name: "Starter", price: "$5", detail: "<strong>50 credits</strong>: about 50 chats, $0.10 each" },
 	{ name: "Builder", price: "$12", detail: "<strong>150 credits</strong>: about 150 chats, $0.08 each" },
 	{ name: "Studio", price: "$28", detail: "<strong>400 credits</strong>: about 400 chats, $0.07 each" },

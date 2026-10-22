@@ -210,7 +210,8 @@ async function encode({ segments, from, to, width, height, meta }) {
 		inputs.push("-ss", String(from / cfg.fps), "-t", String(span * cfg.loops), "-i", sfx)
 		if (values.music) {
 			inputs.push("-stream_loop", "-1", "-t", String(span * cfg.loops), "-i", resolve(values.music))
-			audio.push("-filter_complex", `[2:a]volume=${values["music-gain"]}[m];[1:a][m]amix=inputs=2:normalize=0:duration=first[a]`, "-map", "0:v", "-map", "[a]")
+			// The limiter only catches a UI sound landing on a music peak; auto-level off, delay compensated so sync holds.
+			audio.push("-filter_complex", `[2:a]volume=${values["music-gain"]}[m];[1:a][m]amix=inputs=2:normalize=0:duration=first,alimiter=limit=0.84:level=false:latency=true[a]`, "-map", "0:v", "-map", "[a]")
 		} else audio.push("-map", "0:v", "-map", "1:a")
 		audio.push("-c:a", "aac", "-b:a", "192k")
 	}

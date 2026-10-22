@@ -58,7 +58,7 @@ export const CAPTIONS = [
 	{ at: B(29, 0.2), out: B(31, 0.7), text: "Share it with anyone.", key: "anyone" },
 	{ at: B(32, 0.2), out: B(36, 0.7), text: "Change it by asking.", key: "asking" },
 	{ at: B(37, 0.2), out: B(40, 0.7), text: "Or deploy a React repo.", key: "React repo" },
-	{ at: B(41, 0.3), out: B(45, 0.7), text: "Start with 5 free chats.", key: "free", sub: "Failed builds are refunded.", subAt: B(42, 0.4) },
+	{ at: B(41, 0.3), out: B(45, 0.7), text: "Start with 2 free chats.", key: "free", sub: "Failed builds are refunded.", subAt: B(42, 0.4) },
 	{ at: B(46, 0.2), out: B(50, 0.6), text: "Start free at rwaft.live", key: "rwaft.live" },
 	{ at: B(51, 0.3), out: B(53, 0.8), text: "Describe an app. Get a live link.", key: "live link", center: true },
 ]

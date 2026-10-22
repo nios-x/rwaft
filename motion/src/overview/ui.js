@@ -27,8 +27,9 @@ const ico = (name, extra = "") => `<span class="ico" ${extra}>${I[name]}</span>`
 
 const MARK = `<svg viewBox="0 0 28 28" fill="none"><rect x="0.5" y="0.5" width="27" height="27" rx="8" fill="#fafafa"/><g stroke="#0a0a0b" stroke-width="2.1" stroke-linecap="round"><path d="M6.6 9.6h6.4"/><path d="M6.6 14h8.9"/><path d="M6.6 18.4h5.4"/></g><circle cx="19.7" cy="14" r="2.6" fill="#8b72ff"/></svg>`
 const BRAND = `<span class="brand"><span class="mark">${MARK}</span>rwaft</span>`
-const NAV = (current) => `<nav class="site-nav">${["How it works", "Pricing", "FAQ"].map((label) => `<span${label === current ? " data-on" : ""}>${label}</span>`).join("")}</nav>`
-const CREDITS = ["5 credits", "4 credits", "3 credits", "2 credits"]
+const NAV = (current) => `<nav class="site-nav">${["How it works", "Pricing", "FAQ", "About"].map((label) => `<span${label === current ? " data-on" : ""}>${label}</span>`).join("")}</nav>`
+/** 2 free credits plus a Starter pack: enough for the film's three paid actions (build, change, repo deploy). */
+const CREDITS = ["52 credits", "51 credits", "50 credits", "49 credits"]
 const RIGHT = `
 	<div class="hdr-right">
 		<span class="chip">${ico("coin")}<span class="chip-count">${CREDITS.map((c) => `<span>${c}</span>`).join("")}</span></span>
@@ -36,7 +37,7 @@ const RIGHT = `
 		<span class="account-pill"><span class="avatar">A</span>Alex${ico("chevronDown")}</span>
 	</div>`
 
-const COSTS = ["1 credit · 5 left", "1 credit · 4 left", "1 credit · 3 left", "1 credit · 2 left"]
+const COSTS = ["1 credit · 52 left", "1 credit · 51 left", "1 credit · 50 left", "1 credit · 49 left"]
 const promptBar = (compact) => `
 	<div class="prompt-bar">
 		<div class="mode"><b class="mode-thumb"></b>

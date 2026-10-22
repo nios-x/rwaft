@@ -13,9 +13,13 @@ Add `--film overview` to any render or stills command for the overview (the laun
 npm run preview                                         # then open /overview.html or /index.html
 node scripts/stills.mjs --film overview                 # out/overview-stills/beat-01.png … + contact.png
 node scripts/render.mjs --film overview --preset preview
-node scripts/render.mjs --film overview --preset final  # out/rwaft-overview.mp4
-node scripts/render.mjs --film overview --preset final --music track.wav   # lay a music bed under it
+node scripts/render.mjs --film overview --preset final  # out/rwaft-overview.mp4, UI sounds only
+npm run overview:music                                  # out/overview-music.wav, the original score
+node scripts/render.mjs --film overview --preset final --music out/overview-music.wav --music-gain 0.89
 ```
+
+The last line is how `out/rwaft-overview.mp4` is made for release (`npm run overview:render` runs both): the score under
+the UI sounds, about −14 LUFS.
 
 The overview's timing lives in [src/overview/beatmap.js](src/overview/beatmap.js) (captions, scenes, sound cues) and
 its copy in [src/overview/content.js](src/overview/content.js): chat replies are rwaft's own plain-words notes
@@ -105,9 +109,16 @@ a thousand others is bit-identical to the same frame rendered in a fresh page (v
 else the newest Chromium already in the Playwright cache, else an installed Chrome. If none exists:
 `npx playwright-core install chromium-headless-shell`.
 
-**Audio.** There is no music in the repository, so `scripts/sfx.mjs` synthesises subtle UI sounds (clicks, keys, taps,
-ticks, a success chime, air) from the beat map's `CUES`, peaking near −8 dBFS. Add music with `--music`; its first downbeat
-should land at t = 0. To retime against a track, change `bpm` or `offset` in `beatmap.js`; everything is placed with `B(n)`.
+**Audio.** `scripts/sfx.mjs` synthesises subtle UI sounds (clicks, keys, taps, ticks, a success chime, air) from the beat
+map's `CUES`, peaking near −8 dBFS. Add music with `--music`; its first downbeat should land at t = 0. To retime against a
+track, change `bpm` or `offset` in `beatmap.js`; everything is placed with `B(n)`.
+
+**Score (overview).** [scripts/music.mjs](scripts/music.mjs) composes an original 120 BPM, D-minor beat for the overview, synthesised
+like the UI sounds and placed from its beat map: keys alone under the opening cards, the drop as the app window lands
+(`T.home`), drums out while the build repairs itself (`T.repair`), an arpeggio once the site is live, a last hit on the
+tagline (`T.tagline`) and a held chord under the end card. It is mastered to about −14 LUFS with a look-ahead limiter; the
+renderer adds a safety limiter after mixing it with the UI sounds. Retiming the film moves the music with it; the script
+refuses to run if its bars no longer end on the tagline.
 
 **Other formats.** Layout is in world pixels and framed by the camera, so `?format=landscape` (1920 × 1080) and
 `?format=portrait` (1080 × 1920) already work; tune `fill` per format in [src/composition/config.js](src/composition/config.js).
