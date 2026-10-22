@@ -2,6 +2,7 @@ import Link from "next/link"
 
 /** The pages that explain rwaft, in reading order. */
 export const INFO_PAGES = [
+	{ href: "/trailer", label: "Trailer" },
 	{ href: "/how-it-works", label: "How it works" },
 	{ href: "/pricing", label: "Pricing" },
 	{ href: "/faq", label: "FAQ" },

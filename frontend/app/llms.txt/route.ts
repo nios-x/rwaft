@@ -23,6 +23,7 @@ export async function GET() {
 		"## Pages",
 		"",
 		`- [Start building](${SITE_URL}/): the prompt box; describe an app to build it`,
+		`- [Trailer](${SITE_URL}/trailer): a 29-second video of an app going from prompt to live link`,
 		`- [How it works](${SITE_URL}/how-it-works): the three steps, what you can build and what you get`,
 		`- [Pricing](${SITE_URL}/pricing): free credits, what a build costs, refunds for failed builds`,
 		`- [FAQ](${SITE_URL}/faq): common questions`,

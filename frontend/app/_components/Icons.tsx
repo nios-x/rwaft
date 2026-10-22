@@ -31,7 +31,8 @@ export const CheckIcon = icon(<path d="m3.6 8.4 2.8 2.8 6-6.4" />)
 export const CrossIcon = icon(<path d="M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2" />)
 export const CopyIcon = icon(<><rect x="5.4" y="5.4" width="7.4" height="7.4" rx="1.4" /><path d="M10.4 5.4V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v5.4a1 1 0 0 0 1 1h1.4" /></>)
 export const RefreshIcon = icon(<><path d="M12.8 7.4A4.8 4.8 0 0 0 4 5.2M3.2 8.6A4.8 4.8 0 0 0 12 10.8" /><path d="M4 2.8v2.6h2.6M12 13.2v-2.6H9.4" /></>)
-export const SignOutIcon = icon(<><path d="M6.4 13.2H4a1 1 0 0 1-1-1V3.8a1 1 0 0 1 1-1h2.4" /><path d="m10 5 3 3-3 3M13 8H6.4" /></>)
+export const SoundIcon = icon(<><path d="M2.8 6.2h2.2L8.4 3.4v9.2L5 9.8H2.8V6.2Z" /><path d="M10.8 5.8a3 3 0 0 1 0 4.4M12.6 4a5.4 5.4 0 0 1 0 8" /></>)
+export const SignOutIcon =icon(<><path d="M6.4 13.2H4a1 1 0 0 1-1-1V3.8a1 1 0 0 1 1-1h2.4" /><path d="m10 5 3 3-3 3M13 8H6.4" /></>)
 
 /** GitHub's own mark is a filled shape, so it opts out of the stroke family. */
 export const GitHubIcon = (props: IconProps) => (

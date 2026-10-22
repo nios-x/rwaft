@@ -1405,6 +1405,34 @@ a.brand {
   font-weight: 600;
 }
 
+.trailer {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-box);
+}
+
+.trailer-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+
+/* Over the top corner, clear of the native controls along the bottom edge. */
+.trailer-sound {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+}
+
+.trailer-sound svg {
+  width: 15px;
+  height: 15px;
+}
+
 .land-step-num {
   display: inline-grid;
   place-items: center;

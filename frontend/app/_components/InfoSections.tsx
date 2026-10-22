@@ -2,9 +2,10 @@ import Link from "next/link"
 import { chatsFor, formatPrice, type Pricing } from "../../lib/pricing"
 import { CONTACT_LABEL, CONTACT_URL } from "../../lib/site"
 import { ChevronRight } from "./Icons"
+import { TrailerPlayer } from "./TrailerPlayer"
 
 /**
- * The content of /how-it-works, /pricing, /faq and /about.
+ * The content of /trailer, /how-it-works, /pricing, /faq and /about.
  *
  * Server components, rendered into the first HTML response, so search engines
  * (and anyone without JavaScript) read what rwaft is and what it costs. Every
@@ -86,6 +87,17 @@ const STACK = [
 	"Sign-in is with Google, and payments are handled by Dodo Payments",
 ]
 
+/** The product overview film, rendered from motion/ (motion/out/rwaft-overview-preview.mp4). */
+export const TRAILER = {
+	src: "/video/rwaft-overview-preview.mp4",
+	poster: "/video/rwaft-overview-poster.jpg",
+	duration: "PT29S",
+	uploaded: "2026-10-22",
+	title: "rwaft in 29 seconds",
+	description:
+		"Describe an app in plain words, watch the real build fix its own error, share the live link, then change it by asking. Or deploy a React repo instead.",
+}
+
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`
 
 const titleCase = (id: string) => id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, " ")
@@ -140,6 +152,17 @@ function NextStep({ href, label }: { href: string; label: string }) {
 			<Link href="/" className="pill-btn pill-btn--ink">Start building</Link>
 			<Link href={href} className="text-btn">{label}</Link>
 		</div>
+	)
+}
+
+export function Trailer() {
+	return (
+		<section className="land" aria-labelledby="trailer-title">
+			<h1 id="trailer-title" className="land-title">{TRAILER.title}</h1>
+			<p className="land-lead">{TRAILER.description}</p>
+			<TrailerPlayer src={TRAILER.src} poster={TRAILER.poster} label={`${TRAILER.title}: the rwaft trailer`} />
+			<NextStep href="/how-it-works" label="How it works" />
+		</section>
 	)
 }
 
