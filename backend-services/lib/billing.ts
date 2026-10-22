@@ -20,9 +20,16 @@ import type { Account } from "./accounts.ts"
 const DODO_API_KEY = process.env.DODO_PAYMENTS_API_KEY?.trim() || ""
 const DODO_WEBHOOK_KEY = process.env.DODO_PAYMENTS_WEBHOOK_KEY?.trim() || ""
 /** Test mode unless explicitly live, so a missing variable can never charge real cards. */
-const DODO_BASE_URL = process.env.DODO_PAYMENTS_ENVIRONMENT === "live_mode"
+const DODO_MODE = process.env.DODO_PAYMENTS_ENVIRONMENT?.trim() === "live_mode" ? "live_mode" : "test_mode"
+const DODO_BASE_URL = DODO_MODE === "live_mode"
 	? "https://live.dodopayments.com"
 	: "https://test.dodopayments.com"
+/**
+ * Real ids only, so the `whsec_…` and `pdt_…` placeholders from the docs
+ * can't switch purchases on and send buyers to a checkout that fails.
+ */
+const WEBHOOK_KEY_PATTERN = /^whsec_[A-Za-z0-9+/]+=*$/
+const PRODUCT_ID_PATTERN = /^pdt_[A-Za-z0-9_-]+$/
 /** Display only: the charged price is the Dodo product's own. */
 const BILLING_CURRENCY = (process.env.BILLING_CURRENCY || "usd").toLowerCase()
 /** The Standard Webhooks replay window Dodo's own libraries use. */
@@ -58,18 +65,24 @@ const parseProducts = (raw: string | undefined): Map<string, string> => {
 	const products = new Map<string, string>()
 	for (const entry of (raw || "").split(",")) {
 		const [packId, productId] = entry.trim().split(":").map((part) => part?.trim() || "")
-		if (packId && productId) products.set(packId, productId)
+		if (!packId || !productId) continue
+		if (PRODUCT_ID_PATTERN.test(productId)) products.set(packId, productId)
+		else console.warn(`[billing] Ignoring DODO_PRODUCTS entry for ${packId}: "${productId}" is not a Dodo product id (pdt_...)`)
 	}
 	return products
 }
 
 const ALL_PACKS = parsePacks(process.env.TOKEN_PACKS)
 const PRODUCT_IDS = parseProducts(process.env.DODO_PRODUCTS)
+const hasWebhookKey = WEBHOOK_KEY_PATTERN.test(DODO_WEBHOOK_KEY)
 
 export const isCheckoutConfigured = Boolean(
-	DODO_API_KEY && DODO_WEBHOOK_KEY && ALL_PACKS.some((pack) => PRODUCT_IDS.has(pack.id))
+	DODO_API_KEY && hasWebhookKey && ALL_PACKS.some((pack) => PRODUCT_IDS.has(pack.id))
 )
 
+if (DODO_WEBHOOK_KEY && !hasWebhookKey) {
+	console.warn("[billing] DODO_PAYMENTS_WEBHOOK_KEY is not a whsec_... signing secret; copy it from the webhook in the Dodo dashboard")
+}
 if (DODO_API_KEY && !isCheckoutConfigured) {
 	console.warn("[billing] DODO_PAYMENTS_API_KEY is set but DODO_PAYMENTS_WEBHOOK_KEY or DODO_PRODUCTS is missing; credit purchases stay off")
 }
@@ -118,6 +131,48 @@ export async function createCheckoutSession(
 		throw new Error(`Dodo returned ${response.status}: ${body.message ?? "no checkout URL"}`)
 	}
 	return body.checkout_url
+}
+
+/**
+ * Looks up every pack's product once at startup and logs what would make a
+ * purchase fail, or charge a different price than the site shows. Advisory
+ * only: Dodo being unreachable for a moment must not turn purchases off.
+ */
+export async function verifyDodoSetup(): Promise<void> {
+	if (!isCheckoutConfigured) return
+	let problems = 0
+	for (const pack of TOKEN_PACKS) {
+		const productId = PRODUCT_IDS.get(pack.id) || ""
+		let response: DodoResponse
+		try {
+			response = await fetch(`${DODO_BASE_URL}/products/${productId}`, {
+				headers: { Authorization: `Bearer ${DODO_API_KEY}` }
+			}) as unknown as DodoResponse
+		} catch (error) {
+			console.warn(`[billing] Could not reach Dodo to check the setup: ${(error as Error).message}`)
+			return
+		}
+		if (response.status === 401) {
+			console.error(`[billing] Dodo rejected DODO_PAYMENTS_API_KEY in ${DODO_MODE}. A live key needs DODO_PAYMENTS_ENVIRONMENT=live_mode, a test key test_mode. Every checkout will fail.`)
+			return
+		}
+		if (!response.ok) {
+			console.error(`[billing] Dodo product ${productId} for pack ${pack.id} was not found in ${DODO_MODE} (HTTP ${response.status}); buying that pack will fail`)
+			problems++
+			continue
+		}
+		const { price } = await response.json().catch(() => ({})) as {
+			price?: { type?: string; price?: number; currency?: string } | null
+		}
+		if (price?.type !== "one_time_price") {
+			console.error(`[billing] Dodo product ${productId} for pack ${pack.id} is not a one-time product; packs must be single payments`)
+			problems++
+		} else if (price.price !== pack.amount || price.currency?.toLowerCase() !== CURRENCY) {
+			console.error(`[billing] Dodo product ${productId} charges ${price.price} ${price.currency} but pack ${pack.id} is shown as ${pack.amount} ${CURRENCY}; make them match`)
+			problems++
+		}
+	}
+	if (problems === 0) console.log(`[billing] Dodo ${DODO_MODE}: ${TOKEN_PACKS.length} pack(s) checked, prices match`)
 }
 
 /**

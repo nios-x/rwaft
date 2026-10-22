@@ -37,6 +37,7 @@ import {
 	createCheckoutSession,
 	fulfilPayment,
 	isCheckoutConfigured,
+	verifyDodoSetup,
 	verifyDodoSignature,
 	type DodoPayment
 } from "./lib/billing.ts"
@@ -71,7 +72,7 @@ const CLONE_TIMEOUT_MS = Number(process.env.CLONE_TIMEOUT_MS || 120_000)
 /**
  * Per-hour build caps. In free mode they are the only meter, so they stay
  * tight. With billing on, credits are the meter and the cap only stops bursts:
- * at the old 3 an hour, a new account could not spend its own 5 free credits.
+ * a new account must be able to spend its free credits in one sitting.
  */
 const PROMPT_RATE_LIMIT = Number(process.env.PROMPT_RATE_LIMIT || (BILLING_ENABLED ? 20 : 3))
 const DEPLOY_RATE_LIMIT = Number(process.env.DEPLOY_RATE_LIMIT || (BILLING_ENABLED ? 20 : 5))
@@ -1166,6 +1167,7 @@ process.on("unhandledRejection", (reason) => console.error("[process] Unhandled 
 const server = app.listen(PORT, HOST, () => {
 	console.log(`[backend] Listening on ${HOST}:${PORT}`)
 	console.log(`[backend] Deployment URLs: ${USE_WILDCARD_SUBDOMAINS ? `https://<id>.${DEPLOYMENT_DOMAIN}/` : "<public-origin>/<id>/"}`)
+	void verifyDodoSetup()
 })
 // SSE streams must not be cut off by the default request timeout.
 server.requestTimeout = 0

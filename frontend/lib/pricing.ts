@@ -18,7 +18,7 @@ export type Pricing = Pick<AuthConfig, "billing" | "signupTokens" | "costs" | "c
  */
 const DEFAULT_PRICING: Pricing = {
 	billing: true,
-	signupTokens: 5,
+	signupTokens: 2,
 	costs: { prompt: 1, deploy: 1 },
 	currency: "usd",
 	payments: null,

@@ -1,0 +1,24 @@
+{
+  "name": "rwaft-motion",
+  "version": "1.0.0",
+  "private": true,
+  "description": "rwaft films (product overview and launch loop): deterministic, code-driven motion compositions and their frame renderer.",
+  "type": "module",
+  "scripts": {
+    "preview": "node scripts/serve.mjs",
+    "overview:stills": "node scripts/stills.mjs --film overview",
+    "overview:preview": "node scripts/render.mjs --film overview --preset preview",
+    "overview:render": "node scripts/render.mjs --film overview --preset final",
+    "stills": "node scripts/stills.mjs",
+    "render:preview": "node scripts/render.mjs --preset preview",
+    "render": "node scripts/render.mjs --preset final",
+    "sfx": "node scripts/sfx.mjs"
+  },
+  "devDependencies": {
+    "@fontsource-variable/bricolage-grotesque": "5.3.0",
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/geist-mono": "5.3.0",
+    "@fontsource/instrument-serif": "5.3.0",
+    "playwright-core": "1.64.1"
+  }
+}

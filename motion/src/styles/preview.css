@@ -1,0 +1,283 @@
+/* Preview page chrome and the debug HUD. None of it appears in renders
+   unless ?debug=1 asks for the HUD. */
+
+html.render,
+html.render body {
+	overflow: hidden;
+}
+
+html.render .frame {
+	position: static;
+}
+
+html.render .transport {
+	display: none;
+}
+
+html.render .stage {
+	transform: none !important;
+}
+
+html.preview body {
+	display: grid;
+	grid-template-rows: 1fr auto;
+	height: 100vh;
+	background: #0b0b0d;
+	font-family: "Geist", system-ui, sans-serif;
+	color: #d4d4d8;
+}
+
+html.preview .frame {
+	position: relative;
+	overflow: hidden;
+	min-height: 0;
+}
+
+html.preview .stage {
+	position: absolute;
+	left: 0;
+	top: 0;
+	transform-origin: 0 0;
+	box-shadow: 0 0 0 1px #222228;
+}
+
+/* ── Transport ─────────────────────────────────────────────────────────── */
+
+.transport {
+	padding: 10px 16px 14px;
+	border-top: 1px solid #1d1d22;
+	background: #0e0e11;
+	font-size: 12.5px;
+}
+
+.ctl-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+
+.ctl-row button,
+.ctl-row select,
+.ctl-row input[type="text"] {
+	height: 28px;
+	padding: 0 10px;
+	border: 1px solid #2a2a31;
+	border-radius: 8px;
+	background: #16161a;
+	color: #e4e4e7;
+	font: inherit;
+}
+
+.ctl-row button {
+	cursor: pointer;
+}
+
+.ctl-row button[data-a="play"] {
+	min-width: 64px;
+	background: #fafafa;
+	color: #0a0a0b;
+	border-color: #fafafa;
+	font-weight: 600;
+}
+
+.ctl-row label {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: #a1a1aa;
+}
+
+.ctl-time {
+	font-variant-numeric: tabular-nums;
+	color: #a1a1aa;
+}
+
+.ctl-time b {
+	color: #fafafa;
+	font-weight: 600;
+}
+
+.ctl-scrub {
+	position: relative;
+	height: 54px;
+	border-radius: 8px;
+	background: #131317;
+	box-shadow: inset 0 0 0 1px #222228;
+	cursor: ew-resize;
+	user-select: none;
+	touch-action: none;
+}
+
+.ctl-scenes,
+.ctl-ticks,
+.ctl-cues {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+}
+
+.ctl-scene {
+	position: absolute;
+	top: 0;
+	height: 18px;
+	padding: 3px 6px;
+	overflow: hidden;
+	font-size: 10.5px;
+	color: #a1a1aa;
+	white-space: nowrap;
+	border-right: 1px solid #222228;
+	background: rgba(139, 114, 255, 0.08);
+}
+
+.ctl-scene[data-alt="1"] {
+	background: rgba(139, 114, 255, 0.14);
+}
+
+.ctl-tick {
+	position: absolute;
+	top: 18px;
+	bottom: 0;
+	width: 1px;
+	background: #26262c;
+	font-size: 10px;
+	color: #71717a;
+	text-indent: 4px;
+	line-height: 14px;
+}
+
+.ctl-tick[data-down="1"] {
+	background: #3f3f46;
+}
+
+.ctl-cue {
+	position: absolute;
+	bottom: 6px;
+	width: 5px;
+	height: 5px;
+	margin-left: -2.5px;
+	border-radius: 999px;
+	background: #8b72ff;
+}
+
+.ctl-cue[data-kind="click"] {
+	background: #fafafa;
+}
+
+.ctl-cue[data-kind="success"] {
+	background: #22c55e;
+}
+
+.ctl-head {
+	position: absolute;
+	top: -3px;
+	bottom: -3px;
+	width: 2px;
+	margin-left: -1px;
+	border-radius: 2px;
+	background: #f97316;
+	pointer-events: none;
+}
+
+/* ── HUD (inside the stage, screen space) ──────────────────────────────── */
+
+.hud {
+	position: absolute;
+	inset: 0;
+	z-index: 100;
+	pointer-events: none;
+	font-family: "Geist Mono", ui-monospace, monospace;
+	font-size: 17px;
+	color: #e4e4e7;
+}
+
+.hud * {
+	position: static;
+}
+
+.hud-panel {
+	position: absolute;
+	left: 24px;
+	top: 24px;
+	min-width: 380px;
+	padding: 14px 16px;
+	border-radius: 12px;
+	background: rgba(10, 10, 12, 0.82);
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+	line-height: 1.6;
+}
+
+.hud-row {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+}
+
+.hud-row b {
+	color: #fafafa;
+}
+
+.hud-beat {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	border-radius: 999px;
+	background: #8b72ff;
+}
+
+.hud-beat[data-down="1"] {
+	background: #f97316;
+}
+
+.hud-label {
+	margin: 4px 0 8px;
+	color: #b9a9ff;
+	font-family: "Geist", sans-serif;
+}
+
+.hud-grid {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 0 14px;
+	color: #8b8b95;
+}
+
+.hud-grid b {
+	color: #e4e4e7;
+	font-weight: 400;
+}
+
+.hud-guides {
+	position: absolute;
+	inset: 0;
+}
+
+.hud-guides > div {
+	position: absolute;
+}
+
+.hud-safe {
+	inset: 5%;
+	border: 1px dashed rgba(255, 255, 255, 0.18);
+}
+
+.hud-cross-h {
+	left: 0;
+	right: 0;
+	top: 50%;
+	height: 1px;
+	background: rgba(255, 255, 255, 0.12);
+}
+
+.hud-cross-v {
+	top: 0;
+	bottom: 0;
+	left: 50%;
+	width: 1px;
+	background: rgba(255, 255, 255, 0.12);
+}
+
+.hud-shell {
+	border: 1px solid rgba(249, 115, 22, 0.8);
+}

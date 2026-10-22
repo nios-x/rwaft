@@ -24,7 +24,7 @@ export const TOKEN_COSTS = {
 	prompt: Math.max(0, Number(process.env.PROMPT_TOKEN_COST ?? 1))
 }
 /** Granted once, when an account is first created. */
-export const SIGNUP_TOKENS = Math.max(0, Number(process.env.SIGNUP_TOKENS ?? 5))
+export const SIGNUP_TOKENS = Math.max(0, Number(process.env.SIGNUP_TOKENS ?? 2))
 
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 30 * 24 * 60 * 60)
 /** How long a refund marker is kept; longer than any job can stay in the queue. */

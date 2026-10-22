@@ -5,6 +5,7 @@ export const INFO_PAGES = [
 	{ href: "/how-it-works", label: "How it works" },
 	{ href: "/pricing", label: "Pricing" },
 	{ href: "/faq", label: "FAQ" },
+	{ href: "/about", label: "About" },
 ] as const
 
 export type InfoPath = (typeof INFO_PAGES)[number]["href"]

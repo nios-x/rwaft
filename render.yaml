@@ -57,7 +57,7 @@ services:
       - key: CLOUDINARY_API_SECRET
         sync: false
 
-      # Metered mode: Google sign-in required, 5 free credits, 1 per message.
+      # Metered mode: Google sign-in required, 2 free credits, 1 per message.
       # Set GOOGLE_CLIENT_ID first: with PROD=true and no client ID, nobody can
       # sign in, so nobody can build. Blueprint values only apply when the
       # blueprint is synced; an existing service keeps its dashboard value.
@@ -66,10 +66,10 @@ services:
         value: "true"
       - key: GOOGLE_CLIENT_ID
         sync: false
-      # 5 free credits on sign-up, 1 per chat message: 5 free chats. A repo
+      # 2 free credits on sign-up, 1 per chat message: 2 free chats. A repo
       # deploy also costs 1. Failed builds are refunded automatically.
       - key: SIGNUP_TOKENS
-        value: "5"
+        value: "2"
       - key: PROMPT_TOKEN_COST
         value: "1"
       - key: DEPLOY_TOKEN_COST

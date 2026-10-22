@@ -1,9 +1,10 @@
 import Link from "next/link"
 import { chatsFor, formatPrice, type Pricing } from "../../lib/pricing"
+import { CONTACT_LABEL, CONTACT_URL } from "../../lib/site"
 import { ChevronRight } from "./Icons"
 
 /**
- * The content of /how-it-works, /pricing and /faq.
+ * The content of /how-it-works, /pricing, /faq and /about.
  *
  * Server components, rendered into the first HTML response, so search engines
  * (and anyone without JavaScript) read what rwaft is and what it costs. Every
@@ -59,6 +60,30 @@ const OUTPUT = [
 		title: "Changes by chat",
 		body: "Send a follow-up like “make the header darker” or “add a contact page”, and rwaft edits the app and publishes the new version.",
 	},
+]
+
+/** The product principles from PRODUCT.md, in the visitor's words. */
+const PRINCIPLES = [
+	{
+		title: "Show the real work",
+		body: "You see every step of your build as it happens: the plan, the installs, the build output and the fixes rwaft makes when something breaks. Never a spinner standing in for the work.",
+	},
+	{
+		title: "Plain words first",
+		body: "You shouldn't need to know what a bundler is to make a website. Each step is explained in everyday language, with the raw build log one tap away if you want it.",
+	},
+	{
+		title: "Honest about cost and waiting",
+		body: "What a build costs, what you have left and your place in line are on screen before and during every build. If a build fails, its credits come back automatically.",
+	},
+]
+
+/** The services rwaft runs on. Keep in step with the privacy policy's list of providers. */
+const STACK = [
+	"Apps are React and TypeScript on Vite, styled with Tailwind CSS",
+	"The AI comes from Google Gemini and OpenRouter",
+	"Builds and hosting run on Render; this website runs on Vercel",
+	"Sign-in is with Google, and payments are handled by Dodo Payments",
 ]
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`
@@ -233,6 +258,46 @@ export function FaqList({ faq }: { faq: Faq[] }) {
 					</details>
 				))}
 			</div>
+			<NextStep href="/how-it-works" label="How it works" />
+		</section>
+	)
+}
+
+export function About() {
+	return (
+		<section className="land" aria-labelledby="about-title">
+			<h1 id="about-title" className="land-title">About rwaft</h1>
+			<p className="land-lead">
+				rwaft is an AI website builder. Describe an app in plain words and get a live link, and watch the real build
+				happen on the way there.
+			</p>
+
+			<h2 className="land-subtitle">Why build in the open</h2>
+			<p className="land-lead">
+				Most prompt-to-app tools show a spinner and hand you a result you have to take on trust. rwaft streams the
+				actual work instead, from the AI planning your pages to the moment the site goes live. Watching it is how you
+				know what you got, and why.
+			</p>
+
+			<h2 className="land-subtitle">What rwaft promises</h2>
+			<ul className="land-grid land-output">
+				{PRINCIPLES.map((item) => (
+					<li key={item.title} className="land-card">
+						<h3>{item.title}</h3>
+						<p>{item.body}</p>
+					</li>
+				))}
+			</ul>
+
+			<h2 className="land-subtitle">What it runs on</h2>
+			<ul className="land-list">
+				{STACK.map((item) => <li key={item}>{item}</li>)}
+			</ul>
+			<p className="land-more">
+				rwaft is made by{" "}
+				<a href={CONTACT_URL} target="_blank" rel="noreferrer">{CONTACT_LABEL}</a>
+				. Questions, bug reports and ideas are welcome there, and the <Link href="/faq">FAQ</Link> covers the common ones.
+			</p>
 			<NextStep href="/how-it-works" label="How it works" />
 		</section>
 	)

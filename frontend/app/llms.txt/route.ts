@@ -26,6 +26,7 @@ export async function GET() {
 		`- [How it works](${SITE_URL}/how-it-works): the three steps, what you can build and what you get`,
 		`- [Pricing](${SITE_URL}/pricing): free credits, what a build costs, refunds for failed builds`,
 		`- [FAQ](${SITE_URL}/faq): common questions`,
+		`- [About](${SITE_URL}/about): why rwaft shows the real build, its principles and what it runs on`,
 		"",
 		"## FAQ",
 		"",

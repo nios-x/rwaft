@@ -392,7 +392,7 @@ files are git-ignored and are excluded from Docker images.
 | `PROD` | `bool` | No | `true` meters builds: Google sign-in required, each build costs tokens, failed builds are refunded. `false` keeps every build free and anonymous use working | `false` |
 | `GOOGLE_CLIENT_ID` | `string` | **Yes** (`PROD=true`) | OAuth Web client ID. Add each frontend origin under *Authorized JavaScript origins*. Sign-in is hidden without it | — |
 | `DEPLOY_TOKEN_COST` / `PROMPT_TOKEN_COST` | `number` | No | Credits charged per repo deploy / prompt build (one message) | `1` / `1` |
-| `SIGNUP_TOKENS` | `number` | No | Credits granted once when an account is created | `5` |
+| `SIGNUP_TOKENS` | `number` | No | Credits granted once when an account is created | `2` |
 | `DODO_PAYMENTS_API_KEY` / `DODO_PAYMENTS_WEBHOOK_KEY` | `string` | No | Enable **Buy credits** (with `DODO_PRODUCTS`). Webhook endpoint: `<PUBLIC_BASE_URL>/billing/webhook` (`payment.succeeded`) | — |
 | `DODO_PAYMENTS_ENVIRONMENT` | `string` | No | `test_mode` or `live_mode`; must match the key's prefix | `test_mode` |
 | `DODO_PRODUCTS` | `string` | No | Pack id → Dodo one-time product id, e.g. `starter:pdt_…,builder:pdt_…`. Packs without one are hidden | — |
@@ -423,7 +423,7 @@ files are git-ignored and are excluded from Docker images.
 | :--- | :---: | :---: | :--- | :--- |
 | `NEXT_PUBLIC_BACKEND_URL` | `string` | **Yes** (prod) | Origin of the API. Inlined at build time, so it must be set **before** the production build runs. There is no hardcoded production fallback. The home page also reads `/auth/config` from it (hourly) to render pricing for search engines | dev `http://localhost:3000` |
 | `NEXT_PUBLIC_SITE_URL` | `string` | No | Canonical origin for canonical links, Open Graph, sitemap and robots | `https://rwaft.live` |
-| `NEXT_PUBLIC_CONTACT_EMAIL` | `string` | No | Privacy and support inbox shown on `/privacy` and `/terms` | GitHub issues link |
+| `NEXT_PUBLIC_CONTACT_X` | `string` | No | X handle for privacy and support requests, shown in the footer and on `/privacy` and `/terms` | `soumya_7708` |
 | `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` / `NEXT_PUBLIC_BING_SITE_VERIFICATION` | `string` | No | Search Console / Bing Webmaster ownership tags | — |
 
 ---
@@ -646,12 +646,12 @@ would request its bundles from `/assets/...` and render a blank page.
       scopes need no Google verification
 - [ ] **Legal pages** reviewed: `/privacy` and `/terms` are a starting point
       written from what the code does, not legal advice; set
-      `NEXT_PUBLIC_CONTACT_EMAIL` so they name a real inbox
+      `NEXT_PUBLIC_CONTACT_X` so they name an account whose DMs are open
 - [ ] **Search:** submit `https://rwaft.live/sitemap.xml` in Google Search
       Console and Bing Webmaster Tools (verify via DNS or the
       `NEXT_PUBLIC_*_SITE_VERIFICATION` variables)
 - [ ] **Credits:** `PROD=true` on the API *after* sign-in works (with no
-      client ID nobody can sign in, so nobody can build); defaults are 5 free
+      client ID nobody can sign in, so nobody can build); defaults are 2 free
       credits and 1 per message (`SIGNUP_TOKENS`, `PROMPT_TOKEN_COST`)
 - [ ] **Recharge:** one Dodo one-time product per pack (same price as
       `TOKEN_PACKS`), `DODO_PAYMENTS_API_KEY` + `DODO_PAYMENTS_WEBHOOK_KEY` +
