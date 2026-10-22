@@ -25,7 +25,7 @@ export default async function PricingPage() {
 	const pricing = await getPricing()
 	const currency = pricing.currency.toUpperCase()
 
-	// Mirrors the visible plans exactly; no ratings or usage claims.
+	// The plans that can be bought right now; no ratings or usage claims.
 	const jsonLd = {
 		"@context": "https://schema.org",
 		"@type": "WebApplication",

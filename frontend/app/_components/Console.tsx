@@ -26,9 +26,11 @@ interface ConsoleProps {
    * none of it ships as client JavaScript. Shown on the home screen only.
    */
   footer?: ReactNode
+  /** Server-rendered like the footer, and shown below the home screen's builds. */
+  features?: ReactNode
 }
 
-export function Console({ footer }: ConsoleProps) {
+export function Console({ footer, features }: ConsoleProps) {
   const [theme, setTheme] = useTheme()
   const [mode, setMode] = useState<BuildKind>("prompt")
   const [promptText, setPromptText] = useState("")
@@ -270,7 +272,7 @@ export function Console({ footer }: ConsoleProps) {
         />
       ) : (
         <>
-          <Home prompt={{ ...promptBase, inputRef: heroInput }} builds={builds} onOpen={open} />
+          <Home prompt={{ ...promptBase, inputRef: heroInput }} builds={builds} onOpen={open}>{features}</Home>
           {footer}
         </>
       )}

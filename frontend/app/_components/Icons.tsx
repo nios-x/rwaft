@@ -31,13 +31,19 @@ export const CheckIcon = icon(<path d="m3.6 8.4 2.8 2.8 6-6.4" />)
 export const CrossIcon = icon(<path d="M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2" />)
 export const CopyIcon = icon(<><rect x="5.4" y="5.4" width="7.4" height="7.4" rx="1.4" /><path d="M10.4 5.4V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v5.4a1 1 0 0 0 1 1h1.4" /></>)
 export const RefreshIcon = icon(<><path d="M12.8 7.4A4.8 4.8 0 0 0 4 5.2M3.2 8.6A4.8 4.8 0 0 0 12 10.8" /><path d="M4 2.8v2.6h2.6M12 13.2v-2.6H9.4" /></>)
-export const MailIcon = icon(<><rect x="2.4" y="3.6" width="11.2" height="8.8" rx="1.6" /><path d="m2.8 4.6 5.2 4 5.2-4" /></>)
 export const SignOutIcon = icon(<><path d="M6.4 13.2H4a1 1 0 0 1-1-1V3.8a1 1 0 0 1 1-1h2.4" /><path d="m10 5 3 3-3 3M13 8H6.4" /></>)
 
 /** GitHub's own mark is a filled shape, so it opts out of the stroke family. */
 export const GitHubIcon = (props: IconProps) => (
 	<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" {...props}>
 		<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+	</svg>
+)
+
+/** X's mark, filled like GitHub's. */
+export const XIcon = (props: IconProps) => (
+	<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+		<path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z" />
 	</svg>
 )
 

@@ -98,7 +98,7 @@ export default function PrivacyPage() {
 			<h2>Your choices</h2>
 			<p>
 				You can sign out at any time. To get a copy of your data, correct it, or delete your account and the sites
-				you&apos;ve built, contact us through <a href={CONTACT_URL}>{CONTACT_LABEL}</a>. Deleting your account also
+				you&apos;ve built, message us on X at <a href={CONTACT_URL}>{CONTACT_LABEL}</a>. Deleting your account also
 				removes any unused credits.
 			</p>
 
@@ -113,7 +113,7 @@ export default function PrivacyPage() {
 
 			<h2>Contact</h2>
 			<p>
-				Questions about this policy or your data: <a href={CONTACT_URL}>{CONTACT_LABEL}</a>.
+				Questions about this policy or your data: message us on X at <a href={CONTACT_URL}>{CONTACT_LABEL}</a>.
 			</p>
 		</LegalPage>
 	)

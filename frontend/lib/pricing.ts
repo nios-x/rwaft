@@ -3,10 +3,11 @@ import type { AuthConfig, TokenPack } from "./useAccount"
 
 /**
  * Pricing as the API is actually configured, for the server-rendered home
- * sections and their structured data. Server only: the console itself reads
- * the same values live through useAccount.
+ * sections and their structured data, plus whether pushing to GitHub is set
+ * up, so the home page only offers it once it works. Server only: the
+ * console itself reads the same values live through useAccount.
  */
-export type Pricing = Pick<AuthConfig, "billing" | "signupTokens" | "costs" | "currency" | "packs" | "payments">
+export type Pricing = Pick<AuthConfig, "billing" | "signupTokens" | "costs" | "currency" | "packs" | "payments" | "github">
 
 /**
  * The API's own defaults (backend-services/lib/accounts.ts and billing.ts).
@@ -53,6 +54,7 @@ export async function getPricing(): Promise<Pricing> {
 			currency: typeof data.currency === "string" ? data.currency : DEFAULT_PRICING.currency,
 			packs: Array.isArray(data.packs) ? data.packs.filter(isPack) : [],
 			payments: data.payments === "dodo" ? "dodo" : null,
+			github: data.github === true,
 		}
 	} catch {
 		return DEFAULT_PRICING

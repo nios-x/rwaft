@@ -110,7 +110,7 @@ export default function TermsPage() {
 
 			<h2>12. Contact</h2>
 			<p>
-				Questions about these terms: <a href={CONTACT_URL}>{CONTACT_LABEL}</a>. How we handle your data is described in
+				Questions about these terms: message us on X at <a href={CONTACT_URL}>{CONTACT_LABEL}</a>. How we handle your data is described in
 				the <Link href="/privacy">privacy policy</Link>.
 			</p>
 		</LegalPage>

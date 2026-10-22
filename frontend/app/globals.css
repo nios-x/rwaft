@@ -40,6 +40,7 @@
 
   --shadow-box: 0 1px 2px rgba(10, 10, 20, 0.04), 0 16px 40px -18px rgba(30, 20, 70, 0.18);
   --shadow-pop: 0 1px 3px rgba(10, 10, 20, 0.06), 0 20px 44px -16px rgba(10, 10, 20, 0.25);
+  --shadow-glow: 0 0 0 1px var(--line), inset 0 1px 0 #ffffff, 0 18px 40px -16px rgba(30, 20, 70, 0.3);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -74,6 +75,7 @@
 
   --shadow-box: 0 0 0 1px var(--line), 0 20px 50px -24px rgba(0, 0, 0, 0.8);
   --shadow-pop: 0 0 0 1px var(--line-strong), 0 20px 44px -16px rgba(0, 0, 0, 0.75);
+  --shadow-glow: 0 0 0 1px var(--line-strong), inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 48px -8px rgba(255, 255, 255, 0.16);
 }
 
 * {
@@ -876,6 +878,335 @@ form.prompt {
   color: var(--text-3);
 }
 
+/* ── Home feature cards ─────────────────────────────────────────────────── */
+
+/* One bento: the statement tall on the left, repo and stack stacked in the
+   middle, the phone tall on the right where its shape fits. */
+.features {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(260px, auto));
+  grid-template-areas:
+    "lead repo phone"
+    "lead stack phone";
+  gap: 12px;
+  width: min(1040px, 100%);
+  margin-top: 12vh;
+}
+
+.feature--lead { grid-area: lead; }
+.feature--repo { grid-area: repo; }
+.feature--stack { grid-area: stack; }
+.feature--phone { grid-area: phone; }
+
+.feature {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+}
+
+.feature-copy {
+  padding: 22px 24px 0;
+}
+
+.feature h3 {
+  margin: 0;
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.feature-copy p,
+.feature--lead p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-2);
+}
+
+.feature--lead {
+  justify-content: center;
+  padding: 32px;
+}
+
+.feature--lead h2 {
+  margin: 0;
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -0.045em;
+}
+
+.feature--lead p {
+  margin-top: 18px;
+  font-size: 15px;
+}
+
+/* A set height, so what overflows (the phone, the logo rows) is cropped by
+   the card instead of growing it; flex-grow still fills a taller row. */
+.feature-visual {
+  position: relative;
+  display: flex;
+  flex: 1 0 auto;
+  height: 140px;
+  overflow: hidden;
+}
+
+/* Repo: the mark and GitHub, with something passing between them. */
+.sync {
+  align-items: center;
+  justify-content: center;
+}
+
+.sync-disc {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: var(--shadow-glow);
+}
+
+.sync-disc svg {
+  width: 32px;
+  height: 32px;
+}
+
+.sync-wire {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 1px;
+  background: repeating-linear-gradient(90deg, var(--line-strong) 0 4px, transparent 4px 8px);
+}
+
+.sync-wire i {
+  position: absolute;
+  top: -2.5px;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-2);
+  animation: sync-flow 2.4s ease-in-out infinite alternate;
+}
+
+@keyframes sync-flow {
+  to {
+    transform: translateX(38px);
+  }
+}
+
+/* Stack: rows of logos drifting in opposite directions, fading at the edges. */
+.stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding-top: 18px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 90% at 50% 30%, #000 35%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 90% at 50% 30%, #000 35%, transparent 100%);
+}
+
+.stack-row {
+  display: flex;
+  flex: none;
+  width: max-content;
+  animation: stack-drift 56s linear infinite;
+}
+
+.stack-row:nth-child(even) {
+  margin-left: -30px;
+  animation-direction: reverse;
+  animation-duration: 48s;
+}
+
+/* Fixed pitch (width + margin, no gap), so half the row is exactly one set. */
+.stack-item {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 46px;
+  height: 46px;
+  margin-right: 14px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.stack-item svg {
+  width: 20px;
+  height: 20px;
+}
+
+@keyframes stack-drift {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* Phone: the real chat, cropped by the card's bottom edge. */
+.phone-stage {
+  justify-content: center;
+  height: 300px;
+  padding-top: 22px;
+}
+
+.phone {
+  position: relative;
+  flex: none;
+  width: 260px;
+  height: 540px;
+  padding: 3px;
+  border-radius: 46px;
+  background: linear-gradient(150deg, #b9b9c0, #4b4b52 28%, #8d8d95 52%, #3c3c42 78%, #a3a3ab);
+}
+
+/* Action and volume buttons on the left, power on the right. */
+.phone::before,
+.phone::after {
+  content: "";
+  position: absolute;
+  width: 3px;
+}
+
+.phone::before {
+  top: 100px;
+  left: -2px;
+  height: 150px;
+  border-radius: 2px 0 0 2px;
+  background: linear-gradient(#6b6b72 0 24px, transparent 24px 42px, #6b6b72 42px 88px, transparent 88px 104px, #6b6b72 104px);
+}
+
+.phone::after {
+  top: 156px;
+  right: -2px;
+  height: 72px;
+  border-radius: 0 2px 2px 0;
+  background: #6b6b72;
+}
+
+.phone-screen {
+  height: 100%;
+  overflow: hidden;
+  border: 8px solid #050506;
+  border-radius: 43px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.phone-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 20px 0 26px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.phone-status svg {
+  width: 42px;
+  height: 11px;
+}
+
+.phone-island {
+  position: absolute;
+  top: 9px;
+  left: 50%;
+  width: 74px;
+  height: 22px;
+  border-radius: 999px;
+  background: #050506;
+  transform: translateX(-50%);
+}
+
+.phone-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.phone-bar .brand-mark {
+  width: 20px;
+  height: 20px;
+}
+
+.phone-brand {
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.phone-bar .status {
+  margin-left: auto;
+}
+
+.phone-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.phone-thread .msg {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.phone-thread .msg--you {
+  padding: 7px 11px;
+}
+
+.phone-thread .msg-link {
+  font-size: 11.5px;
+}
+
+/* Tablets and phones: one narrow column rather than stretched cards. */
+@media (max-width: 900px) {
+  .features {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas: "lead" "repo" "stack" "phone";
+    width: min(520px, 100%);
+  }
+  .feature--lead {
+    padding: 28px 24px;
+  }
+  .feature--lead h2 {
+    font-size: 34px;
+  }
+  .feature-visual {
+    height: 160px;
+  }
+  .phone-stage {
+    height: 320px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sync-wire i,
+  .stack-row {
+    animation: none;
+  }
+  .sync-wire i {
+    transform: translateX(19px);
+  }
+}
+
 /* The h1's small first line: says what rwaft is without a second loud line. */
 .hero-eyebrow {
   display: block;
@@ -1103,6 +1434,26 @@ a.brand {
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
 }
 
+.land-plan h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.land-plan-soon {
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  letter-spacing: 0;
+  color: var(--text-3);
+}
+
 .land-notes {
   display: grid;
   gap: 4px;
@@ -1163,49 +1514,14 @@ a.brand {
   line-height: 1.6;
 }
 
-/* ── Footer (home and standalone pages) ────────────────────────────────── */
+/* ── Footer (home and standalone pages): copyright and X handle, bottom right */
 
 .site-footer {
-  background: color-mix(in srgb, var(--bg) 86%, transparent);
-  backdrop-filter: blur(24px);
-}
-
-.site-footer-inner {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 12px 24px;
-  width: min(1040px, 100% - 40px);
-  margin: 0 auto;
-  padding: 20px 0;
-}
-
-.site-footer-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 18px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-size: 13px;
-}
-
-.site-footer-links a {
-  color: var(--text-2);
-  text-decoration: none;
-}
-
-.site-footer-links a:hover {
-  color: var(--text);
-  text-decoration: underline;
-}
-
-.site-footer-end {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 14px;
-  margin-left: auto;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px 20px;
 }
 
 .site-footer-copy {
@@ -1221,6 +1537,7 @@ a.brand {
   padding: 5px 11px 5px 9px;
   border: 1px solid var(--line);
   border-radius: 999px;
+  background: var(--surface);
   font-size: 12.5px;
   color: var(--text-2);
   text-decoration: none;
@@ -1229,18 +1546,13 @@ a.brand {
 
 .site-footer-contact:hover {
   color: var(--text);
-  border-color: var(--text-3);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-}
-
-.site-footer-contact:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: 2px;
+  border-color: var(--line-strong);
+  background: var(--surface-2);
 }
 
 .site-footer-contact-icon {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
 }
 
 /* ── Standalone pages: privacy, terms, 404 ─────────────────────────────── */
@@ -2269,9 +2581,6 @@ li[data-state="failed"] .steps-dot {
   }
   .land-title {
     font-size: 22px;
-  }
-  .site-footer-end {
-    margin-left: 0;
   }
   .legal h1 {
     font-size: 30px;

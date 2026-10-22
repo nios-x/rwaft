@@ -159,7 +159,9 @@ export function HowItWorks() {
 
 export function PricingPlans({ pricing }: { pricing: Pricing }) {
 	const freeChats = chatsFor(pricing.signupTokens, pricing)
-	const packs = pricing.payments ? pricing.packs : []
+	// Packs show before payments are connected, marked as not on sale yet.
+	const packs = pricing.packs
+	const onSale = Boolean(pricing.payments)
 
 	return (
 		<section className="land" aria-labelledby="pricing-title">
@@ -168,7 +170,7 @@ export function PricingPlans({ pricing }: { pricing: Pricing }) {
 				<>
 					<p className="land-lead">
 						{packs.length > 0
-							? "Start with free credits, then buy a credit pack when you need more. No subscription. Every chat is one complete build."
+							? `Start with free credits, then ${onSale ? "buy" : "top up with"} a credit pack when you need more. No subscription. Every chat is one complete build.`
 							: "Start with free credits. Every chat is one complete build."}
 					</p>
 					<ul className="land-grid land-plans">
@@ -184,7 +186,10 @@ export function PricingPlans({ pricing }: { pricing: Pricing }) {
 							const chats = chatsFor(pack.tokens, pricing)
 							return (
 								<li key={pack.id} className="land-card land-plan">
-									<h2>{titleCase(pack.id)}</h2>
+									<h2>
+										{titleCase(pack.id)}
+										{!onSale && <span className="land-plan-soon">Coming soon</span>}
+									</h2>
 									<p className="land-price">{formatPrice(pack.amount, pricing.currency)}</p>
 									<p>
 										<strong>{plural(pack.tokens, "credit")}</strong>
@@ -198,7 +203,7 @@ export function PricingPlans({ pricing }: { pricing: Pricing }) {
 						<li>A chat costs {plural(pricing.costs.prompt, "credit")}. Deploying a GitHub repository costs {plural(pricing.costs.deploy, "credit")}.</li>
 						<li>If a build fails, its credits are refunded automatically.</li>
 						<li>
-							{packs.length > 0
+							{packs.length > 0 && onSale
 								? "Buy credits any time from the credits menu once you're signed in. Payment is handled by Dodo Payments."
 								: "Paid credit packs aren't on sale yet."}
 						</li>
