@@ -244,15 +244,6 @@ export function Console({ footer, features }: ConsoleProps) {
         </p>
       )}
 
-      {auth.newAccount && auth.account && (
-        <p className="banner" data-tone="success" role="status">
-          {billing
-            ? `Welcome to rwaft. Your ${auth.account.tokens} free credits are ready: each chat uses ${cost}, and failed builds are refunded.`
-            : "Welcome to rwaft. You're signed in, and every build is free right now."}
-          <button type="button" className="text-btn" onClick={auth.dismissNewAccount}>Dismiss</button>
-        </p>
-      )}
-
       {build ? (
         <Workspace
           view={view}

@@ -72,9 +72,6 @@ export interface AccountState {
 	token: string | null
 	/** True until the stored session has been checked against the API. */
 	checking: boolean
-	/** True right after a sign-in that created the account, until dismissed. */
-	newAccount: boolean
-	dismissNewAccount: () => void
 	signIn: (credential: string) => Promise<void>
 	signOut: () => void
 	refresh: () => Promise<Account | null>
@@ -87,7 +84,6 @@ export function useAccount(): AccountState {
 	const [config, setConfig] = useState<AuthConfig | null>(null)
 	const [account, setAccount] = useState<Account | null>(null)
 	const [checkedToken, setCheckedToken] = useState<string | null>(null)
-	const [newAccount, setNewAccount] = useState(false)
 
 	// Without the config there is no sign-in button, so one failed request (an
 	// API restarting mid-deploy, a dropped connection) used to leave the page
@@ -154,15 +150,12 @@ export function useAccount(): AccountState {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ credential })
 		})
-		const data = await readApiJson<{ token?: string; account?: Account; created?: boolean; message?: string }>(response)
+		const data = await readApiJson<{ token?: string; account?: Account; message?: string }>(response)
 		if (!response.ok || !data.token || !data.account) throw new Error(data.message || "Sign-in failed")
 		writeToken(data.token)
 		setAccount(data.account)
 		setCheckedToken(data.token)
-		setNewAccount(data.created === true)
 	}, [])
-
-	const dismissNewAccount = useCallback(() => setNewAccount(false), [])
 
 	const signOut = useCallback(() => {
 		const current = readToken()
@@ -171,7 +164,6 @@ export function useAccount(): AccountState {
 		}
 		writeToken(null)
 		setAccount(null)
-		setNewAccount(false)
 		// Without this Google would sign the same account straight back in.
 		window.google?.accounts.id.disableAutoSelect()
 	}, [])
@@ -190,8 +182,6 @@ export function useAccount(): AccountState {
 		account: token ? account : null,
 		token,
 		checking: Boolean(token) && checkedToken !== token,
-		newAccount: Boolean(token) && newAccount,
-		dismissNewAccount,
 		signIn,
 		signOut,
 		refresh,

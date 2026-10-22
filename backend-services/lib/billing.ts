@@ -162,13 +162,17 @@ export async function verifyDodoSetup(): Promise<void> {
 			continue
 		}
 		const { price } = await response.json().catch(() => ({})) as {
-			price?: { type?: string; price?: number; currency?: string } | null
+			price?: { type?: string; price?: number; currency?: string; tax_inclusive?: boolean | null } | null
 		}
 		if (price?.type !== "one_time_price") {
 			console.error(`[billing] Dodo product ${productId} for pack ${pack.id} is not a one-time product; packs must be single payments`)
 			problems++
 		} else if (price.price !== pack.amount || price.currency?.toLowerCase() !== CURRENCY) {
 			console.error(`[billing] Dodo product ${productId} charges ${price.price} ${price.currency} but pack ${pack.id} is shown as ${pack.amount} ${CURRENCY}; make them match`)
+			problems++
+		} else if (!price.tax_inclusive) {
+			// The site's "Pay $5" must be what the buyer pays, wherever they are.
+			console.error(`[billing] Dodo product ${productId} adds tax on top of its price, so buyers of pack ${pack.id} pay more than the site shows; make it tax-inclusive`)
 			problems++
 		}
 	}
