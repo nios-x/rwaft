@@ -1776,69 +1776,14 @@ a.brand {
   font-size: 14px;
 }
 
-/* ── Footer (home and standalone pages): the site's links, then copyright and
-   X handle, bottom right */
+/* ── Footer (home and standalone pages): the X handle, bottom right ──────── */
 
 .site-footer {
-  display: grid;
-  gap: 28px;
-  padding: 40px 20px 20px;
-  border-top: 1px solid var(--line);
-}
-
-.site-footer-cols {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 28px 24px;
-  width: min(1040px, 100%);
-  margin: 0 auto;
-}
-
-.site-footer-head {
-  margin: 0 0 10px;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.site-footer-col ul {
-  display: grid;
-  gap: 7px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.site-footer-col a {
-  font-size: 13px;
-  color: var(--text-2);
-  text-decoration: none;
-  transition: color 150ms ease;
-}
-
-.site-footer-col a:hover {
-  color: var(--text);
-}
-
-.site-footer-base {
   display: flex;
-  align-items: center;
   justify-content: flex-end;
-  gap: 12px;
   width: min(1040px, 100%);
   margin: 0 auto;
-}
-
-@media (max-width: 640px) {
-  .site-footer-cols {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.site-footer-copy {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--text-3);
+  padding: 24px 20px 20px;
 }
 
 .site-footer-contact {
