@@ -103,6 +103,41 @@ export function Console({ footer, features }: ConsoleProps) {
     return () => clearInterval(timer)
   }, [refresh])
 
+  // The /make pages link here with #prompt=<text>, or #deploy for the repo
+  // box, so a visitor lands with the box ready. A fragment never reaches the
+  // server, so these links add no URLs for search engines to crawl.
+  useEffect(() => {
+    let frame = 0
+    const take = () => {
+      const hash = window.location.hash
+      if (hash !== "#deploy" && !hash.startsWith("#prompt=")) return
+      // After the next paint, so the box it fills is there to focus. The URL
+      // is only cleaned up in here: Strict Mode cancels the first run's frame.
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        window.history.replaceState(null, "", window.location.pathname + window.location.search)
+        if (hash === "#deploy") setMode("deploy")
+        else {
+          let text = ""
+          try { text = decodeURIComponent(hash.slice("#prompt=".length)) } catch { /* a mangled link just opens empty */ }
+          setMode("prompt")
+          // The API's default MAX_PROMPT_CHARS.
+          setPromptText(text.slice(0, 8_000))
+        }
+        // A new app, never a change to the build that happens to be open.
+        setOpenId(null)
+        setTimeout(() => heroInput.current?.focus(), 0)
+      })
+    }
+    take()
+    // Such a link opened while already on the console only changes the hash.
+    window.addEventListener("hashchange", take)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener("hashchange", take)
+    }
+  }, [])
+
   const signedIn = Boolean(auth.account)
   const cost = auth.config?.costs[mode] ?? 0
   const needsSignIn = billing && !signedIn

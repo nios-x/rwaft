@@ -33,14 +33,14 @@ const STEPS = [
 	},
 ]
 
-/** What people actually make with it; every one is a front-end site the pipeline can build. */
+/** What people actually make with it; every one is a front-end site the pipeline can build, with its own /make page. */
 const BUILDS = [
-	"Landing pages for a product, an app or a launch",
-	"Portfolios for photographers, designers and developers",
-	"Menus and pages for cafés, restaurants and small shops",
-	"Event, wedding and RSVP pages",
-	"Habit trackers, to-do lists and other single-page tools",
-	"Multi-page sites with their own navigation",
+	{ label: "Landing pages for a product, an app or a launch", href: "/make/landing-page" },
+	{ label: "Portfolios for photographers, designers and developers", href: "/make/portfolio-website" },
+	{ label: "Menus and pages for cafés, restaurants and small shops", href: "/make/restaurant-website" },
+	{ label: "Event, wedding and RSVP pages", href: "/make/wedding-website" },
+	{ label: "Habit trackers, to-do lists and other single-page tools", href: "/make/web-app" },
+	{ label: "Browser games with a full screen to themselves", href: "/make/browser-game" },
 ]
 
 /** Facts about the output, taken from the build pipeline; nothing here is aspirational. */
@@ -102,13 +102,24 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 
 const titleCase = (id: string) => id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, " ")
 
-/** One source for the visible answers and the FAQPage structured data, so the two can't drift. */
-export function faqFor(pricing: Pricing): Faq[] {
+/** What building costs, in one answer; the FAQ and every /make page ask it. */
+export function costFaq(pricing: Pricing): Faq {
 	const freeChats = chatsFor(pricing.signupTokens, pricing)
-	const costs = pricing.billing
+	const answer = pricing.billing
 		? `Sign up with Google and you get ${plural(pricing.signupTokens, "free credit")}${freeChats !== null ? `, which is ${plural(freeChats, "chat")}` : ""}. Each chat you send is one complete build and costs ${plural(pricing.costs.prompt, "credit")}; deploying a GitHub repository costs ${plural(pricing.costs.deploy, "credit")}. If a build fails, its credits are refunded automatically.${pricing.payments ? " When you run out you can buy more, with no subscription." : ""}`
 		: "Every build is free right now, and you don't need an account to start."
+	return { question: pricing.billing ? "How do credits work?" : "Is rwaft free?", answer }
+}
 
+/** The short version, beside a page's main button. */
+export function costLine(pricing: Pricing) {
+	return pricing.billing
+		? `${plural(pricing.signupTokens, "free credit")} when you sign up · ${plural(pricing.costs.prompt, "credit")} a chat`
+		: "Free right now, no account needed"
+}
+
+/** One source for the visible answers and the FAQPage structured data, so the two can't drift. */
+export function faqFor(pricing: Pricing): Faq[] {
 	return [
 		{
 			question: "What is rwaft?",
@@ -118,10 +129,7 @@ export function faqFor(pricing: Pricing): Faq[] {
 			question: "Do I need to know how to code?",
 			answer: "No. Describe what you want, who it's for and what it should do, and rwaft does the rest. Each step is explained in plain words, with the raw build log one tap away if you want it.",
 		},
-		{
-			question: pricing.billing ? "How do credits work?" : "Is rwaft free?",
-			answer: costs,
-		},
+		costFaq(pricing),
 		{
 			question: "What can I build?",
 			answer: "Websites and front-end web apps: landing pages, portfolios, menus, event pages, trackers and other single-page tools. rwaft generates a React app built with Vite and TypeScript.",
@@ -146,10 +154,10 @@ export function faqFor(pricing: Pricing): Faq[] {
 }
 
 /** Where each page sends the reader next, so the three read as one short tour. */
-function NextStep({ href, label }: { href: string; label: string }) {
+export function NextStep({ href, label, start = "/" }: { href: string; label: string; start?: string }) {
 	return (
 		<div className="land-next">
-			<Link href="/" className="pill-btn pill-btn--ink">Start building</Link>
+			<Link href={start} className="pill-btn pill-btn--ink">Start building</Link>
 			<Link href={href} className="text-btn">{label}</Link>
 		</div>
 	)
@@ -183,9 +191,10 @@ export function HowItWorks() {
 
 			<h2 className="land-subtitle">What you can build</h2>
 			<p className="land-lead">Websites and front-end web apps, described the way you&apos;d explain them to a friend.</p>
-			<ul className="land-list">
-				{BUILDS.map((item) => <li key={item}>{item}</li>)}
+			<ul className="land-list land-links">
+				{BUILDS.map((item) => <li key={item.href}><Link href={item.href}>{item.label}</Link></li>)}
 			</ul>
+			<p className="land-more"><Link href="/make">Everything you can build, with example prompts</Link></p>
 
 			<h2 className="land-subtitle">What you get</h2>
 			<ul className="land-grid land-output">
@@ -265,22 +274,30 @@ export function PricingPlans({ pricing }: { pricing: Pricing }) {
 	)
 }
 
+/** Questions that open in place. `level` is h3 where they sit under a page's own "Questions" heading. */
+export function FaqItems({ faq, level = "h2" }: { faq: Faq[]; level?: "h2" | "h3" }) {
+	const Heading = level
+	return (
+		<div className="land-faq">
+			{faq.map((item) => (
+				<details key={item.question} className="land-card land-q">
+					<summary>
+						<Heading>{item.question}</Heading>
+						<ChevronRight className="land-q-chev" />
+					</summary>
+					<p>{item.answer}</p>
+				</details>
+			))}
+		</div>
+	)
+}
+
 export function FaqList({ faq }: { faq: Faq[] }) {
 	return (
 		<section className="land" aria-labelledby="faq-title">
 			<h1 id="faq-title" className="land-title">Frequently asked questions</h1>
 			<p className="land-lead">What people ask about rwaft&apos;s AI app builder before their first build.</p>
-			<div className="land-faq">
-				{faq.map((item) => (
-					<details key={item.question} className="land-card land-q">
-						<summary>
-							<h2>{item.question}</h2>
-							<ChevronRight className="land-q-chev" />
-						</summary>
-						<p>{item.answer}</p>
-					</details>
-				))}
-			</div>
+			<FaqItems faq={faq} />
 			<NextStep href="/how-it-works" label="How it works" />
 		</section>
 	)

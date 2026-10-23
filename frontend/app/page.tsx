@@ -1,6 +1,8 @@
+import { appJsonLd } from "../lib/jsonld"
 import { getPricing } from "../lib/pricing"
 import { Console } from "./_components/Console"
 import { Features } from "./_components/Features"
+import { JsonLd } from "./_components/PageShell"
 import { SiteFooter } from "./_components/SiteFooter"
 
 /**
@@ -16,6 +18,12 @@ export const revalidate = 3600
  * /faq), linked from the header and the footer.
  */
 export default async function Page() {
-	const { github } = await getPricing()
-	return <Console features={<Features github={Boolean(github)} />} footer={<SiteFooter />} />
+	const pricing = await getPricing()
+	return (
+		<>
+			{/* The home page is what ranks for "rwaft" and "AI app builder", so it names the app as well as the site. */}
+			<JsonLd data={appJsonLd(pricing)} />
+			<Console features={<Features github={Boolean(pricing.github)} />} footer={<SiteFooter />} />
+		</>
+	)
 }

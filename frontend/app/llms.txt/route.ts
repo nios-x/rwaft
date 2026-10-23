@@ -1,5 +1,7 @@
+import { COMPARED_ON, RIVALS, TOPICS, rwaftCells } from "../../lib/compare"
 import { getPricing } from "../../lib/pricing"
 import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "../../lib/site"
+import { USE_CASES } from "../../lib/useCases"
 import { faqFor } from "../_components/InfoSections"
 
 /** Quotes live pricing through the FAQ; re-read hourly like the pages it summarizes. */
@@ -12,7 +14,9 @@ export const revalidate = 3600
  * disagree.
  */
 export async function GET() {
-	const faq = faqFor(await getPricing())
+	const pricing = await getPricing()
+	const faq = faqFor(pricing)
+	const ours = rwaftCells(pricing)
 	const body = [
 		`# ${SITE_NAME}`,
 		"",
@@ -28,6 +32,18 @@ export async function GET() {
 		`- [FAQ](${SITE_URL}/faq): common questions`,
 		`- [About](${SITE_URL}/about): why rwaft shows the real build, its principles and what it runs on`,
 		`- [Trailer](${SITE_URL}/trailer): a 29-second video of an app going from prompt to live link`,
+		`- [What you can build](${SITE_URL}/make): every kind of site rwaft makes, with example prompts`,
+		`- [Compare](${SITE_URL}/compare): rwaft, Lovable, Bolt and v0 side by side`,
+		"",
+		"## What you can build",
+		"",
+		...USE_CASES.map((item) => `- [${item.name}](${SITE_URL}/make/${item.slug}): ${item.blurb}`),
+		"",
+		`## How rwaft compares (checked ${COMPARED_ON})`,
+		"",
+		...TOPICS.map((topic) => `- ${topic.label}: ${ours[topic.id]}`),
+		"",
+		...RIVALS.map((item) => `- [rwaft vs ${item.name}](${SITE_URL}/compare/${item.slug}): choose ${item.name} if ${item.pickRival.map((line) => line.charAt(0).toLowerCase() + line.slice(1)).join("; or ")}.`),
 		"",
 		"## FAQ",
 		"",

@@ -1,5 +1,5 @@
+import { faqJsonLd } from "../../lib/jsonld"
 import { getPricing } from "../../lib/pricing"
-import { SITE_URL } from "../../lib/site"
 import { FaqList, faqFor } from "../_components/InfoSections"
 import { JsonLd, PageShell, pageMetadata } from "../_components/PageShell"
 
@@ -15,21 +15,10 @@ export const metadata = pageMetadata(
 export default async function FaqPage() {
 	const faq = faqFor(await getPricing())
 
-	// Mirrors the visible answers exactly: both come from faqFor.
-	const jsonLd = {
-		"@context": "https://schema.org",
-		"@type": "FAQPage",
-		"@id": `${SITE_URL}/faq#faq`,
-		mainEntity: faq.map((item) => ({
-			"@type": "Question",
-			name: item.question,
-			acceptedAnswer: { "@type": "Answer", text: item.answer },
-		})),
-	}
-
 	return (
 		<PageShell current="/faq" crumb={{ name: "FAQ", path: "/faq" }}>
-			<JsonLd data={jsonLd} />
+			{/* Mirrors the visible answers exactly: both come from faqFor. */}
+			<JsonLd data={faqJsonLd("/faq", faq)} />
 			<main className="info">
 				<FaqList faq={faq} />
 			</main>

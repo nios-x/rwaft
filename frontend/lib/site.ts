@@ -12,12 +12,23 @@ export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL?.trim() || "https://rw
 
 export const SITE_NAME = "rwaft"
 
-/** Under 60 characters so Google shows it whole; the brand stays lowercase. */
-export const SITE_TITLE = "rwaft · AI website builder: describe an app, get a live link"
+/**
+ * Under 60 characters so Google shows it whole; the brand stays lowercase.
+ * Names both searches people make for this, "AI app builder" and "AI website
+ * builder".
+ */
+export const SITE_TITLE = "rwaft · AI app & website builder, prompt to live link"
 
 /** Under 160 characters, the length Google shows before cutting a snippet. */
 export const SITE_DESCRIPTION =
-	"Describe an app in plain words. rwaft's AI writes it, builds it and hosts it at its own URL while you watch the real build. Or deploy a public React repo."
+	"AI app and website builder. Describe an app in plain words and rwaft writes, builds and hosts it at its own link while you watch. No code, no subscription."
+
+/**
+ * When the explanatory pages (how it works, FAQ, /make, /compare) last
+ * changed, for the sitemap. A lastmod that moves on every request teaches
+ * search engines to ignore it; update this with the copy.
+ */
+export const CONTENT_UPDATED = "2026-10-23"
 
 /**
  * The X account the footer and the legal pages send privacy and support

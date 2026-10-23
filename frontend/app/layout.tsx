@@ -32,11 +32,16 @@ export const metadata: Metadata = {
   applicationName: SITE_NAME,
   keywords: [
     "AI app builder",
+    "AI website builder",
+    "AI website generator",
+    "no-code app builder",
     "prompt to app",
     "text to website",
     "React app generator",
     "deploy React app",
-    "Vite",
+    "Lovable alternative",
+    "Bolt alternative",
+    "v0 alternative",
     "rwaft",
   ],
   // The root layout's canonical is inherited by every route below it. That is

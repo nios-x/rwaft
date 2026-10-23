@@ -23,23 +23,32 @@ export function pageMetadata(path: string, title: string, description: string): 
 	}
 }
 
+export interface Crumb {
+	name: string
+	path: string
+}
+
 /**
  * Header, content and footer for every page outside the console. `crumb`
  * names the page for its BreadcrumbList, which is what lets a search result
- * read "rwaft.live › Pricing" instead of a bare URL.
+ * read "rwaft.live › Pricing" instead of a bare URL; a page below a hub
+ * passes the trail, hub first.
  */
-export function PageShell({ current, crumb, children }: { current?: InfoPath; crumb?: { name: string; path: string }; children: ReactNode }) {
+export function PageShell({ current, crumb, children }: { current?: InfoPath; crumb?: Crumb | Crumb[]; children: ReactNode }) {
+	const trail = crumb ? [crumb].flat() : []
 	return (
 		<div className="app" data-screen="page">
-			{crumb && (
+			{trail.length > 0 && (
 				<JsonLd
 					data={{
 						"@context": "https://schema.org",
 						"@type": "BreadcrumbList",
-						itemListElement: [
-							{ "@type": "ListItem", position: 1, name: SITE_NAME, item: SITE_URL },
-							{ "@type": "ListItem", position: 2, name: crumb.name, item: `${SITE_URL}${crumb.path}` },
-						],
+						itemListElement: [{ name: SITE_NAME, path: "" }, ...trail].map((item, index) => ({
+							"@type": "ListItem",
+							position: index + 1,
+							name: item.name,
+							item: `${SITE_URL}${item.path}`,
+						})),
 					}}
 				/>
 			)}
