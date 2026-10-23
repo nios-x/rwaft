@@ -44,7 +44,7 @@ import {
 } from "./lib/billing.ts"
 import { joinLine, leaveLine, linePosition } from "./lib/queue.ts"
 import { listUsers, requireAdmin } from "./lib/admin.ts"
-import { notifySignup } from "./lib/mail.ts"
+import { notifySignup, verifySignupAlert } from "./lib/alerts.ts"
 import {
 	GitHubError,
 	authorizeUrl,
@@ -1178,6 +1178,7 @@ const server = app.listen(PORT, HOST, () => {
 	console.log(`[backend] Listening on ${HOST}:${PORT}`)
 	console.log(`[backend] Deployment URLs: ${USE_WILDCARD_SUBDOMAINS ? `https://<id>.${DEPLOYMENT_DOMAIN}/` : "<public-origin>/<id>/"}`)
 	void verifyDodoSetup()
+	void verifySignupAlert()
 })
 // SSE streams must not be cut off by the default request timeout.
 server.requestTimeout = 0

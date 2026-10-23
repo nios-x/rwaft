@@ -92,13 +92,10 @@ services:
         sync: false
       - key: GITHUB_CLIENT_SECRET
         sync: false
-      # Sign-up alerts by Gmail: GMAIL_APP_PASSWORD is an App Password, not
-      # the account password. SIGNUP_ALERT_TO defaults to GMAIL_USER.
-      - key: GMAIL_USER
-        sync: false
-      - key: GMAIL_APP_PASSWORD
-        sync: false
-      - key: SIGNUP_ALERT_TO
+      # Sign-up alerts: each new account is posted to
+      # https://rwaft.live/api/signup-alert, which emails it from Vercel (the
+      # Gmail variables are set there). Same value as the Vercel variable.
+      - key: SIGNUP_ALERT_SECRET
         sync: false
 
       # Per-hour caps per account. Credits are the real meter with PROD=true;
