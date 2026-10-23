@@ -1776,14 +1776,22 @@ a.brand {
   font-size: 14px;
 }
 
-/* ── Footer (home and standalone pages): the X handle, bottom right ──────── */
+/* ── Footer (home and standalone pages): copyright and X handle, bottom right */
 
 .site-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 12px;
   width: min(1040px, 100%);
   margin: 0 auto;
   padding: 24px 20px 20px;
+}
+
+.site-footer-copy {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-3);
 }
 
 .site-footer-contact {
