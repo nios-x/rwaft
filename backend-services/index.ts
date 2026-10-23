@@ -44,6 +44,7 @@ import {
 } from "./lib/billing.ts"
 import { joinLine, leaveLine, linePosition } from "./lib/queue.ts"
 import { listUsers, requireAdmin } from "./lib/admin.ts"
+import { notifySignup } from "./lib/mail.ts"
 import {
 	GitHubError,
 	authorizeUrl,
@@ -405,6 +406,7 @@ app.post(
 
 		try {
 			const { account, created } = await upsertGoogleAccount(profile)
+			if (created) void notifySignup(account)
 			const token = await createSession(account.id)
 			res.setHeader("Cache-Control", "no-store")
 			res.json({ status: "success", token, account, created })
