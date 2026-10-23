@@ -381,6 +381,7 @@ files are git-ignored and are excluded from Docker images.
 | `PORT` | `number` | No | HTTP port (the platform usually injects this) | `3000` |
 | `DEPLOYMENT_DOMAIN` | `string` | No | Root domain for subdomain-style deployment URLs | — |
 | `DEPLOYMENT_WILDCARD` | `bool` | No | Set `true` **only** with real wildcard DNS + wildcard TLS. Otherwise URLs stay path-based | `false` |
+| `SITE_BADGE` | `bool` | No | Adds a "Made with rwaft" corner link, to the first `FRONTEND_ORIGIN` with `?ref=badge`, to every hosted page as it is served. `false` leaves pages untouched | `true` |
 | `DEPLOY_RATE_LIMIT` | `number` | No | `/deploy` requests per account/IP per hour | `5` free, `20` with `PROD=true` |
 | `PROMPT_RATE_LIMIT` | `number` | No | `/prompt` requests per account/IP per hour. Keep it above `SIGNUP_TOKENS`, or new users are rate-limited before they can spend their free credits | `3` free, `20` with `PROD=true` |
 | `ALLOWED_REPO_HOSTS` | `string` | No | Hosts `/deploy` may clone from; `*` allows any public host | `github.com,gitlab.com,bitbucket.org` |

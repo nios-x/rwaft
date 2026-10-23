@@ -150,6 +150,10 @@ export function faqFor(pricing: Pricing): Faq[] {
 			question: "Who can see my site?",
 			answer: "Anyone with the link. Every site rwaft builds is public at its own URL, so don't put anything private in a prompt.",
 		},
+		{
+			question: "Does my site say it was made with rwaft?",
+			answer: "Yes. Every site rwaft hosts shows a small “Made with rwaft” link in its bottom-right corner, which opens rwaft in a new tab.",
+		},
 	]
 }
 

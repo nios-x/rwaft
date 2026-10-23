@@ -13,6 +13,7 @@ import { uploadFile } from "./lib/upload.ts"
 import { getRawAssetUrl } from "./lib/cloudinary.ts"
 import { closeRedis, getRedisClient, isRedisHealthy } from "./lib/redis.ts"
 import { corsmiddlewares, securityHeaders } from "./lib/middleware.ts"
+import { withBadge } from "./lib/badge.ts"
 import { rateLimit } from "./lib/ratelimit.ts"
 import { clearLogHistory, closeLogStream, readLogHistory, subscribeToUserLogs } from "./lib/logstream.ts"
 import { DEPLOY_QUEUE, DEPLOYMENT_STATUS_PREFIX, PROMPT_QUEUE, githubPushKey, userKey, type JobCharge } from "./lib/constants.ts"
@@ -285,6 +286,7 @@ type FetchResponse = {
 	status: number
 	headers: { get(name: string): string | null }
 	body: ReadableStream<Uint8Array> | null
+	text(): Promise<string>
 }
 
 const sendCloudinaryFile = async (id: string, filePath: string, res: Response) => {
@@ -306,6 +308,12 @@ const sendCloudinaryFile = async (id: string, filePath: string, res: Response) =
 		"Cache-Control",
 		extension === "html" ? "no-cache" : "public, max-age=31536000, immutable"
 	)
+	// Pages are small and need the badge spliced in, so they are buffered;
+	// `send` sets the length of what is actually sent.
+	if (extension === "html") {
+		res.send(withBadge(await response.text()))
+		return
+	}
 	// Only forward the upstream length when the upstream body was not encoded.
 	// `fetch` transparently decodes gzip/br, so Cloudinary's content-length
 	// describes the COMPRESSED bytes while the body streamed below is the

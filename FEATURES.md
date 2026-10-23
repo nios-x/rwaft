@@ -52,6 +52,7 @@ rwaft turns a description in plain words into a real website with its own link. 
 ## Good to know
 
 - **Your site is public.** Anyone with the link can see it, so don't put anything private in your description.
+- **Every site shows a small "Made with rwaft" link** in its bottom-right corner. It opens rwaft in a new tab.
 - **Changes work for 24 hours.** rwaft keeps your site's code for a day after each build. After that, describe the whole site again to rebuild it.
 - **Sites show information, they don't store it.** Forms, sign-ups or bookings on your site won't save or send what visitors type.
 - **Light or dark.** The console follows your device's theme, or you can switch it yourself.
