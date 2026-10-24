@@ -14,21 +14,22 @@ export const SITE_NAME = "rwaft"
 
 /**
  * Under 60 characters so Google shows it whole; the brand stays lowercase.
- * Names both searches people make for this, "AI app builder" and "AI website
- * builder".
+ * Brand, then the category both searches name ("AI app builder", "AI website
+ * builder"), then the promise: the pattern Google already reads as this
+ * category's on lovable.dev.
  */
-export const SITE_TITLE = "rwaft · AI app & website builder, prompt to live link"
+export const SITE_TITLE = "rwaft: AI App & Website Builder | Live Link in Minutes"
 
 /** Under 160 characters, the length Google shows before cutting a snippet. */
 export const SITE_DESCRIPTION =
-	"AI app and website builder. Describe an app in plain words and rwaft writes, builds and hosts it at its own link while you watch. No code, no subscription."
+	"Build apps and websites by chatting with AI. Describe an idea, watch rwaft write and deploy it, and get a live link in minutes. Free to start, no subscription."
 
 /**
  * When the explanatory pages (how it works, FAQ, /make, /compare) last
  * changed, for the sitemap. A lastmod that moves on every request teaches
  * search engines to ignore it; update this with the copy.
  */
-export const CONTENT_UPDATED = "2026-10-23"
+export const CONTENT_UPDATED = "2026-10-24"
 
 /**
  * The X account the footer and the legal pages send privacy and support

@@ -1,0 +1,26 @@
+name: IndexNow
+
+# Vercel reports each deployment back to GitHub. Once a production one is
+# live, tell IndexNow which pages changed (frontend/scripts/indexnow.mjs).
+# Run it by hand with "all" to resubmit every page.
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      all:
+        description: Submit every URL in the sitemap, not just recently changed ones
+        type: boolean
+        default: false
+
+jobs:
+  submit:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node frontend/scripts/indexnow.mjs ${{ inputs.all && '--all' || '' }}

@@ -18,7 +18,8 @@ export interface Faq {
 	answer: string
 }
 
-const STEPS = [
+/** The three steps, on /how-it-works and the home page. */
+export const STEPS = [
 	{
 		title: "Describe it",
 		body: "Say what you want in plain words: what it is, who it's for and what it should do. Or paste a public GitHub repository.",

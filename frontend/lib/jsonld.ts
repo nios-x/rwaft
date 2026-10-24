@@ -50,6 +50,29 @@ export function appJsonLd(pricing: Pricing) {
 	}
 }
 
+/**
+ * A docs page (TechArticle) or a guide (Article). Guides carry their own
+ * dates; docs follow the live product, so they're dated with the rest of the
+ * explanatory pages.
+ */
+export function articleJsonLd(path: string, item: { heading: string; description: string }, type: "TechArticle" | "Article", dates: { published: string; updated: string }) {
+	return {
+		"@context": "https://schema.org",
+		"@type": type,
+		"@id": `${SITE_URL}${path}#article`,
+		headline: item.heading,
+		description: item.description,
+		url: `${SITE_URL}${path}`,
+		mainEntityOfPage: `${SITE_URL}${path}`,
+		image: `${SITE_URL}${path}/opengraph-image`,
+		datePublished: dates.published,
+		dateModified: dates.updated,
+		inLanguage: "en",
+		author: { "@id": `${SITE_URL}/#organization` },
+		publisher: { "@id": `${SITE_URL}/#organization` },
+	}
+}
+
 /** A page's questions, worded exactly as they're shown. */
 export function faqJsonLd(path: string, faq: { question: string; answer: string }[]) {
 	return {

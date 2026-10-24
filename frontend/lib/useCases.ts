@@ -394,6 +394,396 @@ export const USE_CASES: UseCase[] = [
 		share: ["Describe a game.", "Play it in minutes."],
 	},
 	{
+		slug: "resume-website",
+		name: "Resume website",
+		blurb: "Your CV as a website: experience, skills and a way to reach you, at one link.",
+		title: "AI resume website builder: your CV at its own link",
+		description:
+			"Describe your experience and rwaft's AI turns your CV into a clean resume website, hosted at its own link for applications, email signatures and LinkedIn.",
+		heading: "AI resume website builder",
+		lead: "Paste your CV or describe your experience, and rwaft turns it into a resume site that reads well on any screen, at a link you can put on every application.",
+		examples: [
+			"A resume website for a junior data analyst with experience, skills, education and a contact section",
+			"A one-page CV for a nurse moving abroad, with certifications, languages and references available on request",
+			"A resume site for a product manager with a short summary, a timeline of roles and selected results",
+		],
+		include: [
+			"Your name, the role you're aiming for and a one-line summary",
+			"Your experience, newest first, with dates and what you achieved",
+			"Skills, education, certifications and languages",
+			"How to reach you: email, LinkedIn, GitHub or a portfolio",
+			"The tone: plain and professional, modern, a little bold",
+		],
+		get: [
+			{ title: "A layout recruiters can scan", body: "Your summary first, then experience, skills and education in the order people look for them." },
+			{ title: "Readable on a phone", body: "Links usually get opened on a phone first, and every page rwaft writes is mobile-first." },
+			{ title: "Up to date in one message", body: "New role or new skill? Send it as a follow-up and rwaft publishes the new version." },
+		],
+		note: "Your resume site is public to anyone with its link, so leave out your home address, your phone number and anything else you wouldn't post online. If you also keep a PDF of your CV online, include its link and rwaft adds a download button.",
+		faq: [
+			{
+				question: "Is a resume website better than a PDF?",
+				answer: "They do different jobs. A PDF is what most application forms ask for; a resume website is a link for your email signature, your LinkedIn profile or a message, and it opens properly on a phone. Many people use both.",
+			},
+			{
+				question: "Can I include a photo?",
+				answer: "Yes, if it's online already: put the image link in your prompt. You can't upload files to rwaft yet.",
+			},
+		],
+		share: ["Your resume,", "as a website."],
+	},
+	{
+		slug: "real-estate-website",
+		name: "Real estate website",
+		blurb: "Listings, an agent profile and a way to book a viewing, for agents and landlords.",
+		title: "AI real estate website builder for agents",
+		description:
+			"Describe your listings and rwaft's AI builds a real estate website with property cards, an agent profile and contact buttons, hosted at its own link.",
+		heading: "AI real estate website builder",
+		lead: "Tell rwaft about the properties you have and the area you know. It builds a site with a card for each listing, a page about you and a clear way to book a viewing, hosted at its own link.",
+		examples: [
+			"A website for a real estate agent in Lisbon with five featured apartments, an about page and a contact section",
+			"A single-property page for a three-bedroom house for sale, with photos, features, the price and a button to book a viewing",
+			"A site for a small holiday rental with two cottages, what's nearby and a link to our booking page",
+		],
+		include: [
+			"Each property: price, size, bedrooms, location and a line about it",
+			"Links to photos you already have online",
+			"Who you are and the area you cover",
+			"How to book a viewing: phone, email, WhatsApp or a booking link",
+			"The feel: premium, friendly, modern",
+		],
+		get: [
+			{ title: "Listings as cards", body: "Each property with its key facts at a glance, and a section or page of its own if you ask." },
+			{ title: "Filters, if you want them", body: "Ask for a filter by price or bedrooms and rwaft writes it into the page, working on the listings in your prompt." },
+			{ title: "A link for every channel", body: "Share it on property portals, on social media or on a sign in the window." },
+		],
+		note: "rwaft sites don't connect to listing feeds or an MLS, and they can't store enquiries. Listings come from your prompt and change by follow-up message; enquiries go to your phone, your email or a form you already use.",
+		faq: [
+			{
+				question: "Can listings update automatically?",
+				answer: "No. rwaft sites have no database or feed, so you add or remove a property by sending a follow-up message, and rwaft publishes the new version.",
+			},
+			{
+				question: "Can buyers book a viewing on the site?",
+				answer: "Through a link: give rwaft your calendar booking page, WhatsApp number or email and it adds the buttons.",
+			},
+		],
+		share: ["Your listings,", "live in minutes."],
+	},
+	{
+		slug: "fitness-website",
+		name: "Fitness & personal trainer website",
+		blurb: "Classes, coaching packages and a way to book, for trainers, gyms and studios.",
+		title: "AI website builder for personal trainers and gyms",
+		description:
+			"Describe your coaching or classes and rwaft's AI builds a fitness website with packages, a timetable and a booking link, hosted at its own link.",
+		heading: "AI website builder for personal trainers and gyms",
+		lead: "Say what you coach, who you train and how people sign up. rwaft builds a site with your packages, your timetable and a big button to book, hosted at a link for your Instagram bio.",
+		examples: [
+			"A website for a personal trainer with three coaching packages, the goals I help clients with and a booking link",
+			"A site for a boxing gym with the weekly class timetable, coaches, prices and a free trial button",
+			"A landing page for an online running coach with a 12-week plan, what's included and a link to apply",
+		],
+		include: [
+			"What you offer: sessions, classes, programs or online coaching",
+			"Prices or packages, if you share them",
+			"Your timetable and where you train",
+			"How to book or sign up: a booking app, WhatsApp or a form link",
+			"The energy: calm and clean, bold and loud, premium",
+		],
+		get: [
+			{ title: "Packages side by side", body: "Each offer with what's included and its price, so people can pick one." },
+			{ title: "A timetable that fits a phone", body: "Classes by day, readable without zooming." },
+			{ title: "Booking where it counts", body: "The booking link you give it on the first screen and after every section." },
+		],
+		note: "rwaft sites don't take bookings or payments themselves. Link to the booking or payment tool you already use, like your class app, Calendly or a Stripe payment link, and put it in your prompt.",
+		faq: [
+			{
+				question: "Can clients book and pay on the site?",
+				answer: "Through a link to a service you already use. rwaft sites have no back end, so they can't take payments or store bookings.",
+			},
+			{
+				question: "Can I add a workout timer or calculator?",
+				answer: "Yes. rwaft builds small tools too, like an interval timer or a calorie calculator, and they run right in the browser.",
+			},
+		],
+		share: ["Your coaching,", "online today."],
+	},
+	{
+		slug: "nonprofit-website",
+		name: "Nonprofit & charity website",
+		blurb: "Your cause, your work and a clear way to donate or volunteer.",
+		title: "AI website builder for nonprofits and charities",
+		description:
+			"Describe your cause and rwaft's AI builds a nonprofit website with your mission, programs and donate and volunteer buttons, hosted at its own link.",
+		heading: "AI website builder for nonprofits and charities",
+		lead: "Tell rwaft what your organization does, who it helps and how people can support it. It builds a site that explains the cause in plain words and sends visitors to donate or volunteer.",
+		examples: [
+			"A website for a dog rescue charity with dogs for adoption, how to volunteer and a donate button",
+			"A site for a community food bank with opening times, what we need this month and how to give",
+			"A one-page site for a school fundraiser with the goal, what the money is for and a link to donate",
+		],
+		include: [
+			"Your mission in one or two sentences",
+			"Your programs or what you do, with real numbers only if you have them",
+			"How people can help: donate, volunteer, attend, share",
+			"Links to your donation page and volunteer form",
+			"Contact details and, if you have one, your registration number",
+		],
+		get: [
+			{ title: "The cause, clearly", body: "A first screen that says what you do and why it matters, with the main way to help right there." },
+			{ title: "Ways to help", body: "Donate, volunteer and spread-the-word sections, each with its own button." },
+			{ title: "Easy to keep current", body: "New appeal or new event? One message updates the site." },
+		],
+		note: "rwaft sites can't process donations or store sign-ups. Point the buttons at the donation platform and forms you already use, and rwaft puts them where visitors look first.",
+		faq: [
+			{
+				question: "Can people donate on the site?",
+				answer: "Through a link to the platform you already use, like your payment provider's donation page. rwaft sites have no back end and can't take payments.",
+			},
+			{
+				question: "Can volunteers sign up through the site?",
+				answer: "Through a form you already use, like Google Forms or Tally. Give rwaft the link and it adds a volunteer button.",
+			},
+		],
+		share: ["Your cause,", "online in minutes."],
+	},
+	{
+		slug: "church-website",
+		name: "Church website",
+		blurb: "Service times, events and how to visit, for churches and faith communities.",
+		title: "AI church website builder: services, events, visit",
+		description:
+			"Describe your church and rwaft's AI builds a website with service times, events, ministries and directions, hosted at its own link. No code needed.",
+		heading: "AI church website builder",
+		lead: "Give rwaft your service times, what's on and how newcomers find you. It builds a welcoming site with the details people look for first, at a link for your bulletin, signs and social pages.",
+		examples: [
+			"A website for a small church with Sunday service times, a welcome for first-time visitors, ministries and directions",
+			"A site for a youth group with weekly meetings, upcoming events and how parents can get in touch",
+			"A page for a church's Christmas services with times, places and a link to watch online",
+		],
+		include: [
+			"Service times and your address",
+			"A short welcome for first-time visitors",
+			"Ministries, groups and regular events",
+			"Links to your livestream, sermons, giving page or newsletter",
+			"Contact details for the office or the pastor",
+		],
+		get: [
+			{ title: "Times and directions up front", body: "When and where, on the first screen, with a link that opens in maps." },
+			{ title: "A page for each part of church life", body: "Ministries, groups and events, on up to five pages that share one design." },
+			{ title: "Notices in a sentence", body: "Holiday service times changed? Send a message and rwaft publishes the update." },
+		],
+		note: "rwaft sites don't host video, take donations or store prayer requests. Link to your livestream, your giving platform and your forms, and rwaft adds a clear button for each.",
+		faq: [
+			{
+				question: "Can we stream services on the site?",
+				answer: "Link to your stream where it's already hosted, like YouTube or Facebook, and rwaft adds a watch button. rwaft sites don't host video themselves.",
+			},
+			{
+				question: "Can people give online?",
+				answer: "Through a link to the giving platform you already use. rwaft sites can't take payments themselves.",
+			},
+		],
+		share: ["Your church,", "easy to find."],
+	},
+	{
+		slug: "musician-website",
+		name: "Musician & band website",
+		blurb: "Releases, tour dates and links to listen, for artists, bands and DJs.",
+		title: "AI musician website builder for artists and bands",
+		description:
+			"Describe your music and rwaft's AI builds an artist website with releases, tour dates, links to listen and a booking contact, hosted at its own link.",
+		heading: "AI website builder for musicians and bands",
+		lead: "Tell rwaft about your sound, your releases and where you're playing. It builds an artist site with links to every platform you're on, a page for shows and a contact for bookings.",
+		examples: [
+			"A website for an indie band with our latest album, tour dates, a gallery and links to Spotify and Bandcamp",
+			"An artist page for a wedding DJ with the music I play, packages and a booking contact",
+			"A one-page press kit for a jazz singer with a bio, press quotes, videos and a booking email",
+		],
+		include: [
+			"Your name, your genre and a short bio",
+			"Releases, with links to Spotify, Apple Music, Bandcamp or YouTube",
+			"Upcoming shows with dates, venues and ticket links",
+			"Real press quotes only, word for word",
+			"The look: dark and moody, bright, retro, minimal",
+		],
+		get: [
+			{ title: "Every place to listen", body: "Big, clear links to each platform, so fans land where they already listen." },
+			{ title: "Tour dates that read well", body: "Dates, cities and venues in a list, with a ticket button on each." },
+			{ title: "A press kit in a link", body: "Bio, photos and contact on one page, ready to send to promoters." },
+		],
+		note: "rwaft sites don't sell tickets or merch, and can't host audio files. Link to your ticketing, store and streaming pages, and rwaft adds a button for each.",
+		faq: [
+			{
+				question: "Can I add a music player?",
+				answer: "Ask for one with the link to your track on Spotify, SoundCloud or YouTube, and rwaft can embed their player. It can't host audio files itself.",
+			},
+			{
+				question: "How do I update tour dates?",
+				answer: "Send the new dates as a follow-up. rwaft publishes the new version at a new link, so update the link in your bio. A build's code is kept for a day; after that, describe the whole site again.",
+			},
+		],
+		share: ["Your music,", "one link away."],
+	},
+	{
+		slug: "birthday-website",
+		name: "Birthday page",
+		blurb: "A surprise page for someone's birthday, with messages, memories and a countdown.",
+		title: "AI birthday website maker for a surprise page",
+		description:
+			"Describe the person and rwaft's AI builds a birthday website with your messages, memories, photos and a countdown, at a link you can send on the day.",
+		heading: "AI birthday website maker",
+		lead: "Tell rwaft who it's for and what makes them them. It builds a page with your messages, the memories you share and a little surprise, at a link to send at midnight.",
+		examples: [
+			"A birthday page for my girlfriend with a countdown, 10 reasons I love her and a timeline of our year",
+			"A birthday site for my dad's 60th with a message from each of us and a quiz about his life",
+			"A surprise page for my best friend with our inside jokes, a playlist link and confetti when it opens",
+		],
+		include: [
+			"Who it's for, and their name as you'd say it",
+			"The messages, memories and inside jokes to include",
+			"Links to photos you already have online",
+			"Any surprise: a countdown, confetti, a quiz, a hidden message",
+			"Their favourite colours, or the mood: sweet, funny, elegant",
+		],
+		get: [
+			{ title: "Made for one person", body: "Not a card template: a page built around the details you give it." },
+			{ title: "Little surprises", body: "Countdowns, animations, quizzes or a button that reveals a message, written as working code." },
+			{ title: "A link to send", body: "Send it by message at midnight, or put it in a QR code on the card." },
+		],
+		note: "Anyone with the link can open the page, so keep it to what you'd be happy for them to show others. You can't upload photos to rwaft yet: use links to images that are already online, or leave the photos out.",
+		faq: [
+			{
+				question: "Can I add our photos?",
+				answer: "Yes, if they're online already: put the image links in your prompt. You can't upload files to rwaft yet.",
+			},
+			{
+				question: "Can it stay a surprise until the day?",
+				answer: "Ask for a countdown that reveals the page at midnight on the day. The page is public to anyone with the link, so just don't send it early.",
+			},
+		],
+		share: ["A birthday surprise,", "at its own link."],
+	},
+	{
+		slug: "quiz-maker",
+		name: "Quiz",
+		blurb: "A quiz with questions, scoring and a result at the end, to share or to study with.",
+		title: "AI quiz maker: build an interactive quiz online",
+		description:
+			"Describe your questions and rwaft's AI builds an interactive quiz with scoring and results, hosted at its own link for friends, students or followers.",
+		heading: "AI quiz maker",
+		lead: "Give rwaft your topic or your questions, and how it should score. It builds a quiz that plays in the browser, with a result at the end and a link anyone can open.",
+		examples: [
+			"A 10-question quiz about the solar system for a year 6 class, with an explanation after each answer",
+			"A personality quiz: which coffee are you? Eight questions, four results, each with a short description",
+			"A flashcard quiz for learning Spanish verbs, with a score and a button to retry the ones I missed",
+		],
+		include: [
+			"The topic, or the exact questions and answers",
+			"The kind: right or wrong answers, a personality result, or flashcards",
+			"How many questions, and whether to explain each answer",
+			"What happens at the end: a score, a result, a retry button",
+			"Who it's for, and the look: playful, clean, classroom",
+		],
+		get: [
+			{ title: "It plays, not just reads", body: "Questions one at a time, answers that respond, and a score kept as you go." },
+			{ title: "A result at the end", body: "A score, a grade or a personality result, with a button to try again." },
+			{ title: "Your questions, or its own", body: "Give it exact questions, or a topic and it writes them, for you to check before you share." },
+		],
+		note: "Scores stay on each player's device: rwaft quizzes have no server, so there's no shared leaderboard and no way to collect answers. If you need answers collected, use a form tool and link to it.",
+		faq: [
+			{
+				question: "Can I see everyone's scores?",
+				answer: "No. rwaft apps have no back end, so a score stays in the player's browser. For collected results, use a form or quiz service that stores answers.",
+			},
+			{
+				question: "Can I use it in class?",
+				answer: "Yes. Share the link and students open it in any browser, on a phone or a laptop, with nothing to install or sign up for.",
+			},
+		],
+		share: ["Your quiz,", "ready to play."],
+	},
+	{
+		slug: "school-project-website",
+		name: "School project website",
+		blurb: "A website for a class project or presentation, with sections, sources and extras.",
+		title: "Make a school project website with AI",
+		description:
+			"Describe your topic and rwaft's AI builds a website for your school project, with sections, a timeline, a quiz and your sources, hosted at its own link.",
+		heading: "AI website maker for school projects",
+		lead: "Tell rwaft your topic and what the project needs to cover. It builds a clear, good-looking site with a section for each part, which you can present in class or hand in as a link.",
+		examples: [
+			"A school project website about the water cycle with each stage explained and a short quiz at the end",
+			"A history project site about the Roman Empire with a timeline, key people and a sources page",
+			"A science fair page for my experiment: question, hypothesis, method, results and conclusion",
+		],
+		include: [
+			"The topic, and your class or level",
+			"The sections your teacher asked for",
+			"Your own facts, findings and words, as much as you can",
+			"Your sources, so rwaft can list them",
+			"Anything interactive: a timeline, a quiz, flip cards",
+		],
+		get: [
+			{ title: "A section for each part", body: "Laid out in the order your project needs, with headings that make it easy to present." },
+			{ title: "Interactive extras", body: "Timelines, quizzes and flip cards, written as part of the site." },
+			{ title: "A link to hand in", body: "Open it on the classroom screen or send the link to your teacher." },
+		],
+		note: "Check your school's rules on using AI before you start, and check every fact rwaft writes against your sources. The site is public to anyone with the link, so leave out your full name and your school if you'd rather not share them.",
+		faq: [
+			{
+				question: "Will the facts be correct?",
+				answer: "Not guaranteed. AI can get facts wrong, so give rwaft your own research and check everything it writes before you hand it in.",
+			},
+			{
+				question: "Can I present it in class?",
+				answer: "Yes. It opens in any browser, so you can show it on the classroom screen or a laptop.",
+			},
+		],
+		share: ["Your school project,", "as a website."],
+	},
+	{
+		slug: "clinic-website",
+		name: "Clinic & therapist website",
+		blurb: "Services, practitioners and how to book, for clinics, therapists and dentists.",
+		title: "AI website builder for clinics and therapists",
+		description:
+			"Describe your practice and rwaft's AI builds a website with your services, team, opening hours and booking link, hosted at its own link. No code needed.",
+		heading: "AI website builder for clinics and therapists",
+		lead: "Tell rwaft about your practice, the people in it and how patients book. It builds a calm, clear site with the details patients look for, at a link for your Google listing and referrals.",
+		examples: [
+			"A website for a physiotherapy clinic with treatments, our three physios, prices and a booking link",
+			"A site for a counsellor with what I help with, how sessions work, fees and how to get in touch",
+			"A website for a family dental practice with services, opening hours, an emergency number and directions",
+		],
+		include: [
+			"Your services or treatments, with prices if you share them",
+			"The practitioners and their qualifications",
+			"Opening hours, your address, and parking or access",
+			"How to book: your booking system's link, a phone number or an email",
+			"The feel: calm, warm, clinical, modern",
+		],
+		get: [
+			{ title: "What patients look for", body: "Services, who they'll see, what it costs and how to book, without hunting." },
+			{ title: "Booking on every page", body: "Your booking link or phone number wherever people are ready to act." },
+			{ title: "Easy to update", body: "New hours or a new practitioner? One message and rwaft publishes the new version." },
+		],
+		note: "rwaft sites have no back end and every site is public, so never collect patient information through one. Send bookings and intake forms to the secure system you already use, and put its link in your prompt.",
+		faq: [
+			{
+				question: "Can patients fill in forms on the site?",
+				answer: "Not on the site itself: rwaft sites can't store what visitors type, and patient details belong in a secure system. Link to the booking or intake system you already use.",
+			},
+			{
+				question: "Will it show on Google Maps?",
+				answer: "Your Google Business Profile is what shows on Maps. Add the site's link to it, so people can go from the listing to your services.",
+			},
+		],
+		share: ["Your practice,", "online today."],
+	},
+	{
 		slug: "react-app",
 		name: "React app",
 		blurb: "A typed React + Vite + Tailwind codebase, generated, built and hosted.",

@@ -24,7 +24,7 @@ export default function BuildPage() {
 	}
 
 	return (
-		<PageShell crumb={{ name: "What you can build", path: "/make" }}>
+		<PageShell current="/make" crumb={{ name: "What you can build", path: "/make" }}>
 			<JsonLd data={jsonLd} />
 			<main className="info">
 				<UseCaseHub />

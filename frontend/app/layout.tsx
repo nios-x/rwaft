@@ -34,6 +34,7 @@ export const metadata: Metadata = {
     "AI app builder",
     "AI website builder",
     "AI website generator",
+    "vibe coding",
     "no-code app builder",
     "prompt to app",
     "text to website",
@@ -42,6 +43,7 @@ export const metadata: Metadata = {
     "Lovable alternative",
     "Bolt alternative",
     "v0 alternative",
+    "Replit alternative",
     "rwaft",
   ],
   // The root layout's canonical is inherited by every route below it. That is
@@ -88,6 +90,9 @@ const JSON_LD = {
       "@id": `${SITE_URL}/#website`,
       url: SITE_URL,
       name: SITE_NAME,
+      // Google falls back to these before the bare domain when it doesn't
+      // use `name` as the site name above a result.
+      alternateName: ["Rwaft", new URL(SITE_URL).host],
       description: SITE_DESCRIPTION,
       inLanguage: "en",
       publisher: { "@id": `${SITE_URL}/#organization` },
@@ -97,7 +102,7 @@ const JSON_LD = {
       "@id": `${SITE_URL}/#organization`,
       name: SITE_NAME,
       url: SITE_URL,
-      logo: `${SITE_URL}/icon-512.png`,
+      logo: { "@type": "ImageObject", url: `${SITE_URL}/icon-512.png`, width: 512, height: 512 },
       // The same account the footer shows.
       sameAs: [CONTACT_URL],
     },

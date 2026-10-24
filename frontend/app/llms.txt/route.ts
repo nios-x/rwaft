@@ -1,4 +1,6 @@
-import { COMPARED_ON, RIVALS, TOPICS, rwaftCells } from "../../lib/compare"
+import { COMPARED_ON, MATCHUPS, RIVALS, ROUNDUP_PATH, TOPICS, matchupRivals, rwaftCells } from "../../lib/compare"
+import { docsFor } from "../../lib/docs"
+import { GUIDES } from "../../lib/guides"
 import { getPricing } from "../../lib/pricing"
 import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "../../lib/site"
 import { USE_CASES } from "../../lib/useCases"
@@ -33,7 +35,10 @@ export async function GET() {
 		`- [About](${SITE_URL}/about): why rwaft shows the real build, its principles and what it runs on`,
 		`- [Trailer](${SITE_URL}/trailer): a 29-second video of an app going from prompt to live link`,
 		`- [What you can build](${SITE_URL}/make): every kind of site rwaft makes, with example prompts`,
-		`- [Compare](${SITE_URL}/compare): rwaft, Lovable, Bolt and v0 side by side`,
+		`- [Compare](${SITE_URL}/compare): rwaft beside ${RIVALS.map((item) => item.name).join(", ")}`,
+		`- [Best AI app and website builders](${SITE_URL}${ROUNDUP_PATH}): who each one is best for`,
+		`- [Docs](${SITE_URL}/docs): how to use rwaft, from a first build to its limits`,
+		`- [Guides](${SITE_URL}/guides): building websites and apps with AI, for any tool`,
 		"",
 		"## What you can build",
 		"",
@@ -43,7 +48,17 @@ export async function GET() {
 		"",
 		...TOPICS.map((topic) => `- ${topic.label}: ${ours[topic.id]}`),
 		"",
-		...RIVALS.map((item) => `- [rwaft vs ${item.name}](${SITE_URL}/compare/${item.slug}): choose ${item.name} if ${item.pickRival.map((line) => line.charAt(0).toLowerCase() + line.slice(1)).join("; or ")}.`),
+		...RIVALS.map((item) => `- [rwaft vs ${item.name}](${SITE_URL}/compare/${item.slug}): ${item.name} is best for ${item.bestFor.charAt(0).toLowerCase() + item.bestFor.slice(1)}. Choose it if ${item.pickRival.map((line) => line.charAt(0).toLowerCase() + line.slice(1)).join("; or ")}.`),
+		"",
+		...MATCHUPS.map((item) => `- [${matchupRivals(item).map((side) => side.name).join(" vs ")}](${SITE_URL}/compare/${item.slug}): ${item.lead}`),
+		"",
+		"## Docs",
+		"",
+		...docsFor(pricing).map((item) => `- [${item.name}](${SITE_URL}/docs/${item.slug}): ${item.description}`),
+		"",
+		"## Guides",
+		"",
+		...GUIDES.map((item) => `- [${item.name}](${SITE_URL}/guides/${item.slug}): ${item.description}`),
 		"",
 		"## FAQ",
 		"",

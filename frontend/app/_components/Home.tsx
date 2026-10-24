@@ -25,12 +25,9 @@ export function Home({ prompt, builds, onOpen, children }: HomeProps) {
 	return (
 		<main className="home">
 			<section className="hero" id="start" aria-labelledby="hero-title">
-				{/* The eyebrow is part of the heading so the page's h1 names what rwaft is. */}
-				<h1 id="hero-title">
-					
-					What should we build?
-				</h1>
-				<p className="hero-sub">rwaft is an AI app builder. Describe an app in plain words, and it writes it, builds it and hosts it at its own link while you watch the real build.</p>
+				{/* The subline names what rwaft is; the title tag and the sections below carry the search terms. */}
+				<h1 id="hero-title">What should we build?</h1>
+				<p className="hero-sub">rwaft is an AI app and website builder. Describe what you want in plain words, and it writes it, builds it and hosts it at its own link while you watch the real build.</p>
 				<PromptBox {...prompt} size="hero" />
 				{prompt.mode === "prompt" && !prompt.blocked && (
 					<div className="examples" aria-label="Example prompts">

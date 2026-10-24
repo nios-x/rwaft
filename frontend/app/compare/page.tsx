@@ -7,13 +7,13 @@ export const revalidate = 3600
 
 export const metadata = pageMetadata(
 	"/compare",
-	"Lovable vs Bolt vs v0 vs rwaft: AI app builders",
-	"Lovable, Bolt, v0 and rwaft side by side: what each AI app builder makes, what you see while it builds, how you pay, and when each is the better pick."
+	"Lovable vs Bolt vs v0 vs Replit: AI builders compared",
+	"Lovable, Bolt, v0, Replit, Base44, Framer, Wix, Webflow and rwaft side by side: what each makes, how you pay, and when each is the better pick."
 )
 
 export default async function ComparePage() {
 	return (
-		<PageShell crumb={{ name: "Compare", path: "/compare" }}>
+		<PageShell current="/compare" crumb={{ name: "Compare", path: "/compare" }}>
 			<main className="info">
 				<CompareHub pricing={await getPricing()} />
 			</main>
