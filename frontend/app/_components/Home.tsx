@@ -57,7 +57,7 @@ export function Home({ prompt, builds, onOpen, children }: HomeProps) {
 										<span className="status" data-state={build.state}>
 											{build.state === "line" && build.position ? `#${build.position} in line` : STATE_LABEL[build.state]}
 										</span>
-										<span>{build.kind === "prompt" ? "Prompt" : "Repo"} · {relativeTime(build.at)}</span>
+										<span>{build.kind === "prompt" ? "Prompt" : build.kind === "pr" ? `PR · ${build.repo ?? "GitHub"}` : "Repo"} · {relativeTime(build.at)}</span>
 									</span>
 								</button>
 							</li>

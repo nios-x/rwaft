@@ -15,7 +15,8 @@ export interface AuthConfig {
 	billing: boolean
 	googleClientId: string | null
 	signupTokens: number
-	costs: { deploy: number; prompt: number }
+	/** `pr` is missing on an API from before pull requests. */
+	costs: { deploy: number; prompt: number; pr?: number }
 	currency: string
 	packs: TokenPack[]
 	/** The payment provider recharges go through, or null while none is connected. */

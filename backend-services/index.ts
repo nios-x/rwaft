@@ -16,7 +16,18 @@ import { corsmiddlewares, securityHeaders } from "./lib/middleware.ts"
 import { withBadge } from "./lib/badge.ts"
 import { rateLimit } from "./lib/ratelimit.ts"
 import { clearLogHistory, closeLogStream, readLogHistory, subscribeToUserLogs } from "./lib/logstream.ts"
-import { DEPLOY_QUEUE, DEPLOYMENT_STATUS_PREFIX, PROMPT_QUEUE, githubPushKey, userKey, type JobCharge } from "./lib/constants.ts"
+import {
+	DEPLOY_QUEUE,
+	DEPLOYMENT_STATUS_PREFIX,
+	PROMPT_QUEUE,
+	PR_QUEUE,
+	githubPrKey,
+	githubPushKey,
+	prResultKey,
+	prTokenKey,
+	userKey,
+	type JobCharge
+} from "./lib/constants.ts"
 import {
 	BILLING_ENABLED,
 	SIGNUP_TOKENS,
@@ -49,13 +60,19 @@ import {
 	GitHubError,
 	authorizeUrl,
 	exchangeCode,
+	getRepository,
 	isGitHubConfigured,
+	isPublicRepository,
 	isRepositoryName,
 	markSnapshotPushed,
+	parseRepository,
 	pushToNewRepository,
 	readSnapshot,
 	readSnapshotFiles,
-	revokeToken
+	revokeToken,
+	sealToken,
+	type RepositoryInfo,
+	type RepositoryRef
 } from "./lib/github.ts"
 
 const app = express()
@@ -917,17 +934,19 @@ const escapeHtml = (text: string) =>
 	text.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!)
 
 /** What the GitHub popup lands on. The console learns the outcome by polling, so this only has to read well. */
-const sendPushPage = (res: Response, status: number, outcome: "done" | "failed", message: string, repoUrl?: string) => {
-	const title = outcome === "done" ? "Pushed to GitHub" : "Push to GitHub failed"
+const sendGitHubPage = (res: Response, status: number, title: string, message: string, link: string | undefined, autoClose: boolean) => {
 	res.status(status).type("html").setHeader("Cache-Control", "no-store")
 	res.send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>`
 		+ `<style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.6 system-ui,sans-serif;background:Canvas;color:CanvasText}main{max-width:440px;padding:32px 24px;text-align:center}h1{margin:0 0 8px;font-size:20px}p{margin:0 0 12px;opacity:.8;overflow-wrap:anywhere}a{color:inherit;font-weight:600}</style>`
 		+ `<main><h1>${title}</h1><p>${escapeHtml(message)}</p>`
-		+ (repoUrl ? `<p><a href="${escapeHtml(repoUrl)}">${escapeHtml(repoUrl.replace(/^https:\/\//, ""))}</a></p>` : "")
+		+ (link ? `<p><a href="${escapeHtml(link)}">${escapeHtml(link.replace(/^https:\/\//, ""))}</a></p>` : "")
 		+ `<p>You can close this window and go back to rwaft.</p></main>`
-		+ (outcome === "done" ? "<script>setTimeout(function(){window.close()},1500)</script>" : "")
+		+ (autoClose ? "<script>setTimeout(function(){window.close()},1500)</script>" : "")
 		+ "</html>")
 }
+
+const sendPushPage = (res: Response, status: number, outcome: "done" | "failed", message: string, repoUrl?: string) =>
+	sendGitHubPage(res, status, outcome === "done" ? "Pushed to GitHub" : "Push to GitHub failed", message, repoUrl, outcome === "done")
 
 /** Whether this build's source can be pushed, or where it already went. */
 app.get("/github/source/:id", async (req, res) => {
@@ -1016,6 +1035,11 @@ app.get("/github/push/:pushId", async (req, res) => {
 app.get("/github/callback", async (req, res) => {
 	const pushId = typeof req.query.state === "string" ? req.query.state : ""
 	const code = typeof req.query.code === "string" ? req.query.code : ""
+	// The OAuth App has one callback URL, so pull requests land here too.
+	if (isPrRequestId(pushId)) {
+		await handlePrCallback(req, res, pushId, code)
+		return
+	}
 	if (!isPushId(pushId)) {
 		sendPushPage(res, 400, "failed", "This GitHub link is not valid.")
 		return
@@ -1071,6 +1095,263 @@ app.get("/github/callback", async (req, res) => {
 		}
 	}
 })
+
+// ── Open a pull request on a GitHub repository ──────────────────────────────
+//
+// The user names a repository and describes a change. After GitHub's consent
+// screen, a worker reads only the files the AI asks for through GitHub's API,
+// writes the change as one commit on a new branch (on a fork when the user
+// can't push to the repository) and opens the pull request from the user's
+// account. Nothing is cloned.
+
+/** Time allowed for GitHub's consent screen, as for a push. */
+const PR_REQUEST_TTL_SECONDS = 15 * 60
+/** How long the encrypted token waits for its job: the line ahead of it plus the job's own run. */
+const PR_TOKEN_TTL_SECONDS = Number(process.env.PR_TOKEN_TTL_SECONDS || 60 * 60)
+const PR_RATE_LIMIT = Number(process.env.PR_RATE_LIMIT || (BILLING_ENABLED ? 20 : 3))
+const PR_RESULT_FIELDS = ["owner", "url", "title", "number", "files", "branch", "base", "fork"] as const
+
+interface PrRequest {
+	/** The log channel the job reports to: the account, or the anonymous visitor. */
+	userId: string
+	/** The account the job is charged to, once GitHub access is granted. */
+	accountId?: string
+	repo: RepositoryRef
+	prompt: string
+	private: boolean
+	state: "authorizing" | "starting" | "queued" | "failed"
+	jobId?: string
+	repoUrl?: string
+	charged?: number
+	message?: string
+}
+
+/** Distinct from a push id (exactly 32 characters), so the shared callback can tell them apart. */
+const isPrRequestId = (value: string) => /^pr-[A-Za-z0-9_-]{32}$/.test(value)
+
+const readPrRequest = async (requestId: string): Promise<PrRequest | null> => {
+	const redis = await getRedisClient()
+	const raw = await redis.get(githubPrKey(requestId))
+	return raw ? JSON.parse(raw) as PrRequest : null
+}
+
+const writePrRequest = async (requestId: string, record: PrRequest) => {
+	const redis = await getRedisClient()
+	await redis.set(githubPrKey(requestId), JSON.stringify(record), { EX: PR_REQUEST_TTL_SECONDS })
+}
+
+/** Starts a pull request: checks what can be checked before GitHub, then hands back the consent URL for the popup. */
+app.post(
+	"/github/pr",
+	requireAccountWhenBilling,
+	rateLimit({ name: "github-pr", limit: PR_RATE_LIMIT, windowSeconds: 60 * 60 }),
+	async (req, res) => {
+		if (!isGitHubConfigured) {
+			res.status(503).json({ status: "failed", message: "Opening pull requests isn't set up on this server" })
+			return
+		}
+		const body = (req.body ?? {}) as { repo?: unknown; prompt?: unknown; private?: unknown }
+		const parsed = parseRepository(body.repo)
+		if (!parsed.ok) {
+			res.status(400).json({ status: "failed", message: parsed.reason })
+			return
+		}
+		const prompt = typeof body.prompt === "string" ? body.prompt.trim() : ""
+		if (!prompt) {
+			res.status(400).json({ status: "failed", message: "Describe the change you want" })
+			return
+		}
+		if (prompt.length > MAX_PROMPT_CHARS) {
+			res.status(400).json({ status: "failed", message: `Keep the description to ${MAX_PROMPT_CHARS} characters or fewer` })
+			return
+		}
+		const userId = resolveUserId(req, res)
+		if (!userId) {
+			res.status(400).json({ status: "failed", message: "Still setting up your session. Try again in a moment." })
+			return
+		}
+		const privateRepo = body.private === true
+		const accountId = typeof res.locals.accountId === "string" ? res.locals.accountId : undefined
+		const { repo } = parsed
+
+		try {
+			// Checked, not charged: the charge waits until GitHub access is granted,
+			// but nobody should approve access only to hear they're out of credits.
+			const cost = TOKEN_COSTS.pr
+			if (BILLING_ENABLED && cost > 0 && accountId) {
+				const balance = (await getAccount(accountId))?.tokens ?? 0
+				if (balance < cost) {
+					res.status(402).json({
+						status: "failed",
+						code: "insufficient_tokens",
+						message: `You're out of credits: this costs ${cost} and you have ${balance}. Buy more to keep building.`,
+						balance,
+						cost
+					})
+					return
+				}
+			}
+			if (!privateRepo && await isPublicRepository(repo) === false) {
+				res.status(404).json({
+					status: "failed",
+					code: "repo_not_found",
+					message: `There's no public repository at github.com/${repo.owner}/${repo.name}. Check the link, or tick "Private repository" if it's private.`
+				})
+				return
+			}
+
+			const requestId = `pr-${randomBytes(24).toString("base64url")}`
+			await writePrRequest(requestId, { userId, accountId, repo, prompt, private: privateRepo, state: "authorizing" })
+			res.json({ status: "success", requestId, authorizeUrl: authorizeUrl(requestId, githubRedirectUri(req), privateRepo) })
+		} catch (error) {
+			console.error("[github] PR start failed:", (error as Error).message)
+			res.status(503).json({ status: "failed", message: "Opening pull requests is temporarily unavailable" })
+		}
+	}
+)
+
+/** Polled by the console while the GitHub window is open, until the job is queued. */
+app.get("/github/pr/:requestId", async (req, res) => {
+	res.setHeader("Cache-Control", "no-store")
+	const { requestId } = req.params
+	try {
+		const record = isPrRequestId(requestId) ? await readPrRequest(requestId) : null
+		if (!record || !isRequester(record.userId, req, res)) {
+			res.status(404).json({ status: "failed", message: "This request has expired. Start it again." })
+			return
+		}
+		res.json({
+			status: "success",
+			state: record.state,
+			jobId: record.jobId ?? null,
+			repoUrl: record.repoUrl ?? null,
+			charged: record.charged ?? 0,
+			message: record.message ?? null
+		})
+	} catch (error) {
+		console.error("[github] PR lookup failed:", (error as Error).message)
+		res.status(503).json({ status: "failed", message: "Opening pull requests is temporarily unavailable" })
+	}
+})
+
+/** The pull request a finished job opened. */
+app.get("/github/pr-result/:id", async (req, res) => {
+	res.setHeader("Cache-Control", "no-store")
+	const { id } = req.params
+	if (!isDeploymentId(id)) {
+		res.status(400).json({ status: "failed", message: "Invalid job id" })
+		return
+	}
+	try {
+		const redis = await getRedisClient()
+		const [owner, url, title, number, files, branch, base, fork] = await redis.hmGet(prResultKey(id), [...PR_RESULT_FIELDS])
+		// Someone else's pull request answers exactly like a missing one.
+		if (!owner || !url || !isRequester(owner, req, res)) {
+			res.json({ status: "success", available: false })
+			return
+		}
+		let changed: string[] = []
+		try {
+			const list = JSON.parse(files || "[]")
+			if (Array.isArray(list)) changed = list.filter((entry): entry is string => typeof entry === "string")
+		} catch { /* an unreadable list only hides the file names */ }
+		res.json({ status: "success", available: true, url, title: title || "", number: Number(number) || null, files: changed, branch: branch || "", base: base || "", fork: fork === "1" })
+	} catch (error) {
+		console.error("[github] PR result lookup failed:", (error as Error).message)
+		res.status(503).json({ status: "failed", message: "Opening pull requests is temporarily unavailable" })
+	}
+})
+
+const sendPrPage = (res: Response, status: number, outcome: "started" | "failed", message: string, link?: string) =>
+	sendGitHubPage(res, status, outcome === "started" ? "Pull request started" : "Pull request not started", message, link, outcome === "started")
+
+/**
+ * The PR half of the shared callback. Exchanges the code, checks the user can
+ * see the repository, charges, and queues the job with the token encrypted
+ * beside it. From then on the worker owns the token and revokes it; any
+ * failure before that revokes it here.
+ */
+async function handlePrCallback(req: Request, res: Response, requestId: string, code: string) {
+	let record: PrRequest | null
+	try {
+		const redis = await getRedisClient()
+		// One callback per request: a reload or a replayed URL must not start two jobs.
+		const claimed = await redis.set(`${githubPrKey(requestId)}:claimed`, "1", { NX: true, EX: PR_REQUEST_TTL_SECONDS })
+		record = await readPrRequest(requestId)
+		if (!record) {
+			sendPrPage(res, 410, "failed", "This request has expired. Start it again from rwaft.")
+			return
+		}
+		if (claimed !== "OK") {
+			if (record.state === "queued") sendPrPage(res, 200, "started", "rwaft is already working on this pull request.", record.repoUrl)
+			else sendPrPage(res, 409, "failed", record.message || "This request is already being handled. Go back to rwaft to see how it went.")
+			return
+		}
+	} catch (error) {
+		console.error("[github] PR callback lookup failed:", (error as Error).message)
+		sendPrPage(res, 503, "failed", "Opening pull requests is temporarily unavailable. Try again in a moment.")
+		return
+	}
+
+	if (!code) {
+		const message = "GitHub access wasn't granted, so nothing was started."
+		await writePrRequest(requestId, { ...record, state: "failed", message }).catch(() => { })
+		sendPrPage(res, 200, "failed", message)
+		return
+	}
+
+	await writePrRequest(requestId, { ...record, state: "starting" }).catch(() => { })
+	const jobId = genId()
+	const { repo } = record
+	let token: string | undefined
+	let charge: JobCharge | undefined
+	let handedOver = false
+	try {
+		token = await exchangeCode(code, githubRedirectUri(req))
+		let info: RepositoryInfo
+		try {
+			info = await getRepository(token, repo)
+		} catch (error) {
+			if (error instanceof GitHubError && error.status === 404) {
+				throw new Error(`GitHub says you can't see ${repo.owner}/${repo.name}. Check the link${record.private ? "" : ", or tick \"Private repository\" if it's private"}.`)
+			}
+			throw error
+		}
+		if (info.archived || info.disabled) throw new Error(`${info.full_name} is archived, so it can't take pull requests.`)
+
+		const cost = TOKEN_COSTS.pr
+		if (BILLING_ENABLED && cost > 0 && record.accountId) {
+			const spent = await spendTokens(record.accountId, cost)
+			if (!spent.ok) throw new Error(`You're out of credits: this costs ${cost} and you have ${spent.balance}. Buy more to keep building.`)
+			charge = { userId: record.accountId, tokens: cost }
+		}
+
+		const redis = await getRedisClient()
+		await redis.set(prTokenKey(jobId), sealToken(token), { EX: PR_TOKEN_TTL_SECONDS })
+		await enqueueJob(PR_QUEUE, {
+			id: jobId,
+			userId: record.userId,
+			prompt: record.prompt,
+			repo,
+			deploymentUrl: info.html_url,
+			charge
+		})
+		handedOver = true
+		await writePrRequest(requestId, { ...record, state: "queued", jobId, repoUrl: info.html_url, charged: charge?.tokens ?? 0 })
+		sendPrPage(res, 200, "started", `rwaft is reading ${info.full_name} and writing your change. Watch it in rwaft; the pull request opens on GitHub when it's done.`, info.html_url)
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error)
+		console.error(`[github] PR for ${repo.owner}/${repo.name} not started${error instanceof GitHubError ? ` (${error.status})` : ""}:`, message)
+		await refundCharge(jobId, charge)
+		await getRedisClient().then((redis) => redis.del(prTokenKey(jobId))).catch(() => { })
+		await writePrRequest(requestId, { ...record, state: "failed", message }).catch(() => { })
+		sendPrPage(res, 502, "failed", message)
+	} finally {
+		if (token && !handedOver) {
+			await revokeToken(token).catch((error) => console.warn("[github] Token revoke failed:", (error as Error).message))
+		}
+	}
+}
 
 // ── Deployed site proxy (registered last: it matches everything) ────────────
 

@@ -86,8 +86,9 @@ services:
       # starter:pdt_…,builder:pdt_…,studio:pdt_… (one Dodo product per pack).
       - key: DODO_PRODUCTS
         sync: false
-      # "Push to GitHub": a GitHub OAuth App whose callback URL is
-      # https://rwaft.onrender.com/github/callback. Hidden until both are set.
+      # "Push to GitHub" and "Open a pull request": a GitHub OAuth App whose
+      # callback URL is https://rwaft.onrender.com/github/callback. Hidden
+      # until both are set. Set the same two on rwaft-worker.
       - key: GITHUB_CLIENT_ID
         sync: false
       - key: GITHUB_CLIENT_SECRET
@@ -146,6 +147,13 @@ services:
       - key: CLOUDINARY_API_KEY
         sync: false
       - key: CLOUDINARY_API_SECRET
+        sync: false
+
+      # The API's GitHub OAuth App: pull request jobs decrypt the user's token
+      # with it and revoke the token when the job ends.
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
         sync: false
 
       # A Gemini key is required for the /prompt flow. Every attempt goes to

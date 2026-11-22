@@ -4,8 +4,11 @@
  */
 export const DEPLOY_QUEUE = "rwaft:deploy"
 export const PROMPT_QUEUE = "rwaft:prompt"
+/** "Open a pull request": an AI change to a GitHub repository, made through the API without cloning it. */
+export const PR_QUEUE = "rwaft:pr"
 export const DEPLOY_PROCESSING = "rwaft:deploy:processing"
 export const PROMPT_PROCESSING = "rwaft:prompt:processing"
+export const PR_PROCESSING = "rwaft:pr:processing"
 export const DEPLOYMENT_STATUS_PREFIX = "rwaft:deployment-status:"
 
 export const logChannel = (userId: string) => `rwaft:logs:${userId}`
@@ -34,6 +37,14 @@ export const fulfilledKey = (paymentId: string) => `rwaft:billing:fulfilled:${pa
 export const sourceKey = (jobId: string) => `rwaft:source:${jobId}`
 /** One "Push to GitHub" request, from the button press to the OAuth callback. */
 export const githubPushKey = (pushId: string) => `rwaft:github:push:${pushId}`
+
+// ── Pull requests ───────────────────────────────────────────────────────────
+/** One "Open a pull request" request, from the button press until its job is queued. */
+export const githubPrKey = (requestId: string) => `rwaft:github:pr:${requestId}`
+/** The user's GitHub token for one PR job, encrypted; the worker deletes and revokes it when the job ends. */
+export const prTokenKey = (jobId: string) => `rwaft:github:pr-token:${jobId}`
+/** What a PR job opened, written by the worker. */
+export const prResultKey = (jobId: string) => `rwaft:pr:result:${jobId}`
 
 /** The tokens a job paid for, carried on the job so the worker can refund a failed build. */
 export interface JobCharge {
