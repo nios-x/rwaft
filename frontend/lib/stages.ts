@@ -57,7 +57,7 @@ const STAGE_PATTERNS: Array<[StageKey, RegExp]> = [
 	// Pull requests: build-services/lib/pr.ts.
 	["reading", /^Reading the repository /],
 	["choosing", /^Asking the AI which files/],
-	["opening", /^Forking |^Committing \d+ files? to a new branch|^Opening the pull request/]
+	["opening", /^Forking |^Committing \d+ files? to |^Opening the pull request/]
 ]
 
 const REPAIR_PATTERN = /^Build step failed - asking the AI to repair \((\d+)\/(\d+)\)/
@@ -112,9 +112,11 @@ export function annotate(message: string, kind: BuildKind, seen: Set<string>): s
 	return undefined
 }
 
-/** Notes for the messages only a pull request job logs (build-services/lib/pr.ts). */
+/** Notes for the messages only a pull request job logs (build-services/lib/pr.ts and ci.ts). */
 function annotatePullRequest(message: string, once: (key: string, note: string) => string | undefined): string | undefined {
 	if (/^Reading the repository /.test(message)) return once("reading", "Reading the repository on GitHub. Nothing is cloned: only the files the AI asks for are downloaded.")
+	const issue = /^Reading issue #(\d+): (.*)/.exec(message)
+	if (issue) return once("issue", `Reading issue #${issue[1]} on GitHub: "${issue[2]}". It says what to change.`)
 	if (/^Asking the AI which files/.test(message)) return once("choosing", "The AI is looking through the file list and picking the files it needs to read.")
 	const read = /^Read (\d+) files?:/.exec(message)
 	if (read) return `Read ${read[1]} file${read[1] === "1" ? "" : "s"}.`
@@ -123,9 +125,46 @@ function annotatePullRequest(message: string, once: (key: string, note: string) 
 	if (prepared) return once("prepared", `The change is ready: ${prepared[1]} file${prepared[1] === "1" ? "" : "s"}.`)
 	if (/^Forking /.test(message)) return once("fork", "You can't push to this repository, so rwaft is forking it to your GitHub account.")
 	if (/^Committing \d+ files? to a new branch/.test(message)) return once("commit", "Committing the change to a new branch.")
+	if (/^Committing \d+ files? to the pull request's branch/.test(message)) return once("commit", "Committing the change to the pull request's branch.")
 	if (/^Opening the pull request/.test(message)) return once("opening", "Opening the pull request.")
 	if (/^Opened pull request /.test(message)) return "Your pull request is open."
+	if (/^Added your change to pull request /.test(message)) return "Your change is on the pull request."
+	// The CI watch, after the pull request is open.
+	if (/^Watching the checks on pull request/.test(message)) return once("watch", "Watching the pull request's checks. If one fails, the AI reads its log and pushes a fix.")
+	const failed = /^Check failed: (.+)\. Asking the AI to fix it \((\d+)\/(\d+)\)/.exec(message)
+	if (failed) return `A check failed (${failed[1]}). The AI is reading its log and fixing it (try ${failed[2]} of ${failed[3]}).`
+	if (/^Pushed a fix to /.test(message)) return "Pushed the fix to the pull request. Watching the checks again."
+	if (/^All \d+ checks? passed/.test(message)) return "All checks passed."
+	const stillFailing = /^Checks still fail after (\d+) fix/.exec(message)
+	if (stillFailing) return `The checks still fail after ${stillFailing[1]} fix${stillFailing[1] === "1" ? "" : "es"}, so it's over to you.`
+	if (/^No checks ran on this pull request/.test(message)) return "No checks ran on this pull request, so there's nothing to watch."
+	const stopped = /^Stopped watching checks: (.+)/.exec(message)
+	if (stopped) return `Stopped watching the checks: ${stopped[1].replace(/[.!]?$/, ".")}`
 	return undefined
+}
+
+/** The line that ends a pull request job: what the chat shows the result after. */
+export const PR_DONE = /^Opened pull request |^Added your change to pull request /
+
+export type ChecksState = "watching" | "fixing" | "passed" | "failed" | "stopped" | "none"
+
+/** Where the CI watch stands, from its latest log line; null when nothing is watched. */
+export function checksFrom(lines: LogLine[]): { state: ChecksState; text: string } | null {
+	let current: { state: ChecksState; text: string } | null = null
+	for (const { message } of lines) {
+		let match: RegExpExecArray | null
+		if (/^Watching the checks on pull request/.test(message)) current = { state: "watching", text: "Watching the checks…" }
+		else if ((match = /^Checks: (\d+) running, (\d+) passed(?:, (\d+) failed)?/.exec(message))) {
+			current = { state: "watching", text: `Checks running: ${match[1]} still going, ${match[2]} passed${match[3] ? `, ${match[3]} failed` : ""}` }
+		} else if ((match = /^Check failed: (.+)\. Asking the AI to fix it \((\d+)\/(\d+)\)/.exec(message))) {
+			current = { state: "fixing", text: `${match[1]} failed. Fixing it (try ${match[2]} of ${match[3]})…` }
+		} else if (/^Pushed a fix to /.test(message)) current = { state: "watching", text: "Pushed a fix. Watching the checks again…" }
+		else if ((match = /^All (\d+) checks? passed/.exec(message))) current = { state: "passed", text: `All ${match[1]} check${match[1] === "1" ? "" : "s"} passed` }
+		else if ((match = /^Checks still fail after \d+ fix(?:es)?: (.+?)\. Over to you/.exec(message))) current = { state: "failed", text: `Still failing: ${match[1]}` }
+		else if (/^No checks ran on this pull request/.test(message)) current = { state: "none", text: "No checks ran" }
+		else if ((match = /^Stopped watching checks: (.+)/.exec(message))) current = { state: "stopped", text: `Stopped watching: ${match[1]}` }
+	}
+	return current
 }
 
 export interface Progress {

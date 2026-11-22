@@ -823,24 +823,95 @@ form.prompt {
   color: var(--text-3);
 }
 
-.prompt-private {
+.prompt-check {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex: none;
   font-size: 12.5px;
   color: var(--text-2);
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.prompt-private input {
+.prompt-check input {
   width: 14px;
   height: 14px;
   margin: 0;
   accent-color: var(--ink);
 }
 
-.chat .prompt-repo {
+.prompt-target {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.prompt-target strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Base branch, draft and the CI watch: a second, quieter row under the repository. */
+.prompt-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0 0 8px;
+  padding: 0 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.prompt-base {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 160px;
+  min-width: 0;
+  max-width: 260px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.prompt-base svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--text-3);
+}
+
+.prompt-option-label {
+  flex: none;
+}
+
+.prompt-base input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.prompt-base input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.prompt-base input::placeholder {
+  color: var(--text-3);
+}
+
+.chat .prompt-repo,
+.chat .prompt-options {
   margin-bottom: 4px;
   padding-bottom: 6px;
 }
@@ -3312,4 +3383,42 @@ li[data-state="failed"] .steps-dot {
 .state .pr-files {
   max-width: 46ch;
   margin: 0;
+}
+
+/* Where the pull request's CI watch stands. */
+.pr-checks {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.state .pr-checks {
+  margin: 0;
+}
+
+.pr-checks-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--text-3);
+}
+
+.pr-checks[data-state="passed"] {
+  color: var(--live-ink);
+}
+
+.pr-checks[data-state="passed"] .pr-checks-dot {
+  background: var(--live-c);
+}
+
+.pr-checks[data-state="failed"] {
+  color: var(--fail-ink);
+}
+
+.pr-checks[data-state="failed"] .pr-checks-dot {
+  background: var(--fail-c);
 }

@@ -17,15 +17,25 @@ export type PullRequestPhase =
 	| { step: "starting"; requestId: string }
 
 export interface PullRequestInput {
-	repo: string
+	/** Repository or issue link; left out for a follow-up, which uses its pull request's. */
+	repo?: string
 	prompt: string
-	private: boolean
+	private?: boolean
+	/** The branch to open against; the repository's default when left out. */
+	base?: string
+	draft?: boolean
+	/** Follow the checks afterwards and push fixes for failing ones. */
+	watchChecks: boolean
+	/** A follow-up: the earlier PR job whose pull request this adds a commit to. */
+	from?: string
 }
 
 export interface QueuedPullRequest {
 	jobId: string
 	repoUrl: string
 	charged: number
+	/** The issue the pull request resolves, when an issue link said what to do. */
+	issue: number | null
 }
 
 export interface StartFailure {
@@ -98,13 +108,13 @@ export function usePullRequest({ headers, onQueued, onFailed }: Options) {
 			if (Date.now() - started > POLL_LIMIT_MS) return fail("GitHub never confirmed access. Start the pull request again.")
 			try {
 				const response = await fetch(`${BACKEND_URL}/github/pr/${requestId}`, { headers: latest.current.headers() })
-				const data = await readApiJson<{ state?: string; jobId?: string | null; repoUrl?: string | null; charged?: number; message?: string | null }>(response)
+				const data = await readApiJson<{ state?: string; jobId?: string | null; repoUrl?: string | null; issue?: number | null; charged?: number; message?: string | null }>(response)
 				if (cancelled) return
 				if (!response.ok) return fail(data.message || "This request has expired. Start it again.")
 				if (data.state === "queued" && data.jobId) {
 					clearInterval(timer)
 					setPhase({ step: "idle" })
-					latest.current.onQueued({ jobId: data.jobId, repoUrl: data.repoUrl || "", charged: data.charged ?? 0 })
+					latest.current.onQueued({ jobId: data.jobId, repoUrl: data.repoUrl || "", charged: data.charged ?? 0, issue: data.issue ?? null })
 				} else if (data.state === "failed") {
 					fail(data.message || "The pull request couldn't be started.")
 				} else if (data.state === "starting") {

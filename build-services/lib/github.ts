@@ -91,11 +91,40 @@ async function request<T>(url: string, init: { method: string; headers: Record<s
 export class GitHubClient {
 	constructor(private readonly token: string) { }
 
-	call<T>(method: string, path: string, body?: unknown): Promise<T> {
-		return request<T>(`${API}${path}`, { method, headers: { Authorization: `Bearer ${this.token}` }, body })
+	call<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+		return request<T>(`${API}${path}`, { method, headers: { Authorization: `Bearer ${this.token}`, ...headers }, body })
 	}
-	get<T>(path: string) { return this.call<T>("GET", path) }
+	get<T>(path: string, headers?: Record<string, string>) { return this.call<T>("GET", path, undefined, headers) }
 	post<T>(path: string, body: unknown) { return this.call<T>("POST", path, body) }
+	patch<T>(path: string, body: unknown) { return this.call<T>("PATCH", path, body) }
+
+	/**
+	 * A plain-text download GitHub answers with a redirect to signed storage
+	 * (an Actions job's log). The redirect is followed without the token,
+	 * which storage would reject and should never see. Keeps the last
+	 * `maxChars`: the end of a log is where it failed.
+	 */
+	async download(path: string, maxChars = 400_000): Promise<string> {
+		const controller = new AbortController()
+		const timer = setTimeout(() => controller.abort(), GITHUB_TIMEOUT_MS)
+		try {
+			let response = await fetch(`${API}${path}`, {
+				headers: { Authorization: `Bearer ${this.token}`, "User-Agent": "rwaft", "X-GitHub-Api-Version": "2022-11-28" },
+				redirect: "manual",
+				signal: controller.signal
+			}) as unknown as FetchResponse
+			const location = response.status >= 300 && response.status < 400 ? response.headers.get("location") : null
+			if (location) response = await fetch(location, { signal: controller.signal }) as unknown as FetchResponse
+			const text = await response.text()
+			if (!response.ok) throw new GitHubError(response.status, `GitHub returned ${response.status} for the download`, text.slice(0, 300))
+			return text.length > maxChars ? text.slice(-maxChars) : text
+		} catch (error) {
+			if (error instanceof GitHubError) throw error
+			throw new GitHubError(504, `The download didn't finish (${(error as Error).message})`)
+		} finally {
+			clearTimeout(timer)
+		}
+	}
 }
 
 // ── The token the API handed over ───────────────────────────────────────────

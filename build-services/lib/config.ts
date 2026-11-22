@@ -34,6 +34,11 @@ export const sourceKey = (jobId: string) => `rwaft:source:${jobId}`
 export const prTokenKey = (jobId: string) => `rwaft:github:pr-token:${jobId}`
 /** What a PR job opened, read back by the API for the console. */
 export const prResultKey = (jobId: string) => `rwaft:pr:result:${jobId}`
+/** Sealed PR tokens by revoke deadline; the API's sweep revokes what a job left behind. Same as the API's. */
+export const PR_TOKEN_DEADLINES = "rwaft:github:pr-token-deadlines"
+/** Pull requests whose checks are being followed, scored by when to look next. */
+export const PR_WATCHING = "rwaft:pr:watching"
+export const prWatchKey = (jobId: string) => `rwaft:pr:watch:${jobId}`
 
 const redisUrl = process.env.REDIS_URL
 
