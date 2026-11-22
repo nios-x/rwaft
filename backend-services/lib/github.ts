@@ -1,4 +1,5 @@
 import { gunzipSync } from "node:zlib"
+import { createCipheriv, createHash, randomBytes } from "node:crypto"
 import { getRedisClient } from "./redis.ts"
 import { sourceKey } from "./constants.ts"
 
@@ -93,6 +94,25 @@ export async function exchangeCode(code: string, redirectUri: string): Promise<s
 	return data.access_token
 }
 
+/**
+ * A pull request job runs for minutes on the worker, so unlike a push its
+ * token has to outlive the callback request. It is handed over encrypted
+ * (AES-256-GCM) under a short expiry, and the worker deletes and revokes it
+ * when the job ends. The key is GITHUB_TOKEN_KEY, or one derived from the
+ * OAuth App's secret, which the worker needs anyway to revoke the token.
+ * Keep the derivation in sync with build-services/lib/github.ts.
+ */
+const tokenKey = () =>
+	createHash("sha256").update(process.env.GITHUB_TOKEN_KEY?.trim() || `rwaft:github-token:${GITHUB_CLIENT_SECRET}`).digest()
+
+/** iv (12 bytes) + auth tag (16) + ciphertext, base64url. */
+export function sealToken(token: string): string {
+	const iv = randomBytes(12)
+	const cipher = createCipheriv("aes-256-gcm", tokenKey(), iv)
+	const sealed = Buffer.concat([cipher.update(token, "utf-8"), cipher.final()])
+	return Buffer.concat([iv, cipher.getAuthTag(), sealed]).toString("base64url")
+}
+
 /** Ends the token's life the moment the push is over. Failure here is logged, never surfaced. */
 export async function revokeToken(token: string): Promise<void> {
 	const basic = Buffer.from(`${GITHUB_CLIENT_ID}:${GITHUB_CLIENT_SECRET}`).toString("base64")
@@ -101,6 +121,77 @@ export async function revokeToken(token: string): Promise<void> {
 		headers: { Authorization: `Basic ${basic}` },
 		body: { access_token: token }
 	})
+}
+
+// ── Repositories a pull request targets ─────────────────────────────────────
+
+export interface RepositoryRef {
+	owner: string
+	name: string
+}
+
+const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
+
+/**
+ * Reads "owner/name" out of what people paste: a github.com URL (with or
+ * without .git, /tree/main/src, a query or a fragment) or the bare
+ * "owner/name" itself.
+ */
+export function parseRepository(raw: unknown): { ok: true; repo: RepositoryRef } | { ok: false; reason: string } {
+	if (typeof raw !== "string" || !raw.trim()) return { ok: false, reason: "A GitHub repository is required" }
+	let value = raw.trim()
+	if (value.length > 500) return { ok: false, reason: "That repository link is too long" }
+
+	if (/^(https?:\/\/)?(www\.)?github\.com\//i.test(value)) {
+		let parsed: URL
+		try {
+			parsed = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`)
+		} catch {
+			return { ok: false, reason: "That isn't a valid GitHub link" }
+		}
+		if (parsed.username || parsed.password) return { ok: false, reason: "The link must not contain credentials" }
+		value = parsed.pathname.replace(/^\/+/, "")
+	} else if (/^[a-z][a-z0-9+.-]*:/i.test(value) || value.includes("@")) {
+		return { ok: false, reason: "Use a github.com repository link, like https://github.com/owner/repo" }
+	}
+
+	const [owner = "", rawName = ""] = value.split("/")
+	const name = rawName.replace(/\.git$/i, "")
+	if (!OWNER.test(owner) || !isRepositoryName(name)) {
+		return { ok: false, reason: "Use a github.com repository link, like https://github.com/owner/repo" }
+	}
+	return { ok: true, repo: { owner, name } }
+}
+
+export interface RepositoryInfo {
+	full_name: string
+	html_url: string
+	private: boolean
+	archived: boolean
+	disabled?: boolean
+	default_branch: string
+	size: number
+	permissions?: { push?: boolean }
+}
+
+export const getRepository = (token: string, repo: RepositoryRef) =>
+	api<RepositoryInfo>(token, "GET", `/repos/${repo.owner}/${repo.name}`)
+
+/**
+ * Whether a repository is publicly visible, asked as the OAuth App (its
+ * client credentials get the app's own rate limit, not the server IP's 60 an
+ * hour). Lets the console say "not found" before sending anyone to GitHub's
+ * consent screen. null when GitHub can't be asked; the caller goes ahead.
+ */
+export async function isPublicRepository(repo: RepositoryRef): Promise<boolean | null> {
+	const basic = Buffer.from(`${GITHUB_CLIENT_ID}:${GITHUB_CLIENT_SECRET}`).toString("base64")
+	try {
+		const info = await request<RepositoryInfo>(`${API}/repos/${repo.owner}/${repo.name}`, { method: "GET", headers: { Authorization: `Basic ${basic}` } })
+		return !info.private
+	} catch (error) {
+		if (error instanceof GitHubError && error.status === 404) return false
+		return null
+	}
 }
 
 // ── Source snapshots ────────────────────────────────────────────────────────

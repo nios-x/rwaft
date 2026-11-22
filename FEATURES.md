@@ -35,6 +35,15 @@ rwaft turns a description in plain words into a real website with its own link. 
 - **Push to GitHub:** send your site's code to a new public or private repository on your GitHub account. rwaft only uses your GitHub access for that one push.
 - **Already have a project?** Paste a public GitHub, GitLab or Bitbucket link to a Vite or Create React App project, and rwaft builds and hosts it.
 
+## Open a pull request on any GitHub repository
+
+- Pick **Pull request**, paste a GitHub repository link and describe the change, like "add a dark mode toggle to the settings page".
+- GitHub asks you to approve access. rwaft's AI reads only the files it needs, writes the change, and opens a pull request from your account on a new branch. If you can't push to the repository, it opens it from your fork.
+- The repository is never cloned: rwaft reads and writes through GitHub directly, and your GitHub access is revoked as soon as the pull request is open.
+- Tick **Private** for a private repository you have access to.
+- The change isn't built or run before the pull request opens, so review it and let your CI check it.
+- It costs **1 credit**, refunded if no pull request is opened.
+
 ## Credits
 
 - Sign in with Google and get **2 free credits**.

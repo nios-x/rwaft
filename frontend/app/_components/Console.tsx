@@ -10,6 +10,7 @@ import { useLine } from "../../lib/useLine"
 import { useTheme } from "../../lib/useTheme"
 import { addRecentBuild, buildTitle, settleRecentBuild, useRecentBuilds } from "../../lib/recentBuilds"
 import { deriveProgress, type BuildKind } from "../../lib/stages"
+import { repositoryLabel, usePullRequest, type PullRequestInput } from "../../lib/usePullRequest"
 import { STATE_LABEL, viewOf } from "../../lib/builds"
 import { GoogleButton, TokenShop, openTokenShop } from "./Account"
 import { Header } from "./Header"
@@ -35,6 +36,11 @@ export function Console({ footer, features }: ConsoleProps) {
   const [mode, setMode] = useState<BuildKind>("prompt")
   const [promptText, setPromptText] = useState("")
   const [repositoryUrl, setRepositoryUrl] = useState("")
+  // The pull request tab: a repository, the change to make in it, and whether it's private.
+  const [prRepo, setPrRepo] = useState("")
+  const [prText, setPrText] = useState("")
+  const [prPrivate, setPrPrivate] = useState(false)
+  const pendingPr = useRef<PullRequestInput | null>(null)
   const [error, setError] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   // null = the home screen; an id = that build's workspace.
@@ -138,12 +144,41 @@ export function Console({ footer, features }: ConsoleProps) {
     }
   }, [])
 
+  // Opens the build as soon as the GitHub callback has queued its job.
+  const pullRequest = usePullRequest({
+    headers: () => ({ ...(logUserId ? { "X-User-Id": logUserId } : {}), ...auth.authHeaders() }),
+    onQueued: ({ jobId, repoUrl, charged }) => {
+      const input = pendingPr.current
+      const repo = repositoryLabel(input?.repo ?? prRepo)
+      addRecentBuild({
+        id: jobId,
+        kind: "pr",
+        url: repoUrl || `https://github.com/${repo}`,
+        at: Date.now(),
+        charged,
+        source: input?.prompt ?? "",
+        repo,
+        private: input?.private ?? false,
+      })
+      pendingPr.current = null
+      setOpenId(jobId)
+      setView("chat")
+      setPrText("")
+      if (charged && auth.account) auth.setBalance(auth.account.tokens - charged)
+    },
+    onFailed: (message) => {
+      pendingPr.current = null
+      setError(message)
+    },
+  })
+  const prBusy = pullRequest.phase.step !== "idle"
+
   const signedIn = Boolean(auth.account)
   const cost = auth.config?.costs[mode] ?? 0
   const needsSignIn = billing && !signedIn
   const balance = auth.account?.tokens ?? 0
   const short = billing && signedIn && balance < cost
-  const value = mode === "deploy" ? repositoryUrl : promptText
+  const value = mode === "deploy" ? repositoryUrl : mode === "pr" ? prText : promptText
   // Inside a finished app, the chat box changes that app. A failed change
   // retries against the same version it was changing.
   const editTarget = build?.kind === "prompt" && mode === "prompt"
@@ -161,6 +196,25 @@ export function Console({ footer, features }: ConsoleProps) {
     }
     const userId = logUserId
     if (!userId) return setError("Still setting up your session. Try again in a moment.")
+
+    // A pull request goes through GitHub's consent window first; the hook opens
+    // it before any await, which is why nothing above this awaits.
+    if (mode === "pr") {
+      const input = { repo: prRepo.trim(), prompt: value.trim(), private: prPrivate }
+      pendingPr.current = input
+      setIsSubmitting(true)
+      const failure = await pullRequest.start(input)
+      setIsSubmitting(false)
+      if (!failure) return
+      pendingPr.current = null
+      if (failure.status === 402) {
+        if (typeof failure.balance === "number") auth.setBalance(failure.balance)
+        openTokenShop()
+      }
+      if (failure.status === 401 && failure.code === "sign_in_required") void refresh()
+      setError(failure.message)
+      return
+    }
 
     const source = value.trim()
     setIsSubmitting(true)
@@ -217,13 +271,29 @@ export function Console({ footer, features }: ConsoleProps) {
     mode,
     setMode: (next) => { setMode(next); setError("") },
     value,
-    setValue: mode === "deploy" ? setRepositoryUrl : setPromptText,
+    setValue: mode === "deploy" ? setRepositoryUrl : mode === "pr" ? setPrText : setPromptText,
     onSubmit: handleSubmit,
-    submitting: isSubmitting,
-    canSubmit: !isSubmitting && value.trim().length > 0 && !needsSignIn,
+    submitting: isSubmitting || prBusy,
+    canSubmit: !isSubmitting && !prBusy && value.trim().length > 0 && !needsSignIn && (mode !== "pr" || prRepo.trim().length > 0),
     costLabel: !auth.config ? "" : !billing ? "Free" : `${cost} credit${cost === 1 ? "" : "s"}${signedIn ? ` · ${balance} left` : ""}`,
     blocked,
     error,
+    pullRequests: Boolean(auth.config?.github),
+    repo: prRepo,
+    setRepo: setPrRepo,
+    privateRepo: prPrivate,
+    setPrivateRepo: setPrPrivate,
+    notice: pullRequest.phase.step === "authorizing" ? (
+      <>
+        <p className="gh-progress"><span className="gh-spinner" aria-hidden="true" />Approve access in the GitHub window…</p>
+        <div className="gh-actions">
+          <a className="text-btn" href={pullRequest.phase.authorizeUrl} target="rwaft-github">Window didn&apos;t open? Continue on GitHub</a>
+          <button type="button" className="text-btn" onClick={() => { pendingPr.current = null; pullRequest.cancel() }}>Cancel</button>
+        </div>
+      </>
+    ) : pullRequest.phase.step === "starting" ? (
+      <p className="gh-progress"><span className="gh-spinner" aria-hidden="true" />Access approved. Starting your pull request…</p>
+    ) : null,
   }
 
   const goHome = () => {
@@ -233,10 +303,14 @@ export function Console({ footer, features }: ConsoleProps) {
   }
 
   // Same prompt, same mode, back in the box: one tap from a failed build to another try.
-  const retry = (failed: { kind: BuildKind; source?: string; url: string }) => {
+  const retry = (failed: { kind: BuildKind; source?: string; url: string; repo?: string; private?: boolean }) => {
     setMode(failed.kind)
     if (failed.kind === "prompt") setPromptText(failed.source ?? "")
-    else setRepositoryUrl(failed.source ?? "")
+    else if (failed.kind === "pr") {
+      setPrText(failed.source ?? "")
+      setPrRepo(failed.repo ?? "")
+      setPrPrivate(Boolean(failed.private))
+    } else setRepositoryUrl(failed.source ?? "")
     setError("")
     setView("chat")
     setTimeout(() => chatInput.current?.focus(), 0)

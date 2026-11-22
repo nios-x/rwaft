@@ -12,13 +12,17 @@ import {
 	getRawAssetUrl,
 	DEPLOY_QUEUE,
 	PROMPT_QUEUE,
+	PR_QUEUE,
 	DEPLOY_PROCESSING,
 	PROMPT_PROCESSING,
+	PR_PROCESSING,
 	DEPLOYMENT_STATUS_PREFIX,
 	BUILD_WAITING,
 	BUILD_ACTIVE,
 	userKey,
-	refundKey
+	refundKey,
+	prTokenKey,
+	prResultKey
 } from "./lib/config.ts"
 import { getAllFileNames } from "./lib/helper.ts"
 import { uploadFile } from "./lib/upload.ts"
@@ -39,6 +43,8 @@ import { run, installDependencies, buildProject } from "./lib/run.ts"
 import { withBuildSlot, buildSlotStats } from "./lib/jobslot.ts"
 import { restoreSourceSnapshot, saveSourceSnapshot } from "./lib/source.ts"
 import { editApp } from "./lib/edit.ts"
+import { openPullRequest } from "./lib/pr.ts"
+import { GitHubClient, canHandlePullRequests, openToken, revokeToken } from "./lib/github.ts"
 import { assertNoUndefinedIdentifiers } from "./lib/validate.ts"
 import {
 	RUNTIME_DEPENDENCIES,
@@ -92,6 +98,8 @@ interface JobPayload {
 	prompt?: string
 	/** A prompt job that changes this earlier build instead of starting a new app. */
 	baseId?: string
+	/** A pull request job's target repository. */
+	repo?: { owner: string; name: string }
 	deploymentUrl?: string
 	/**
 	 * Path the built site's assets will be served from ("/" for wildcard
@@ -814,6 +822,10 @@ function parsePayload(raw: string, label: string): JobPayload | null {
 			url: parsed.url,
 			prompt: parsed.prompt,
 			baseId: typeof parsed.baseId === "string" && /^[a-z0-9]{8}$/.test(parsed.baseId) ? parsed.baseId : undefined,
+			repo: typeof parsed.repo?.owner === "string" && typeof parsed.repo?.name === "string"
+				&& /^[A-Za-z0-9-]{1,39}$/.test(parsed.repo.owner) && /^[A-Za-z0-9._-]{1,100}$/.test(parsed.repo.name)
+				? { owner: parsed.repo.owner, name: parsed.repo.name }
+				: undefined,
 			deploymentUrl: parsed.deploymentUrl,
 			assetBase: typeof parsed.assetBase === "string" ? parsed.assetBase : `/${parsed.id}/`,
 			charge: typeof parsed.charge?.userId === "string" && Number.isInteger(parsed.charge?.tokens) && parsed.charge.tokens > 0
@@ -852,14 +864,15 @@ async function refundFailedJob(redis: RedisLike, payload: JobPayload) {
 
 /**
  * Shared job pump: claim -> run inside a per-user log context -> ack.
- * `handler` throws to mark the job failed.
+ * `handler` throws to mark the job failed, and may return the URL the job
+ * produced when that isn't the deployment URL (a pull request's).
  */
 async function pump(
 	label: string,
 	kind: JobKind,
 	queue: string,
 	processing: string,
-	handler: (payload: JobPayload, redis: RedisLike) => Promise<void>
+	handler: (payload: JobPayload, redis: RedisLike) => Promise<void | { url: string }>
 ) {
 	const redis = createRedisClient()
 	await redis.connect()
@@ -894,7 +907,7 @@ async function pump(
 				// this job's own runtime, so it must not count against its
 				// deadline — and the status stays "queued", which is what the
 				// proxy's waiting page already renders.
-				await withBuildSlot(async () => {
+				const result = await withBuildSlot(async () => {
 					// Out of the waiting line, into the running set: this is what
 					// moves everyone behind it up a place.
 					await redis.zRem(BUILD_WAITING, id).catch(() => { })
@@ -903,12 +916,14 @@ async function pump(
 					jobLog(`Starting ${kind} job ${id}`)
 					await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "building", { EX: STATUS_TTL_SECONDS })
 
-					await withTimeout(handler(payload, redis), JOB_TIMEOUT_MS, `${kind} job ${id}`)
+					return await withTimeout(handler(payload, redis), JOB_TIMEOUT_MS, `${kind} job ${id}`)
 				})
 
 				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: STATUS_TTL_SECONDS })
-				jobLog(`Deployment ${id} is live`, "success")
-				jobStatus("ready", { url: payload.deploymentUrl })
+				const url = result?.url ?? payload.deploymentUrl
+				// The console reads these two lines; keep them in sync with frontend/lib/stages.ts.
+				jobLog(kind === "pr" ? `Opened pull request ${url}` : `Deployment ${id} is live`, "success")
+				jobStatus("ready", { url })
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error)
 				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: STATUS_TTL_SECONDS }).catch(() => { })
@@ -1009,6 +1024,51 @@ const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESS
 	}
 })
 
+/**
+ * An AI change to a GitHub repository, opened as a pull request. No project
+ * directory and no clone: files are read and written through GitHub's API.
+ * The user's token arrives encrypted beside the job and is deleted and
+ * revoked when the job ends, however it ends.
+ */
+const prWorker = () => pump("pr", "pr", PR_QUEUE, PR_PROCESSING, async (payload, redis) => {
+	let token: string | undefined
+	try {
+		if (!payload.prompt || !payload.repo) throw new Error("Pull request job carried no repository or request")
+		if (!canHandlePullRequests) {
+			console.error("[pr] GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be set on build-services (the API's values) to handle pull requests")
+			throw new Error("Pull requests aren't set up on the build server yet")
+		}
+		const sealed = await redis.get(prTokenKey(payload.id))
+		if (!sealed) throw new Error("GitHub access for this request ran out while it waited in line. Start it again")
+		try {
+			token = openToken(sealed)
+		} catch {
+			console.error("[pr] Could not decrypt a token: GITHUB_TOKEN_KEY or GITHUB_CLIENT_SECRET differ between the API and build-services")
+			throw new Error("GitHub access for this request couldn't be read on the build server. Start it again")
+		}
+		const result = await openPullRequest(new GitHubClient(token), { ...payload.repo, prompt: payload.prompt, jobId: payload.id })
+		await redis.multi()
+			.hSet(prResultKey(payload.id), {
+				owner: payload.userId,
+				url: result.url,
+				title: result.title,
+				number: String(result.number),
+				files: JSON.stringify(result.files),
+				branch: result.branch,
+				base: result.base,
+				fork: result.fork ? "1" : "0"
+			})
+			.expire(prResultKey(payload.id), STATUS_TTL_SECONDS)
+			.exec()
+		return { url: result.url }
+	} finally {
+		await redis.del(prTokenKey(payload.id)).catch(() => { })
+		if (token) {
+			await revokeToken(token).catch((error) => console.warn(`[pr] Token revoke for ${payload.id} failed:`, (error as Error).message))
+		}
+	}
+})
+
 // ── Health probe ────────────────────────────────────────────────────────────
 
 /**
@@ -1056,6 +1116,9 @@ await fs.mkdir(root, { recursive: true })
 await sweepStaleBuilds()
 const sweepTimer = setInterval(() => { sweepStaleBuilds().catch(() => { }) }, STALE_BUILD_MS)
 const healthServer = startHealthServer()
+if (!canHandlePullRequests) {
+	console.warn("[pr] GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET are not set, so pull request jobs will fail (and be refunded). Set the API's values here too.")
+}
 
 /** Auto-restart a worker with exponential backoff (max 30s). */
 async function runWorkerForever(name: string, worker: () => Promise<void>) {
@@ -1096,5 +1159,6 @@ process.on("SIGINT", () => { void shutdown("SIGINT") })
 
 await Promise.all([
 	runWorkerForever("deploy", deployWorker),
-	runWorkerForever("prompt", promptWorker)
+	runWorkerForever("prompt", promptWorker),
+	runWorkerForever("pr", prWorker)
 ])

@@ -20,6 +20,21 @@ export interface RecentBuild {
 	settledAt?: number
 	/** Where "Push to GitHub" put the source. Kept here because the server forgets it after a day. */
 	repoUrl?: string
+	/** A pull request job's repository, as "owner/name". */
+	repo?: string
+	/** Whether a pull request job asked for private-repository access. */
+	private?: boolean
+	/** What a pull request job opened. Kept here because the server forgets it after a day. */
+	pr?: PullRequestInfo
+}
+
+export interface PullRequestInfo {
+	url: string
+	title: string
+	number: number | null
+	files: string[]
+	/** Opened from the user's fork, because they couldn't push to the repository. */
+	fork: boolean
 }
 
 /**
@@ -92,10 +107,16 @@ export const setRecentBuildRepo = (id: string, repoUrl: string) => {
 	write(builds.map((build) => (build.id === id ? { ...build, repoUrl } : build)))
 }
 
+export const setRecentBuildPr = (id: string, pr: PullRequestInfo) => {
+	const builds = read()
+	if (!builds.some((build) => build.id === id && build.pr?.url !== pr.url)) return
+	write(builds.map((build) => (build.id === id ? { ...build, pr } : build)))
+}
+
 /** A short human title for a build: the first words of its prompt, or the repo name. */
 export function buildTitle(build: Pick<RecentBuild, "kind" | "source" | "id">): string {
 	const source = build.source?.trim()
-	if (!source) return build.kind === "prompt" ? "App from a prompt" : "GitHub repository"
+	if (!source) return build.kind === "prompt" ? "App from a prompt" : build.kind === "pr" ? "Pull request" : "GitHub repository"
 	if (build.kind === "deploy") {
 		const name = source.replace(/\/+$/, "").split("/").slice(-2).join("/")
 		return name || source

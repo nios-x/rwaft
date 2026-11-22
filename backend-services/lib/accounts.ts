@@ -21,7 +21,9 @@ export const BILLING_ENABLED = process.env.PROD === "true"
 export const TOKEN_COSTS = {
 	deploy: Math.max(0, Number(process.env.DEPLOY_TOKEN_COST ?? 1)),
 	// One message in the console is one prompt build.
-	prompt: Math.max(0, Number(process.env.PROMPT_TOKEN_COST ?? 1))
+	prompt: Math.max(0, Number(process.env.PROMPT_TOKEN_COST ?? 1)),
+	// One AI change opened as a pull request on a GitHub repository.
+	pr: Math.max(0, Number(process.env.PR_TOKEN_COST ?? 1))
 }
 /** Granted once, when an account is first created. */
 export const SIGNUP_TOKENS = Math.max(0, Number(process.env.SIGNUP_TOKENS ?? 2))

@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { annotate, type BuildKind, type Stage } from "../../lib/stages"
 import type { LogLine } from "../../lib/useBuildLogs"
 import { clockTime, formatElapsed, type BuildView } from "../../lib/builds"
-import { CheckIcon, ChevronRight, CopyIcon, CrossIcon, ExternalIcon, RefreshIcon } from "./Icons"
+import { BACKEND_URL, readApiJson } from "../../lib/config"
+import { setRecentBuildPr, type PullRequestInfo } from "../../lib/recentBuilds"
+import { CheckIcon, ChevronRight, CopyIcon, CrossIcon, ExternalIcon, PullRequestIcon, RefreshIcon } from "./Icons"
 import { PromptBox, type PromptBoxProps } from "./PromptBox"
 import { GitHubExport } from "./GitHubExport"
 
@@ -30,7 +32,7 @@ function stepsFrom(lines: LogLine[], kind: BuildKind): Step[] {
 				ts: line.ts,
 				// A refund is good news even though the worker logs it as a warning.
 				tone: line.level === "error" ? "bad"
-					: /is live$|^Refunded \d+ token/.test(line.message) ? "good"
+					: /is live$|^Refunded \d+ token|^Opened pull request /.test(line.message) ? "good"
 					: line.level === "warn" ? "warn" : "info",
 				raw: [line],
 			})
@@ -74,6 +76,49 @@ function LiveCheck() {
 			{/* A plain img: next/image would re-encode the animation, and this one is decorative. */}
 			<img src={settled ? still : "/animations/live-check.webp"} alt="" width={28} height={28} />
 		</picture>
+	)
+}
+
+/**
+ * What a finished pull request job opened. Asked for once and kept with the
+ * build, because the API forgets it after a day.
+ */
+function usePullRequestResult(build: BuildView, headers: () => Record<string, string>) {
+	const headersRef = useRef(headers)
+	useEffect(() => { headersRef.current = headers })
+	const wanted = build.kind === "pr" && build.state === "live" && !build.pr
+	useEffect(() => {
+		if (!wanted) return
+		let cancelled = false
+		void (async () => {
+			// The job's status can land a moment before the worker's result write.
+			for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+				try {
+					const response = await fetch(`${BACKEND_URL}/github/pr-result/${build.id}`, { headers: headersRef.current() })
+					const data = await readApiJson<{ available?: boolean; url?: string; title?: string; number?: number | null; files?: string[]; fork?: boolean }>(response)
+					if (data.available && data.url) {
+						setRecentBuildPr(build.id, { url: data.url, title: data.title ?? "", number: data.number ?? null, files: data.files ?? [], fork: Boolean(data.fork) })
+						return
+					}
+				} catch { /* tried again below */ }
+				await new Promise((resolve) => setTimeout(resolve, 1_500))
+			}
+		})()
+		return () => { cancelled = true }
+	}, [wanted, build.id])
+}
+
+const prLabel = (build: BuildView, pr: PullRequestInfo) => `${build.repo ?? "pull request"}${pr.number ? ` #${pr.number}` : ""}`
+
+/** The files a pull request changed, the first few by name. */
+function ChangedFiles({ files }: { files: string[] }) {
+	if (files.length === 0) return null
+	const shown = files.slice(0, 8)
+	return (
+		<ul className="pr-files" aria-label="Files changed">
+			{shown.map((file) => <li key={file}><code>{file}</code></li>)}
+			{files.length > shown.length && <li className="pr-files-more">and {files.length - shown.length} more</li>}
+		</ul>
 	)
 }
 
@@ -137,6 +182,7 @@ function Chat({ build, lines, connected, failure, billing, prompt, editing, onOp
 			>
 				<div className="msg msg--you">
 					{build.parentId && <span className="msg-kicker">Change</span>}
+					{build.kind === "pr" && <span className="msg-kicker">Pull request on {build.repo ?? build.url}</span>}
 					<p>{build.source || (build.kind === "prompt" ? "Build me an app." : build.url)}</p>
 					<span className="msg-time">{clockTime(build.at)}</span>
 				</div>
@@ -163,7 +209,21 @@ function Chat({ build, lines, connected, failure, billing, prompt, editing, onOp
 					</div>
 				))}
 
-				{build.state === "live" && (
+				{build.state === "live" && build.kind === "pr" && (
+					<div className="msg" data-tone="good">
+						<p className="msg-live"><LiveCheck key={build.id} /><span><strong>Your pull request is open.</strong> {build.pr?.fork ? "It comes from your fork, since you can't push to this repository." : "It's on a new branch, ready for review."}</span></p>
+						{build.pr ? (
+							<>
+								<a className="msg-link" href={build.pr.url} target="_blank" rel="noreferrer">{build.pr.title || prLabel(build, build.pr)} <ExternalIcon /></a>
+								<ChangedFiles files={build.pr.files} />
+							</>
+						) : (
+							<a className="msg-link" href={`${build.url.replace(/\/+$/, "")}/pulls`} target="_blank" rel="noreferrer">Open the repository&apos;s pull requests <ExternalIcon /></a>
+						)}
+						<p className="gh-note">rwaft changed these files through GitHub without cloning the repository, so nothing was built or tested. Review it, and let CI run before merging.</p>
+					</div>
+				)}
+				{build.state === "live" && build.kind !== "pr" && (
 					<div className="msg" data-tone="good">
 						<p className="msg-live"><LiveCheck key={build.id} /><span><strong>Your site is live.</strong> Share the link with anyone.</span></p>
 						<a className="msg-link" href={build.url} target="_blank" rel="noreferrer">{build.url} <ExternalIcon /></a>
@@ -178,7 +238,7 @@ function Chat({ build, lines, connected, failure, billing, prompt, editing, onOp
 				)}
 				{build.state === "failed" && (
 					<div className="msg" data-tone="bad">
-						<p><strong>This build didn&apos;t finish.</strong> {sentence(failure) || "It stopped before anything was published."}</p>
+						<p><strong>{build.kind === "pr" ? "No pull request was opened." : "This build didn't finish."}</strong> {sentence(failure) || (build.kind === "pr" ? "It stopped before anything reached GitHub." : "It stopped before anything was published.")}</p>
 						{billing && build.charged > 0 && !refunded && <p>Your credits will be refunded.</p>}
 						<button type="button" className="text-btn msg-action" onClick={onRetry}>Try again</button>
 					</div>
@@ -195,7 +255,7 @@ function Chat({ build, lines, connected, failure, billing, prompt, editing, onOp
 			<PromptBox
 				{...prompt}
 				size="compact"
-				placeholder={editing ? "Describe a change to this app…" : prompt.mode === "prompt" ? "Describe another app…" : "Paste a GitHub repo URL…"}
+				placeholder={editing ? "Describe a change to this app…" : prompt.mode === "prompt" ? "Describe another app…" : prompt.mode === "pr" ? "Describe a change to make in this repository…" : "Paste a GitHub repo URL…"}
 			/>
 		</section>
 	)
@@ -210,6 +270,9 @@ function Panel({ build, lines, stages, running, failure, onRetry }: Pick<Workspa
 	const elapsed = (inFlight ? now : lines.at(-1)?.ts ?? build.at) - build.at
 	const current = stages.find((stage) => stage.state === "live" || stage.state === "failed")
 	const log = useRef<HTMLDivElement>(null)
+	// A pull request has no site to preview: the panel points at GitHub instead.
+	const isPr = build.kind === "pr"
+	const link = isPr ? build.pr?.url ?? build.url : build.url
 
 	useEffect(() => {
 		if (tab === "log" && log.current) log.current.scrollTop = log.current.scrollHeight
@@ -217,7 +280,7 @@ function Panel({ build, lines, stages, running, failure, onRetry }: Pick<Workspa
 
 	const copy = async () => {
 		try {
-			await navigator.clipboard.writeText(build.url)
+			await navigator.clipboard.writeText(link)
 			setCopied(true)
 			setTimeout(() => setCopied(false), 1_600)
 		} catch { /* clipboard blocked; the address is selectable */ }
@@ -232,20 +295,22 @@ function Panel({ build, lines, stages, running, failure, onRetry }: Pick<Workspa
 						Log{lines.length > 0 && <span className="tab-count">{lines.length}</span>}
 					</button>
 				</div>
-				<div className="address" title={build.url}>
+				<div className="address" title={link}>
 					<span className="address-dot" data-state={build.state} aria-hidden="true" />
-					<span className="address-text">{build.url.replace(/^https?:\/\//, "")}</span>
+					<span className="address-text">{link.replace(/^https?:\/\//, "")}</span>
 				</div>
 				<button type="button" className="icon-btn" aria-label={copied ? "Link copied" : "Copy link"} onClick={copy}>
 					{copied ? <CheckIcon /> : <CopyIcon />}
 				</button>
-				<button type="button" className="icon-btn" aria-label="Reload preview" disabled={build.state !== "live"} onClick={() => setReloads((value) => value + 1)}>
-					<RefreshIcon />
-				</button>
+				{!isPr && (
+					<button type="button" className="icon-btn" aria-label="Reload preview" disabled={build.state !== "live"} onClick={() => setReloads((value) => value + 1)}>
+						<RefreshIcon />
+					</button>
+				)}
 				{build.state === "live" ? (
-					<a className="icon-btn" href={build.url} target="_blank" rel="noreferrer" aria-label="Open site in a new tab"><ExternalIcon /></a>
+					<a className="icon-btn" href={link} target="_blank" rel="noreferrer" aria-label={isPr ? "Open on GitHub" : "Open site in a new tab"}><ExternalIcon /></a>
 				) : (
-					<span className="icon-btn" aria-disabled="true" aria-label="Open site (available once live)"><ExternalIcon /></span>
+					<span className="icon-btn" aria-disabled="true" aria-label={isPr ? "Open on GitHub (available once opened)" : "Open site (available once live)"}><ExternalIcon /></span>
 				)}
 			</div>
 
@@ -261,6 +326,18 @@ function Panel({ build, lines, stages, running, failure, onRetry }: Pick<Workspa
 							</p>
 						))}
 					</div>
+				) : build.state === "live" && isPr ? (
+					<div className="state">
+						<span className="state-icon state-icon--good"><PullRequestIcon /></span>
+						<h2>{build.pr?.title || "Pull request opened"}</h2>
+						{build.pr && <p>{prLabel(build, build.pr)}{build.pr.fork ? ", from your fork" : ""}</p>}
+						{build.pr && <ChangedFiles files={build.pr.files} />}
+						<div className="state-actions">
+							<a className="pill-btn pill-btn--ink" href={build.pr?.url ?? `${build.url.replace(/\/+$/, "")}/pulls`} target="_blank" rel="noreferrer">
+								{build.pr ? "Review it on GitHub" : "Open the repository's pull requests"}
+							</a>
+						</div>
+					</div>
 				) : build.state === "live" ? (
 					<iframe
 						key={`${build.id}-${reloads}`}
@@ -272,8 +349,8 @@ function Panel({ build, lines, stages, running, failure, onRetry }: Pick<Workspa
 				) : build.state === "failed" ? (
 					<div className="state">
 						<span className="state-icon state-icon--bad"><CrossIcon /></span>
-						<h2>This build didn&apos;t finish</h2>
-						<p>{sentence(failure) || "It stopped before anything was published."}</p>
+						<h2>{isPr ? "No pull request was opened" : "This build didn't finish"}</h2>
+						<p>{sentence(failure) || (isPr ? "It stopped before anything reached GitHub." : "It stopped before anything was published.")}</p>
 						<div className="state-actions">
 							<button type="button" className="pill-btn pill-btn--ink" onClick={onRetry}>Try again</button>
 							<button type="button" className="text-btn" onClick={() => setTab("log")}>See where it stopped</button>
@@ -284,7 +361,7 @@ function Panel({ build, lines, stages, running, failure, onRetry }: Pick<Workspa
 						<p className="state-big">#{build.position ?? "…"}</p>
 						<h2>in line</h2>
 						<p>
-							{aheadOf(build.position, running)} You can close this tab; the link works once it&apos;s live.
+							{aheadOf(build.position, running)} {isPr ? "You can close this tab; the pull request opens on GitHub either way." : "You can close this tab; the link works once it's live."}
 						</p>
 					</div>
 				) : (
@@ -308,6 +385,7 @@ function Panel({ build, lines, stages, running, failure, onRetry }: Pick<Workspa
 }
 
 export function Workspace(props: WorkspaceProps & { view: "chat" | "preview" }) {
+	usePullRequestResult(props.build, props.requestHeaders)
 	return (
 		<main className="workspace" data-view={props.view}>
 			<Chat {...props} />

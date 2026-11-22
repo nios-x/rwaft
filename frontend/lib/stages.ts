@@ -9,8 +9,11 @@ import type { DeploymentStatus, LogLine } from "./useBuildLogs"
  * read off the real pipeline rather than a timer pretending to know.
  */
 
-export type BuildKind = "prompt" | "deploy"
-export type StageKey = "received" | "line" | "setup" | "planning" | "writing" | "installing" | "building" | "publishing" | "live"
+/** "pr": an AI change to a GitHub repository, opened as a pull request. */
+export type BuildKind = "prompt" | "deploy" | "pr"
+export type StageKey =
+	| "received" | "line" | "setup" | "planning" | "writing" | "installing" | "building" | "publishing" | "live"
+	| "reading" | "choosing" | "opening"
 export type StageState = "done" | "live" | "pending" | "failed"
 
 export interface Stage {
@@ -29,8 +32,19 @@ const STAGE_LABELS: Record<StageKey, string> = {
 	installing: "Installing",
 	building: "Building",
 	publishing: "Publishing",
-	live: "Live"
+	live: "Live",
+	reading: "Reading repo",
+	choosing: "Choosing files",
+	opening: "Opening PR"
 }
+
+/** Where a pull request's stop means something else than a site build's. */
+const PR_LABELS: Partial<Record<StageKey, string>> = {
+	writing: "Writing change",
+	live: "Opened"
+}
+
+const labelOf = (kind: BuildKind, key: StageKey) => (kind === "pr" ? PR_LABELS[key] : undefined) ?? STAGE_LABELS[key]
 
 /** First matching message moves the build to that stage. Order is the route's order. */
 const STAGE_PATTERNS: Array<[StageKey, RegExp]> = [
@@ -39,7 +53,11 @@ const STAGE_PATTERNS: Array<[StageKey, RegExp]> = [
 	["writing", /^Asking the AI to write|^Asking the AI to make your change|^Writing the .+ page|\[ai\] Iteration/],
 	["installing", /^Installing dependencies|^Reinstalling dependencies|^Dependencies already match/],
 	["building", /^Building project/],
-	["publishing", /^Uploading \d+ build artifacts/]
+	["publishing", /^Uploading \d+ build artifacts/],
+	// Pull requests: build-services/lib/pr.ts.
+	["reading", /^Reading the repository /],
+	["choosing", /^Asking the AI which files/],
+	["opening", /^Forking |^Committing \d+ files? to a new branch|^Opening the pull request/]
 ]
 
 const REPAIR_PATTERN = /^Build step failed - asking the AI to repair \((\d+)\/(\d+)\)/
@@ -47,7 +65,9 @@ const REPAIR_PATTERN = /^Build step failed - asking the AI to repair \((\d+)\/(\
 export const routeFor = (kind: BuildKind): StageKey[] =>
 	kind === "prompt"
 		? ["received", "line", "setup", "planning", "writing", "building", "publishing", "live"]
-		: ["received", "line", "setup", "installing", "building", "publishing", "live"]
+		: kind === "pr"
+			? ["received", "line", "reading", "choosing", "writing", "opening", "live"]
+			: ["received", "line", "setup", "installing", "building", "publishing", "live"]
 
 /** Plain-words note for a log line, shown in the margin beside it. Only stage changes get one. */
 export function annotate(message: string, kind: BuildKind, seen: Set<string>): string | undefined {
@@ -59,7 +79,11 @@ export function annotate(message: string, kind: BuildKind, seen: Set<string>): s
 	const repair = REPAIR_PATTERN.exec(message)
 	if (repair) return `The build hit an error. The AI is reading it and fixing the code (try ${repair[1]} of ${repair[2]}).`
 	if (/^Another build is in progress/.test(message)) return once("wait", "Someone else's build is running. Yours starts the moment it finishes.")
-	if (/^Starting (deploy|prompt) job/.test(message)) return once("start", "Your build has started.")
+	if (/^Starting (deploy|prompt|pr) job/.test(message)) return once("start", kind === "pr" ? "Started on your pull request." : "Your build has started.")
+	if (kind === "pr") {
+		const note = annotatePullRequest(message, once)
+		if (note) return note
+	}
 	if (/^Scaffolding a fresh/.test(message)) return once("setup", "Setting up a blank React project for your app.")
 	if (/^Fetching repository files/.test(message)) return once("setup", "Downloading your repository's files.")
 	if (/^Planning your app/.test(message)) return once("planning", "Planning the pages and picking a design: colours, fonts and layout.")
@@ -82,7 +106,25 @@ export function annotate(message: string, kind: BuildKind, seen: Set<string>): s
 	if (/is live$/.test(message)) return "Your site is live."
 	if (/^Deployment \w+ failed/.test(message)) return kind === "prompt"
 		? "The build stopped before it finished. Nothing was published."
-		: "This repository could not be built. Nothing was published."
+		: kind === "pr"
+			? "This stopped before a pull request was opened."
+			: "This repository could not be built. Nothing was published."
+	return undefined
+}
+
+/** Notes for the messages only a pull request job logs (build-services/lib/pr.ts). */
+function annotatePullRequest(message: string, once: (key: string, note: string) => string | undefined): string | undefined {
+	if (/^Reading the repository /.test(message)) return once("reading", "Reading the repository on GitHub. Nothing is cloned: only the files the AI asks for are downloaded.")
+	if (/^Asking the AI which files/.test(message)) return once("choosing", "The AI is looking through the file list and picking the files it needs to read.")
+	const read = /^Read (\d+) files?:/.exec(message)
+	if (read) return `Read ${read[1]} file${read[1] === "1" ? "" : "s"}.`
+	if (/^Asking the AI to write the change/.test(message)) return once("writing", "The AI is writing the change. This is usually the longest step.")
+	const prepared = /^Prepared (\d+) file changes?/.exec(message)
+	if (prepared) return once("prepared", `The change is ready: ${prepared[1]} file${prepared[1] === "1" ? "" : "s"}.`)
+	if (/^Forking /.test(message)) return once("fork", "You can't push to this repository, so rwaft is forking it to your GitHub account.")
+	if (/^Committing \d+ files? to a new branch/.test(message)) return once("commit", "Committing the change to a new branch.")
+	if (/^Opening the pull request/.test(message)) return once("opening", "Opening the pull request.")
+	if (/^Opened pull request /.test(message)) return "Your pull request is open."
 	return undefined
 }
 
@@ -93,7 +135,7 @@ export interface Progress {
 
 /** The route before anything has been sent: every stop still ahead. */
 export const emptyProgress = (kind: BuildKind): Progress => ({
-	stages: routeFor(kind).map((key) => ({ key, label: STAGE_LABELS[key], state: "pending" })),
+	stages: routeFor(kind).map((key) => ({ key, label: labelOf(kind, key), state: "pending" })),
 	repairs: 0
 })
 
@@ -121,7 +163,7 @@ export function deriveProgress(
 	if (status === "ready") reached = route.length - 1
 
 	const stages = route.map((key, index): Stage => {
-		const stage: Stage = { key, label: STAGE_LABELS[key], state: "pending" }
+		const stage: Stage = { key, label: labelOf(kind, key), state: "pending" }
 		if (status === "ready" || index < reached) stage.state = "done"
 		else if (index === reached) stage.state = status === "failed" ? "failed" : "live"
 		return stage

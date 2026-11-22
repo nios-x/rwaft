@@ -785,6 +785,77 @@ form.prompt {
   margin: 0;
 }
 
+/* The pull request tab's repository row, above the description. */
+.prompt-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.prompt-repo > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-3);
+}
+
+.prompt-repo input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13.5px;
+}
+
+.prompt-repo input[type="text"]:focus {
+  outline: none;
+}
+
+.prompt-repo input[type="text"]::placeholder {
+  color: var(--text-3);
+}
+
+.prompt-private {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: 12.5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.prompt-private input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--ink);
+}
+
+.chat .prompt-repo {
+  margin-bottom: 4px;
+  padding-bottom: 6px;
+}
+
+.prompt-notice {
+  display: grid;
+  gap: 8px;
+  margin: 10px 4px 0;
+  text-align: left;
+}
+
+.prompt-notice p {
+  margin: 0;
+}
+
 .prompt-error {
   margin: 10px 4px 0;
   font-size: 13px;
@@ -2155,6 +2226,16 @@ a.brand {
   }
 }
 
+/* Three choices plus the cost still fit a 360px phone once the chips drop their icons. */
+@media (max-width: 420px) {
+  .mode[data-choices="3"] button {
+    padding: 0 9px;
+  }
+  .mode[data-choices="3"] button svg {
+    display: none;
+  }
+}
+
 .msg-raw summary:hover {
   color: var(--text-2);
 }
@@ -2605,6 +2686,11 @@ a.brand {
 .state-icon svg {
   width: 20px;
   height: 20px;
+}
+
+.state-icon--good {
+  background: var(--live-soft);
+  color: var(--live-ink);
 }
 
 .state-icon--bad {
@@ -3198,4 +3284,32 @@ li[data-state="failed"] .steps-dot {
   :root[data-theme="dark"] .build-anim {
     background-image: url("/animations/building-dark-still.png");
   }
+}
+
+/* ── Pull requests ─────────────────────────────────────────────────────── */
+
+.pr-files {
+  display: grid;
+  gap: 2px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+  color: var(--text-2);
+  text-align: left;
+}
+
+.pr-files code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pr-files-more {
+  color: var(--text-3);
+}
+
+.state .pr-files {
+  max-width: 46ch;
+  margin: 0;
 }

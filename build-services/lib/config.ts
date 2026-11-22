@@ -16,9 +16,12 @@ loadEnv({ path: path.join(directory, "..", ".env"), override: false })
 // Keep these in sync with backend-services/lib/constants.ts.
 export const DEPLOY_QUEUE = "rwaft:deploy"
 export const PROMPT_QUEUE = "rwaft:prompt"
+/** An AI change to a GitHub repository, opened as a pull request. */
+export const PR_QUEUE = "rwaft:pr"
 /** Reliable-queue companion lists: an in-flight job lives here until it ends. */
 export const DEPLOY_PROCESSING = "rwaft:deploy:processing"
 export const PROMPT_PROCESSING = "rwaft:prompt:processing"
+export const PR_PROCESSING = "rwaft:pr:processing"
 export const DEPLOYMENT_STATUS_PREFIX = "rwaft:deployment-status:"
 /** Build line: waiting jobs scored by enqueue time, running ones by start time. */
 export const BUILD_WAITING = "rwaft:builds:waiting"
@@ -27,6 +30,10 @@ export const userKey = (userId: string) => `rwaft:user:${userId}`
 export const refundKey = (jobId: string) => `rwaft:billing:refunded:${jobId}`
 /** A generated app's source, kept for "Push to GitHub". Expires on its own. */
 export const sourceKey = (jobId: string) => `rwaft:source:${jobId}`
+/** A PR job's GitHub token, encrypted by the API. Deleted and revoked when the job ends. */
+export const prTokenKey = (jobId: string) => `rwaft:github:pr-token:${jobId}`
+/** What a PR job opened, read back by the API for the console. */
+export const prResultKey = (jobId: string) => `rwaft:pr:result:${jobId}`
 
 const redisUrl = process.env.REDIS_URL
 

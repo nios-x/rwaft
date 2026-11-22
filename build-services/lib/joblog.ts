@@ -15,7 +15,7 @@ import { createRedisClient } from "./config.ts"
  * every signature.
  */
 
-export type JobKind = "deploy" | "prompt"
+export type JobKind = "deploy" | "prompt" | "pr"
 
 export interface JobContext {
 	jobId: string
