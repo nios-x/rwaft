@@ -54,6 +54,20 @@ export const prResultKey = (jobId: string) => `rwaft:pr:result:${jobId}`
  */
 export const PR_TOKEN_DEADLINES = "rwaft:github:pr-token-deadlines"
 
+// ── Dashboard ───────────────────────────────────────────────────────────────
+/**
+ * An account's deployments: a sorted set of job ids scored by when each was
+ * accepted. Unlike the status, source and PR keys above it never expires; it
+ * is capped at MAX_DEPLOYMENTS_PER_ACCOUNT instead.
+ */
+export const accountDeploymentsKey = (accountId: string) => `rwaft:account:${accountId}:deployments`
+/**
+ * One deployment's record. The API writes it when the job is accepted and the
+ * worker fills in how it ended. Keep in sync with build-services/lib/config.ts.
+ */
+export const deploymentKey = (jobId: string) => `rwaft:deployment:${jobId}`
+export const MAX_DEPLOYMENTS_PER_ACCOUNT = 500
+
 /** The tokens a job paid for, carried on the job so the worker can refund a failed build. */
 export interface JobCharge {
 	userId: string

@@ -1,10 +1,11 @@
 "use client"
 
+import Link from "next/link"
 import { useEffect, useRef, useState } from "react"
 import { BACKEND_URL, readApiJson } from "../../lib/config"
 import { loadGoogleIdentity, registerCredentialHandler, type AccountState, type TokenPack } from "../../lib/useAccount"
 import type { Theme } from "../../lib/useTheme"
-import { ChevronDown, CoinIcon, SignOutIcon } from "./Icons"
+import { ChevronDown, CoinIcon, GridIcon, SignOutIcon } from "./Icons"
 
 export const TOKEN_SHOP_ID = "token-shop"
 export const openTokenShop = () => document.getElementById(TOKEN_SHOP_ID)?.showPopover()
@@ -104,6 +105,9 @@ export function AccountPill({ auth, theme }: { auth: AccountState; theme: Theme 
 						<strong>{account.name}</strong>
 						<span>{account.email}</span>
 					</p>
+					<Link href="/dashboard" role="menuitem" className="menu-item" onClick={() => setOpen(false)}>
+						<GridIcon /> Dashboard
+					</Link>
 					{config.billing && (
 						<button type="button" role="menuitem" className="menu-item" onClick={() => { setOpen(false); openTokenShop() }}>
 							<CoinIcon /> Recharge credits · {account.tokens} left

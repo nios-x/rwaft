@@ -95,6 +95,14 @@ export const useRecentBuilds = (): RecentBuild[] => useSyncExternalStore(subscri
 export const addRecentBuild = (build: RecentBuild) =>
 	write([build, ...read().filter((existing) => existing.id !== build.id)])
 
+/** The dashboard's "Remove": the same builds leave this browser's list too, or the merge would bring them back. */
+export const removeRecentBuilds = (ids: string[]) => {
+	const gone = new Set(ids)
+	const builds = read()
+	if (!builds.some((build) => gone.has(build.id))) return
+	write(builds.filter((build) => !gone.has(build.id)))
+}
+
 export const settleRecentBuild = (id: string, outcome: BuildOutcome) => {
 	const builds = read()
 	if (!builds.some((build) => build.id === id && build.outcome !== outcome)) return

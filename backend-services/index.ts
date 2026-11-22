@@ -56,6 +56,7 @@ import {
 } from "./lib/billing.ts"
 import { joinLine, leaveLine, linePosition } from "./lib/queue.ts"
 import { listUsers, requireAdmin } from "./lib/admin.ts"
+import { listDeployments, recordDeployment, removeDeployments, updateDeployment } from "./lib/deployments.ts"
 import { notifySignup, verifySignupAlert } from "./lib/alerts.ts"
 import {
 	GitHubError,
@@ -67,6 +68,7 @@ import {
 	isPublicRepository,
 	isRepositoryName,
 	issueInDescription,
+	listPublicBranches,
 	markSnapshotPushed,
 	parseRepository,
 	pushToNewRepository,
@@ -155,7 +157,7 @@ if (USE_WILDCARD_SUBDOMAINS) {
  * it cannot be broken again by however the platform's proxies rewrite Host or
  * X-Forwarded-Proto.
  */
-app.use(["/health", "/healthz", "/session", "/status", "/queue", "/logs", "/deploy", "/prompt", "/auth", "/billing/checkout", "/billing/test-credits", "/github", "/admin"], corsmiddlewares)
+app.use(["/health", "/healthz", "/session", "/status", "/queue", "/logs", "/deploy", "/prompt", "/auth", "/billing/checkout", "/billing/test-credits", "/github", "/admin", "/me"], corsmiddlewares)
 
 // ── Dodo Payments webhook ───────────────────────────────────────────────────
 //
@@ -206,7 +208,7 @@ app.post("/billing/webhook", express.raw({ type: "application/json", limit: "1mb
 // A repo URL or a prompt is small; a large body here is either a mistake or an
 // attempt to exhaust memory.
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "64kb" }))
-app.use(["/auth", "/deploy", "/prompt", "/billing/checkout", "/billing/test-credits", "/github"], authenticate())
+app.use(["/auth", "/deploy", "/prompt", "/billing/checkout", "/billing/test-credits", "/github", "/me"], authenticate())
 app.use("/logs", authenticate({ allowQuery: true }))
 
 const publicOrigin = (req: Request): string => {
@@ -800,6 +802,8 @@ app.post(
 			return
 		}
 
+		await recordDeployment(res.locals.accountId, { id, kind: "deploy", url: deploymentUrl, source: validation.url, repo: validation.url, charged: charge?.tokens ?? 0 })
+			.catch((error) => console.warn(`[dashboard] Could not record ${id}:`, (error as Error).message))
 		res.status(202).json({ status: "success", id, userId, url: deploymentUrl, charged: charge?.tokens ?? 0 })
 	}
 )
@@ -873,7 +877,60 @@ app.post(
 			return
 		}
 
+		await recordDeployment(res.locals.accountId, { id, kind: "prompt", url: deploymentUrl, source: prompt, parent: baseId, charged: charge?.tokens ?? 0 })
+			.catch((error) => console.warn(`[dashboard] Could not record ${id}:`, (error as Error).message))
 		res.status(202).json({ status: "success", id, userId, url: deploymentUrl, charged: charge?.tokens ?? 0, ...(baseId ? { from: baseId } : {}) })
+	}
+)
+
+// ── Dashboard: an account's deployments ─────────────────────────────────────
+
+/** Every deployment the signed-in account has made, newest first (lib/deployments.ts). */
+app.get("/me/deployments", async (_req, res) => {
+	res.setHeader("Cache-Control", "no-store")
+	const accountId = res.locals.accountId as string | undefined
+	if (!accountId) {
+		res.status(401).json({ status: "failed", code: "sign_in_required", message: "Sign in to see your deployments" })
+		return
+	}
+	try {
+		res.json({ status: "success", deployments: await listDeployments(accountId) })
+	} catch (error) {
+		console.error("[dashboard] List failed:", (error as Error).message)
+		res.status(503).json({ status: "failed", message: "Your deployments can't be loaded right now" })
+	}
+})
+
+/**
+ * Takes a deployment off the list, or with ?scope=project every deployment in
+ * its project. The live sites stay up; nothing is deleted from hosting.
+ */
+app.delete(
+	"/me/deployments/:id",
+	rateLimit({ name: "dashboard-remove", limit: 120, windowSeconds: 60 * 60 }),
+	async (req, res) => {
+		const accountId = res.locals.accountId as string | undefined
+		if (!accountId) {
+			res.status(401).json({ status: "failed", code: "sign_in_required", message: "Sign in to change your deployments" })
+			return
+		}
+		const id = String(req.params.id)
+		if (!isDeploymentId(id)) {
+			res.status(400).json({ status: "failed", message: "Invalid deployment id" })
+			return
+		}
+		try {
+			const removed = await removeDeployments(accountId, id, req.query.scope === "project")
+			// Someone else's deployment answers exactly like a missing one.
+			if (removed === 0) {
+				res.status(404).json({ status: "failed", message: "That deployment isn't in your list" })
+				return
+			}
+			res.json({ status: "success", removed })
+		} catch (error) {
+			console.error("[dashboard] Remove failed:", (error as Error).message)
+			res.status(503).json({ status: "failed", message: "That couldn't be removed right now" })
+		}
 	}
 )
 
@@ -1086,6 +1143,7 @@ app.get("/github/callback", async (req, res) => {
 		const repo = await pushToNewRepository(token, record.name, record.private, files)
 		// Cleanup: the source has done its job; only the repo link stays.
 		await markSnapshotPushed(record.buildId, repo.html_url)
+		await updateDeployment(record.buildId, { repoUrl: repo.html_url }).catch(() => { })
 		await writePush(pushId, { ...record, state: "done", repoUrl: repo.html_url })
 		sendPushPage(res, 200, "done", `Pushed ${files.length} files to ${repo.full_name}.`, repo.html_url)
 	} catch (error) {
@@ -1254,14 +1312,12 @@ app.post(
 					return
 				}
 			}
-			if (!from && !privateRepo && await isPublicRepository(repo) === false) {
-				res.status(404).json({
-					status: "failed",
-					code: "repo_not_found",
-					message: `There's no public repository at github.com/${repo.owner}/${repo.name}. Check the link, or tick "Private" if it's private.`
-				})
-				return
-			}
+			// Nobody ticks a "Private" box: a repository the app can't see is
+			// private (or doesn't exist; GitHub won't say which without a token),
+			// so GitHub's consent screen asks for private-repository access too.
+			// The console sends the same guess from its branch lookup; this is
+			// the check that counts.
+			if (!from && !privateRepo && await isPublicRepository(repo) === false) privateRepo = true
 
 			const requestId = `pr-${randomBytes(24).toString("base64url")}`
 			await writePrRequest(requestId, {
@@ -1281,6 +1337,39 @@ app.post(
 		} catch (error) {
 			console.error("[github] PR start failed:", (error as Error).message)
 			res.status(503).json({ status: "failed", message: "Opening pull requests is temporarily unavailable" })
+		}
+	}
+)
+
+/**
+ * A repository's branches, for the base picker in the pull request tab.
+ * Public repositories only: a private one can't be read before GitHub's
+ * consent screen, so the picker lets the user name a branch instead.
+ */
+app.get(
+	"/github/branches",
+	rateLimit({ name: "github-branches", limit: Number(process.env.GITHUB_BRANCHES_RATE_LIMIT || 120), windowSeconds: 10 * 60 }),
+	async (req, res) => {
+		res.setHeader("Cache-Control", "no-store")
+		if (!isGitHubConfigured) {
+			res.status(503).json({ status: "failed", message: "Opening pull requests isn't set up on this server" })
+			return
+		}
+		const parsed = parseRepository(typeof req.query.repo === "string" ? req.query.repo : "")
+		if (!parsed.ok) {
+			res.status(400).json({ status: "failed", message: parsed.reason })
+			return
+		}
+		try {
+			const list = await listPublicBranches(parsed.repo)
+			if (!list) {
+				res.json({ status: "success", available: false, repo: `${parsed.repo.owner}/${parsed.repo.name}` })
+				return
+			}
+			res.json({ status: "success", available: true, repo: `${parsed.repo.owner}/${parsed.repo.name}`, ...list })
+		} catch (error) {
+			console.warn(`[github] Branch list for ${parsed.repo.owner}/${parsed.repo.name} failed${error instanceof GitHubError ? ` (${error.status})` : ""}:`, (error as Error).message)
+			res.status(502).json({ status: "failed", message: "GitHub didn't list the branches. Try again in a moment." })
 		}
 	}
 )
@@ -1401,7 +1490,7 @@ async function handlePrCallback(req: Request, res: Response, requestId: string, 
 			info = await getRepository(token, repo)
 		} catch (error) {
 			if (error instanceof GitHubError && error.status === 404) {
-				throw new Error(`GitHub says you can't see ${repo.owner}/${repo.name}. Check the link${record.private ? "" : ", or tick \"Private\" if it's private"}.`)
+				throw new Error(`GitHub says you can't see ${repo.owner}/${repo.name}. Check the link, and that the GitHub account you approved with can open it.`)
 			}
 			throw error
 		}
@@ -1435,6 +1524,16 @@ async function handlePrCallback(req: Request, res: Response, requestId: string, 
 			charge
 		})
 		handedOver = true
+		await recordDeployment(record.accountId, {
+			id: jobId,
+			kind: "pr",
+			url: repoUrl,
+			source: record.prompt || (record.issue ? `Issue #${record.issue}` : ""),
+			parent: record.from,
+			repo: `${repo.owner}/${repo.name}`,
+			private: record.private,
+			charged: charge?.tokens ?? 0
+		}).catch((error) => console.warn(`[dashboard] Could not record ${jobId}:`, (error as Error).message))
 		await writePrRequest(requestId, { ...record, state: "queued", jobId, repoUrl, charged: charge?.tokens ?? 0 })
 		sendPrPage(res, 200, "started", record.from
 			? `rwaft is adding your change to the pull request on ${info.full_name}. Watch it in rwaft.`

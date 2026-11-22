@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import type { ReactNode } from "react"
 import { STATE_LABEL, relativeTime, type BuildView } from "../../lib/builds"
 import { buildTitle } from "../../lib/recentBuilds"
@@ -47,7 +48,10 @@ export function Home({ prompt, builds, onOpen, children }: HomeProps) {
 
 			{builds.length > 0 && (
 				<section className="projects" aria-labelledby="projects-title">
-					<h2 id="projects-title">Your builds</h2>
+					<div className="projects-head">
+						<h2 id="projects-title">Your builds</h2>
+						<Link href="/dashboard" className="text-btn">All projects</Link>
+					</div>
 					<ul className="project-grid">
 						{builds.map((build) => (
 							<li key={build.id}>

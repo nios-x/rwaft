@@ -11,6 +11,7 @@ import { useTheme } from "../../lib/useTheme"
 import { addRecentBuild, buildTitle, settleRecentBuild, useRecentBuilds } from "../../lib/recentBuilds"
 import { deriveProgress, type BuildKind } from "../../lib/stages"
 import { repositoryLabel, usePullRequest, type PullRequestInput } from "../../lib/usePullRequest"
+import { useRepoBranches } from "../../lib/useRepoBranches"
 import { rememberRepo, useRecentRepos } from "../../lib/recentRepos"
 import { STATE_LABEL, viewOf } from "../../lib/builds"
 import { GoogleButton, TokenShop, openTokenShop } from "./Account"
@@ -40,11 +41,19 @@ export function Console({ footer, features }: ConsoleProps) {
   // The pull request tab: a repository (or issue), the change to make in it, and its options.
   const [prRepo, setPrRepo] = useState("")
   const [prText, setPrText] = useState("")
-  const [prPrivate, setPrPrivate] = useState(false)
   const [prBase, setPrBase] = useState("")
   const [prDraft, setPrDraft] = useState(false)
   const [prWatchChecks, setPrWatchChecks] = useState(true)
   const recentRepos = useRecentRepos()
+  // The repository's branches, and whether it's private: rwaft can't list a
+  // private one before GitHub access, so that is what decides the access asked for.
+  const repoLookup = useRepoBranches(prRepo)
+  const prPrivate = repoLookup.branches.state === "unlisted"
+  // A base branch belongs to the repository it was picked for.
+  const changePrRepo = (next: string) => {
+    if (repositoryLabel(next).toLowerCase() !== repositoryLabel(prRepo).toLowerCase()) setPrBase("")
+    setPrRepo(next)
+  }
   // What was sent, for the build the GitHub callback queues.
   const pendingPr = useRef<{ input: PullRequestInput; repo: string; parentId?: string } | null>(null)
   const [error, setError] = useState("")
@@ -117,12 +126,25 @@ export function Console({ footer, features }: ConsoleProps) {
 
   // The /make pages link here with #prompt=<text>, #deploy for the repo box,
   // or #pr / #pr=<repo or issue link> for the pull request tab, so a visitor
-  // lands with the box ready. A fragment never reaches the server, so these
+  // lands with the box ready; the dashboard opens a build with #build=<id>. A fragment never reaches the server, so these
   // links add no URLs for search engines to crawl.
   useEffect(() => {
     let frame = 0
     const take = () => {
       const hash = window.location.hash
+      if (hash.startsWith("#build=")) {
+        // The dashboard's "Open in rwaft": it writes the build into this
+        // browser's list first, so the workspace has it to open.
+        const id = hash.slice("#build=".length)
+        cancelAnimationFrame(frame)
+        frame = requestAnimationFrame(() => {
+          window.history.replaceState(null, "", window.location.pathname + window.location.search)
+          if (!/^[a-z0-9]{8}$/.test(id)) return
+          setOpenId(id)
+          setView("chat")
+        })
+        return
+      }
       if (hash !== "#deploy" && hash !== "#pr" && !hash.startsWith("#prompt=") && !hash.startsWith("#pr=")) return
       // After the next paint, so the box it fills is there to focus. The URL
       // is only cleaned up in here: Strict Mode cancels the first run's frame.
@@ -310,9 +332,9 @@ export function Console({ footer, features }: ConsoleProps) {
     pr: {
       available: Boolean(auth.config?.github),
       repo: prRepo,
-      setRepo: setPrRepo,
-      privateRepo: prPrivate,
-      setPrivateRepo: setPrPrivate,
+      setRepo: changePrRepo,
+      repoLabel: repoLookup.repo,
+      branches: repoLookup.branches,
       base: prBase,
       setBase: setPrBase,
       draft: prDraft,
@@ -347,8 +369,7 @@ export function Console({ footer, features }: ConsoleProps) {
     if (failed.kind === "prompt") setPromptText(failed.source ?? "")
     else if (failed.kind === "pr") {
       setPrText(failed.source ?? "")
-      setPrRepo(failed.repo ?? "")
-      setPrPrivate(Boolean(failed.private))
+      changePrRepo(failed.repo ?? "")
     } else setRepositoryUrl(failed.source ?? "")
     setError("")
     setView("chat")

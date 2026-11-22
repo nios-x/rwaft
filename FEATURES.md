@@ -30,6 +30,16 @@ rwaft turns a description in plain words into a real website with its own link. 
 - Preview it right inside rwaft, copy the link, or open it in a new tab.
 - Your recent builds are listed on your device, so you can find them again.
 
+## Your dashboard
+
+- Signed in, open **Dashboard** from your account menu to see every project you've built, on any device.
+- Each project shows its live link, how its latest build went, and where its code is on GitHub: the repository you pushed it to, the repository it was built from, or the pull request it opened.
+- Search by name, link or prompt, and filter apps, repositories and pull requests.
+- Open a project to see the live site, every version with its own link, and the credits it used. Copy the link, push the code to GitHub, or open any version in rwaft to keep changing it.
+- **Deployments** lists every build, change and pull request in one place, newest first, with how long each took.
+- Removing a project takes it off your dashboard. Its live site stays up.
+- Builds from before the dashboard, or made before you signed in, show up on the device you made them on.
+
 ## Take your code with you
 
 - **Push to GitHub:** send your site's code to a new public or private repository on your GitHub account. rwaft only uses your GitHub access for that one push.
@@ -40,7 +50,8 @@ rwaft turns a description in plain words into a real website with its own link. 
 - Pick **Pull request**, paste a GitHub repository link and describe the change, like "add a dark mode toggle to the settings page".
 - **Or paste an issue link** (github.com/owner/repo/issues/12). rwaft reads the issue and its comments as the request, and the pull request closes the issue when it's merged.
 - GitHub asks you to approve access. rwaft's AI reads only the files it needs (it can search the code to find them), writes the change, and opens a pull request from your account on a new branch. If you can't push to the repository, it opens it from your fork.
-- **Options:** pick a **Base** branch other than the default, open it as a **Draft**, or tick **Private** for a private repository you have access to. Repositories you've used before are suggested as you type.
+- **Options:** pick a **Base** branch from the repository's own branches (with search), or open it as a **Draft**. Repositories you've used before are suggested as you type.
+- **Private repositories just work:** rwaft checks whether it can see the repository and, if not, GitHub asks for access to your private repositories as well. There's nothing to tick.
 - **Fix failing checks** (on by default): rwaft watches the pull request's CI. If a check fails, the AI reads its log and pushes a fix, up to 2 times, and tells you when everything passes.
 - **Keep going in the chat:** describe another change and rwaft adds it to the same pull request as a new commit, with a comment saying what changed.
 - The repository is never cloned: rwaft reads and writes through GitHub directly. Your GitHub access is revoked as soon as the job (and its check watching) ends.
