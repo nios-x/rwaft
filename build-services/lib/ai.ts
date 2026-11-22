@@ -58,10 +58,15 @@ interface ModelEntry {
  */
 let roundRobin = 0
 
-const DEFAULT_GEMINI_MODELS = [
-	"gemini-3.8-flash",
-	"gemini-3.6-flash",
-	"gemini-3.5-flash"
+/**
+ * The models every call tries, in this order, on every key: Gemini 4 Hydrogen,
+ * then Gemini 3.8 Flash when Hydrogen is overloaded or failing (see
+ * OVERLOAD_SWITCH below). Fixed in code on purpose, so every deployment builds
+ * with the same model; the old AI_MODEL variable no longer changes it.
+ */
+const GEMINI_MODELS = [
+	"gemini-4-hydrogen",
+	"gemini-3.8-flash"
 ]
 
 interface GeminiApiKey {
@@ -94,15 +99,10 @@ function getModelChain(): ModelEntry[] {
 	const geminiKeys = getGeminiApiKeys()
 	const chain: ModelEntry[] = []
 
-	const configuredModel = process.env.AI_MODEL
-	const models = configuredModel
-		? [configuredModel, ...DEFAULT_GEMINI_MODELS.filter(model => model !== configuredModel)]
-		: DEFAULT_GEMINI_MODELS
-
 	// Every key gets a turn on the preferred model before any key drops down
-	// to an older one, unless the model says it is overloaded (OVERLOAD_SWITCH).
+	// to the fallback, unless the model says it is overloaded (OVERLOAD_SWITCH).
 	// Which key goes first is callWithRetry's round robin.
-	for (const model of models) {
+	for (const model of GEMINI_MODELS) {
 		chain.push(...geminiKeys.map(entry => ({
 			client: () => getGeminiClient(entry.key),
 			model,
