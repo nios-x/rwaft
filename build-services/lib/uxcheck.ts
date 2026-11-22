@@ -196,8 +196,25 @@ export function findUxProblems(file: string, source: string, context: UxContext)
 		findings.push({ rule: "real-phone", message: "A phone number in a real, dialable format. Remove it (and its tel: link) or replace the contact option with the email or form." })
 	}
 
+	const eyebrows = code.match(EYEBROW)?.length ?? 0
+	if (eyebrows) findings.push({ rule: "eyebrow", message: `${eyebrows} small uppercase label${eyebrows === 1 ? "" : "s"} sitting right above a heading. Delete ${eyebrows === 1 ? "it" : "them"} and let the heading speak; move any real information into the heading or the sentence below it.` })
+
+	const arrows = code.match(ARROW_ICON)?.length ?? 0
+	if (arrows > 2) findings.push({ rule: "arrows", message: `${arrows} arrow icons on buttons and links. Keep one, on the main action that leads somewhere; remove the rest.` })
+
+	if (!STREET_NUMBER.test(context.prompt) && STREET_NUMBER.test(code)) {
+		findings.push({ rule: "house-number", message: "A street address with a house number or postcode. Use the street and district only (\"Rua da Graça, Graça\"), so the sample can't point at a real building." })
+	}
+
 	return findings
 }
+
+/** A tracked uppercase label whose closing tag is followed (maybe through one wrapper) by an <h1>–<h3>. */
+const EYEBROW = /className=(["'`])[^"'`]*\buppercase\b[^"'`]*\btracking-[^"'`]*\1[^>]*>[^<]{1,60}<\/(p|span|div|small)>\s*(<(div|span)\b[^>]*>\s*)?<h[1-3]\b/g
+/** lucide's arrows, and typed ones, as a direction cue. */
+const ARROW_ICON = /<(ArrowRight|ArrowUpRight|MoveRight|ArrowRightCircle)\b|[→↗]/g
+/** "Rua da Senhora do Monte 14", "142 Main Street", "1100-443 Lisboa". */
+const STREET_NUMBER = /\b(Rua|Rue|Avenida|Avenue|Ave\.?|Calle|Carrer|Via|Viale|Straße|Strasse|Street|St\.|Road|Rd\.?|Lane|Boulevard|Blvd\.?)\s+[A-Za-zÀ-ÿ'’. -]{2,40}?\s\d{1,4}[a-zA-Z]?\b|\b\d{1,5}\s+[A-Z][A-Za-z]+(\s[A-Z][A-Za-z]+)?\s(Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Boulevard|Blvd|Drive|Dr|Way)\b|\b\d{4}-\d{3}\s+[A-Z]/
 
 export const describeFindings = (findings: UxFinding[]) =>
 	findings.map((finding) => `- ${finding.message}`).join("\n")
