@@ -103,6 +103,9 @@ function designModule(plan: AppPlan): string {
 		layout: plan.layout,
 		pages: plan.pages.map((page) => ({ name: page.name, path: page.path })),
 		design: plan.design,
+		// Set to true by lib/photos.ts when the site uses Pexels photos; the
+		// layout then shows the credit Pexels asks for.
+		photoCredit: false,
 	}
 	return `/**
  * The design schema for this site, written by rwaft from the build plan.
@@ -331,7 +334,10 @@ export default function Layout({ children }: { children: ReactNode }) {
 						<span className="font-heading font-semibold text-foreground">{site.name}</span>
 						{site.tagline ? \` · \${site.tagline}\` : ""}
 					</p>
-					<p>© {new Date().getFullYear()} {site.name}</p>
+					<p>
+						© {new Date().getFullYear()} {site.name}
+						{site.photoCredit && <> · Photos from <a href="https://www.pexels.com" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-foreground">Pexels</a></>}
+					</p>
 				</Container>
 			</footer>
 		</div>
@@ -340,10 +346,20 @@ export default function Layout({ children }: { children: ReactNode }) {
 `
 
 const BARE_LAYOUT = `import type { ReactNode } from "react"
+import { site } from "../design"
 
 /** No chrome: the page owns the whole screen. */
 export default function Layout({ children }: { children: ReactNode }) {
-	return <main className="min-h-dvh bg-background text-foreground">{children}</main>
+	return (
+		<main className="min-h-dvh bg-background text-foreground">
+			{children}
+			{site.photoCredit && (
+				<p className="pointer-events-none fixed bottom-2 right-3 text-[11px] text-muted-foreground">
+					Photos from <a href="https://www.pexels.com" target="_blank" rel="noreferrer" className="pointer-events-auto underline underline-offset-2">Pexels</a>
+				</p>
+			)}
+		</main>
+	)
 }
 `
 

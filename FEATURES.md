@@ -9,6 +9,7 @@ rwaft turns a description in plain words into a real website with its own link. 
 - Every page shares the same look, with a header, a footer and navigation between pages.
 - If something breaks while it's being built, rwaft fixes it on its own before showing it to you.
 - Every page is checked for usability before it goes live: images have descriptions and don't make the page jump, form fields have labels, buttons say what they do, everything works with a keyboard and on a phone.
+- Photos match what each section is about: a café gets coffee and pastries, a photographer gets weddings and portraits. They come from Pexels, which the footer credits.
 - rwaft never makes up reviews, ratings, customer logos or contact details for your site. Menus, prices and opening hours are realistic samples for you to replace.
 
 **Good for:** landing pages, portfolios, menus, event pages, trackers, simple games and other small tools.

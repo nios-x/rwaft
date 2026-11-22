@@ -44,6 +44,7 @@ import {
 import { run, installDependencies, buildProject } from "./lib/run.ts"
 import { withBuildSlot, buildSlotStats } from "./lib/jobslot.ts"
 import { restoreSourceSnapshot, saveSourceSnapshot } from "./lib/source.ts"
+import { resolvePhotos } from "./lib/photos.ts"
 import { editApp } from "./lib/edit.ts"
 import { openPullRequest, updatePullRequest, type PullRequestRef, type PullRequestResult } from "./lib/pr.ts"
 import { startWatching, watchChecksForever } from "./lib/ci.ts"
@@ -1047,6 +1048,10 @@ const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESS
 	const { plan, history } = payload.baseId
 		? await changeApp(projectDir, payload.prompt, payload.baseId, redis)
 		: await createApp(projectDir, payload.prompt)
+
+	// Real photographs for the placeholder images, before the build bundles
+	// the source (lib/photos.ts). A no-op without PEXELS_API_KEY.
+	await resolvePhotos(projectDir, redis)
 
 	await installAndBuildPromptProject(
 		projectDir,

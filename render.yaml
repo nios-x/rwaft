@@ -156,6 +156,11 @@ services:
       - key: GITHUB_CLIENT_SECRET
         sync: false
 
+      # Optional: real photos in generated sites instead of random placeholders
+      # (lib/photos.ts). A free key from https://www.pexels.com/api/.
+      - key: PEXELS_API_KEY
+        sync: false
+
       # A Gemini key is required for the /prompt flow. Every attempt goes to
       # the next configured key (round robin), and a rate-limited key sits out
       # its cooldown, so more free-tier keys means fewer stalls. Leave unused
