@@ -59,10 +59,10 @@ interface ModelEntry {
 let roundRobin = 0
 
 /**
- * The models every call tries, in this order, on every key: Gemini 4 Hydrogen,
- * then Gemini 3.8 Flash when Hydrogen is overloaded or failing (see
- * OVERLOAD_SWITCH below). Fixed in code on purpose, so every deployment builds
- * with the same model; the old AI_MODEL variable no longer changes it.
+ * The models every call tries, in this order: Gemini 4 Hydrogen, one call (see
+ * PREFERRED_MODEL_TRIES below), then Gemini 3.8 Flash on every key when that
+ * call fails. Fixed in code on purpose, so every deployment builds with the
+ * same model; the old AI_MODEL variable no longer changes it.
  */
 const GEMINI_MODELS = [
 	"gemini-4-hydrogen",
@@ -99,9 +99,8 @@ function getModelChain(): ModelEntry[] {
 	const geminiKeys = getGeminiApiKeys()
 	const chain: ModelEntry[] = []
 
-	// Every key gets a turn on the preferred model before any key drops down
-	// to the fallback, unless the model says it is overloaded (OVERLOAD_SWITCH).
-	// Which key goes first is callWithRetry's round robin.
+	// Every key is listed under every model. callWithRetry decides how many of
+	// them get a turn (Hydrogen: PREFERRED_MODEL_TRIES) and which goes first.
 	for (const model of GEMINI_MODELS) {
 		chain.push(...geminiKeys.map(entry => ({
 			client: () => getGeminiClient(entry.key),
@@ -214,6 +213,14 @@ const OVERLOAD_SWITCH = 3
 const overloadedUntil = new Map<string, number>()
 const OVERLOAD_COOLDOWN_MS = 60_000
 
+/**
+ * Calls the first model (Hydrogen) gets per pass before the call moves to
+ * Flash, whatever the failure. When Hydrogen is busy the next key on it is
+ * busy too, and each extra try (a 503, or a stall up to the full timeout) was
+ * spent before Flash got a turn. Every other model tries each of its keys.
+ */
+const PREFERRED_MODEL_TRIES = 1
+
 const isCooling = (until: Map<string, number>, id: string, now: number) => (until.get(id) ?? 0) > now
 
 /** A 400 that is about the key or its project (billing, region), not the request. */
@@ -282,12 +289,13 @@ async function callWithRetry(
 
 		for (const model of order) {
 			const keys = modelChain.filter((entry) => entry.model === model)
-			// Each usable key at most once per pass, in rotation.
+			// Each usable key at most once per pass, in rotation; Hydrogen only once.
+			const maxTries = model === GEMINI_MODELS[0] ? PREFERRED_MODEL_TRIES : keys.length
 			const tried = new Set<string>()
 			let overloads = 0
 			let stalls = 0
 
-			while (true) {
+			while (tried.size < maxTries) {
 				const now = Date.now()
 				const live = keys.filter((entry) => usable(entry, now) && !tried.has(idOf(entry)))
 				if (live.length === 0) break
@@ -363,7 +371,9 @@ async function callWithRetry(
 			}
 			serverLog(overloads >= OVERLOAD_SWITCH
 				? `  [ai] ${model} is overloaded, trying the next model...`
-				: `  [ai] ${model} unavailable on every key, trying the next model...`, "warn")
+				: tried.size >= maxTries && maxTries < keys.length
+					? `  [ai] ${model} failed on its one try, trying the next model...`
+					: `  [ai] ${model} unavailable on every key, trying the next model...`, "warn")
 		}
 
 		if (!modelChain.some((entry) => usable(entry, Date.now()))) break
