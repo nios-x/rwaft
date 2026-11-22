@@ -2,7 +2,9 @@
 
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, ReactNode, RefObject } from "react"
 import type { BuildKind } from "../../lib/stages"
-import { BranchIcon, GitHubIcon, PullRequestIcon, RepoIcon, SendIcon, SparkIcon } from "./Icons"
+import type { RepoBranches } from "../../lib/useRepoBranches"
+import { BranchPicker } from "./BranchPicker"
+import { GitHubIcon, LockIcon, PullRequestIcon, RepoIcon, SendIcon, SparkIcon } from "./Icons"
 
 /** The pull request tab's fields, beyond the description in the main box. */
 export interface PullRequestFields {
@@ -11,8 +13,10 @@ export interface PullRequestFields {
 	/** "github.com/owner/repo", "owner/repo", or an issue link in it. */
 	repo: string
 	setRepo: (value: string) => void
-	privateRepo: boolean
-	setPrivateRepo: (value: boolean) => void
+	/** "owner/name" once the field holds a repository. */
+	repoLabel: string | null
+	/** Its branches, and whether GitHub shows it publicly (lib/useRepoBranches.ts). */
+	branches: RepoBranches
 	/** The branch to open against; empty for the repository's default. */
 	base: string
 	setBase: (value: string) => void
@@ -129,25 +133,21 @@ export function PromptBox(props: PromptBoxProps & { size: "hero" | "compact"; pl
 						{pr.recentRepos.map((repo) => <option key={repo} value={repo} />)}
 					</datalist>
 				)}
-				{checkbox("Private", pr.privateRepo, pr.setPrivateRepo, "Asks GitHub for access to your private repositories too")}
+				{pr.branches.state === "unlisted" && (
+					<span className="prompt-visibility" title="rwaft can't see this repository publicly, so GitHub will ask for access to your private repositories too. If it doesn't exist, GitHub says so after that.">
+						<LockIcon /> Private
+					</span>
+				)}
 			</div>
 			<div className="prompt-options">
-				<label className="prompt-base" title="The branch to open the pull request against">
-					<BranchIcon />
-					<span className="prompt-option-label">Base</span>
-					<input
-						type="text"
-						placeholder="default branch"
-						value={pr.base}
-						onChange={(event) => pr.setBase(event.target.value)}
-						onKeyDown={onFieldKey}
-						disabled={submitting}
-						spellCheck={false}
-						autoComplete="off"
-						autoCapitalize="off"
-						maxLength={200}
-					/>
-				</label>
+				<BranchPicker
+					repo={pr.repoLabel}
+					branches={pr.branches}
+					base={pr.base}
+					setBase={pr.setBase}
+					disabled={submitting}
+					placement={size === "hero" ? "below" : "above"}
+				/>
 				{checkbox("Draft", pr.draft, pr.setDraft, "Opens the pull request as a draft")}
 				{checksBox}
 			</div>

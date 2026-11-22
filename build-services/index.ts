@@ -23,7 +23,8 @@ import {
 	refundKey,
 	prTokenKey,
 	prResultKey,
-	PR_TOKEN_DEADLINES
+	PR_TOKEN_DEADLINES,
+	deploymentKey
 } from "./lib/config.ts"
 import { getAllFileNames } from "./lib/helper.ts"
 import { uploadFile } from "./lib/upload.ts"
@@ -866,6 +867,26 @@ return -1
 `
 const REFUND_MARKER_TTL_SECONDS = 7 * 24 * 60 * 60
 
+/**
+ * Writes onto the job's dashboard record (lib/config.ts deploymentKey), only if
+ * it exists: anonymous jobs have none, and one the user removed stays removed.
+ */
+const UPDATE_DEPLOYMENT_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 1 then
+	return redis.call('HSET', KEYS[1], unpack(ARGV))
+end
+return -1
+`
+
+/** Best effort: the dashboard falls back to the day-long status key when this fails. */
+async function updateDeployment(redis: RedisLike, id: string, fields: Record<string, string>) {
+	try {
+		await redis.sendCommand(["EVAL", UPDATE_DEPLOYMENT_SCRIPT, "1", deploymentKey(id), ...Object.entries(fields).flat()])
+	} catch (error) {
+		console.warn(`[dashboard] Could not update ${id}:`, (error as Error).message)
+	}
+}
+
 /** The user got nothing from a failed build, so the tokens it cost go back. */
 async function refundFailedJob(redis: RedisLike, payload: JobPayload) {
 	const { charge } = payload
@@ -934,18 +955,21 @@ async function pump(
 					jobStatus("building")
 					jobLog(`Starting ${kind} job ${id}`)
 					await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "building", { EX: STATUS_TTL_SECONDS })
+					await updateDeployment(redis, id, { status: "building", startedAt: String(Date.now()) })
 
 					return await withTimeout(handler(payload, redis), JOB_TIMEOUT_MS, `${kind} job ${id}`)
 				})
 
 				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: STATUS_TTL_SECONDS })
 				const url = result?.url ?? payload.deploymentUrl
+				await updateDeployment(redis, id, { status: "ready", finishedAt: String(Date.now()), ...(result?.url ? { url: result.url } : {}) })
 				// The console reads these two lines; keep them in sync with frontend/lib/stages.ts.
 				jobLog(result?.done ?? (kind === "pr" ? `Opened pull request ${url}` : `Deployment ${id} is live`), "success")
 				jobStatus("ready", { url })
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error)
 				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: STATUS_TTL_SECONDS }).catch(() => { })
+				await updateDeployment(redis, id, { status: "failed", finishedAt: String(Date.now()), error: message.slice(0, 300) })
 				jobLog(`Deployment ${id} failed: ${message}`, "error")
 				jobStatus("failed", { error: message })
 				await refundFailedJob(redis, payload)
@@ -1071,6 +1095,16 @@ const writePrResult = async (redis: RedisLike, payload: JobPayload, result: Pull
 		})
 		.expire(prResultKey(payload.id), STATUS_TTL_SECONDS)
 		.exec()
+	// Kept for good on the dashboard record, unlike the day-long result above.
+	await updateDeployment(redis, payload.id, {
+		url: result.url,
+		prUrl: result.url,
+		prNumber: String(result.number),
+		prTitle: result.title,
+		prBranch: result.branch,
+		prBase: result.base,
+		prFork: result.fork ? "1" : "0"
+	})
 }
 
 /** The pull request an earlier job opened or added to, as a follow-up needs it. */

@@ -841,6 +841,27 @@ form.prompt {
   accent-color: var(--ink);
 }
 
+/* Set by the repository lookup, not by the user: a repository rwaft can't see publicly. */
+.prompt-visibility {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: help;
+}
+
+.prompt-visibility svg {
+  width: 12px;
+  height: 12px;
+}
+
 .prompt-target {
   flex: 1;
   min-width: 0;
@@ -865,18 +886,43 @@ form.prompt {
   border-bottom: 1px solid var(--line);
 }
 
-.prompt-base {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1 1 160px;
+/* Base branch: a button that opens the repository's branches with a search box. */
+.branch-picker {
+  position: relative;
+  flex: 1 1 170px;
   min-width: 0;
-  max-width: 260px;
-  font-size: 12.5px;
-  color: var(--text-2);
+  max-width: 280px;
 }
 
-.prompt-base svg {
+.branch-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 0 7px 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.branch-trigger:hover:not(:disabled),
+.branch-trigger[aria-expanded="true"] {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.branch-trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.branch-trigger > svg {
   width: 13px;
   height: 13px;
   flex: none;
@@ -887,27 +933,173 @@ form.prompt {
   flex: none;
 }
 
-.prompt-base input {
+.branch-value {
   flex: 1;
   min-width: 0;
-  height: 24px;
-  padding: 0 8px;
+  overflow: hidden;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-value[data-empty] {
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: 12.5px;
+}
+
+.branch-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.branch-trigger .branch-tag {
+  background: var(--surface-3);
+}
+
+.branch-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: min(320px, 82vw);
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  animation: pop-in 150ms var(--ease-out);
+}
+
+.branch-picker[data-placement="above"] .branch-menu {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.branch-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.branch-search svg {
+  position: absolute;
+  left: 10px;
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.branch-search input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px 0 31px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: transparent;
+  border-radius: 9px;
+  background: var(--surface-2);
   color: var(--text);
   font: inherit;
+  font-size: 13px;
+}
+
+.branch-search input::placeholder {
+  color: var(--text-3);
+}
+
+.branch-search input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  background: var(--surface);
+}
+
+.branch-list {
+  max-height: 248px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.branch-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 5px 8px 5px 4px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.branch-option[data-active] {
+  background: var(--surface-2);
+}
+
+.branch-check {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  flex: none;
+  color: var(--text);
+}
+
+.branch-check svg {
+  width: 13px;
+  height: 13px;
+}
+
+.branch-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-name code {
+  color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
 
-.prompt-base input:focus-visible {
-  border-color: var(--accent);
-  outline: none;
+.branch-option[aria-selected="true"] .branch-name code {
+  font-weight: 600;
 }
 
-.prompt-base input::placeholder {
+.branch-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
   color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.branch-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--surface-3);
+  border-top-color: var(--text-2);
+  border-radius: 999px;
+  animation: spin 800ms linear infinite;
+}
+
+.branch-foot {
+  margin: 6px 4px 2px;
+  padding: 8px 6px 0;
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .chat .prompt-repo,
@@ -965,8 +1157,16 @@ form.prompt {
   margin-top: 10vh;
 }
 
-.projects h2 {
+.projects-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   margin: 0 0 12px;
+}
+
+.projects h2 {
+  margin: 0;
   font-size: 15px;
   font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
   font-weight: 700;
@@ -3421,4 +3621,1248 @@ li[data-state="failed"] .steps-dot {
 
 .pr-checks[data-state="failed"] .pr-checks-dot {
   background: var(--fail-c);
+}
+
+/* ── Dashboard (/dashboard) ─────────────────────────────────────────────────
+   An Operate surface: plain canvas, no fluid field. Projects as cards in the
+   project-card treatment, a detail page with the live site beside its facts,
+   and a dense deployments list. Status only ever through the shared pill and
+   its dot; the one ink action per view is "New project" or "Visit". */
+
+.dash-crumbs {
+  gap: 6px;
+  font-size: 13.5px;
+}
+
+.dash-crumb {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-weight: 500;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.dash-crumb:hover {
+  color: var(--text);
+}
+
+.dash-crumb--current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.dash-crumb-sep {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--text-3);
+}
+
+/* Page tabs sit under the header and stay with it. */
+.dash-tabs {
+  position: sticky;
+  top: 56px;
+  z-index: 39;
+  display: flex;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.dash-tabs a {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 4px;
+  color: var(--text-2);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.dash-tabs a::before {
+  content: "";
+  position: absolute;
+  inset: 8px -6px;
+  z-index: -1;
+  border-radius: 8px;
+  transition: background-color 150ms ease;
+}
+
+.dash-tabs a + a {
+  margin-left: 16px;
+}
+
+.dash-tabs a:hover {
+  color: var(--text);
+}
+
+.dash-tabs a:hover::before {
+  background: var(--surface-2);
+}
+
+.dash-tabs a[aria-current="page"] {
+  color: var(--text);
+}
+
+.dash-tabs a[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+.dash-main {
+  flex: 1;
+  width: min(1200px, 100% - 40px);
+  margin: 0 auto;
+  padding: 32px 0 80px;
+}
+
+.dash-section + .dash-section {
+  margin-top: 56px;
+}
+
+.dash-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.dash-head h1,
+.dash-detail-id h1 {
+  margin: 0;
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.dash-sub {
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-faint {
+  color: var(--text-3);
+}
+
+.dash-new svg {
+  width: 15px;
+  height: 15px;
+}
+
+.dash-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 20px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--fail-c) 30%, var(--line));
+  border-radius: 12px;
+  background: var(--fail-soft);
+  color: var(--fail-ink);
+  font-size: 13.5px;
+}
+
+.dash-banner .text-btn {
+  margin-left: auto;
+  color: inherit;
+}
+
+/* Toolbar: search takes the room, the filter keeps its size. */
+.dash-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.dash-search {
+  position: relative;
+  display: flex;
+  flex: 1 1 280px;
+  align-items: center;
+  min-width: 0;
+}
+
+.dash-search > svg {
+  position: absolute;
+  left: 12px;
+  width: 15px;
+  height: 15px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.dash-search input {
+  width: 100%;
+  height: 36px;
+  padding: 0 34px 0 36px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.dash-search input::placeholder {
+  color: var(--text-3);
+}
+
+.dash-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.dash-search input:hover {
+  border-color: var(--line-strong);
+}
+
+.dash-search input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.dash-search-clear {
+  position: absolute;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.dash-search-clear:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.dash-search-clear svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* The prompt box's mode switch, as a filter. */
+.dash-seg {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  max-width: 100%;
+  padding: 3px;
+  overflow-x: auto;
+  border-radius: 999px;
+  background: var(--surface-2);
+  scrollbar-width: none;
+}
+
+.dash-seg button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dash-seg button:hover {
+  color: var(--text);
+}
+
+.dash-seg button[aria-checked="true"] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(10, 10, 20, 0.1);
+}
+
+.dash-seg-count {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Project cards ── */
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dash-card {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.dash-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-box);
+}
+
+/* A card whose menu is open sits above its neighbours, so the menu does too. */
+.dash-card[data-menu] {
+  z-index: 5;
+}
+
+.dash-card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.dash-tile {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.dash-tile[data-size="lg"] {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  font-size: 21px;
+}
+
+.dash-card-id {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dash-card-link {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The whole card opens the project; links and the menu inside it sit above. */
+.dash-card-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+}
+
+.dash-card-link:focus-visible {
+  outline: none;
+}
+
+.dash-card-link:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.dash-addr,
+.dash-git,
+.dash-menu {
+  position: relative;
+  z-index: 1;
+}
+
+.dash-addr {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-width: 0;
+  justify-self: start;
+  color: var(--text-2);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+
+a.dash-addr:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
+.dash-addr--none {
+  color: var(--text-3);
+}
+
+.dash-addr-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The address bar's state dot, repeated wherever a link is shown. */
+.dash-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--text-3);
+}
+
+.dash-dot[data-state="live"] {
+  background: var(--live-c);
+}
+
+.dash-dot[data-state="building"] {
+  background: var(--build-c);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.dash-dot[data-state="line"] {
+  background: var(--line-c);
+}
+
+.dash-dot[data-state="failed"] {
+  background: var(--fail-c);
+}
+
+.dash-menu-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+
+.dash-menu-list {
+  min-width: 220px;
+}
+
+a.menu-item {
+  color: inherit;
+  text-decoration: none;
+}
+
+.dash-menu-rule {
+  height: 1px;
+  margin: 4px 6px;
+  border: 0;
+  background: var(--line);
+}
+
+.menu-item.dash-danger,
+.menu-item.dash-danger svg,
+.text-btn.dash-danger {
+  color: var(--fail-ink);
+}
+
+.dash-confirm {
+  display: grid;
+  gap: 10px;
+  max-width: 260px;
+  padding: 8px 10px;
+}
+
+.dash-confirm p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.dash-confirm strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text);
+}
+
+.dash-confirm-actions {
+  display: flex;
+  gap: 16px;
+}
+
+.dash-card-git {
+  display: flex;
+  min-width: 0;
+}
+
+.dash-git {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.dash-git span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-git svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+a.dash-git:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.dash-git-pr {
+  margin-left: 4px;
+}
+
+.dash-git--none {
+  padding: 0;
+  background: transparent;
+  color: var(--text-3);
+}
+
+.dash-git--none svg {
+  opacity: 0.6;
+}
+
+.dash-card-lead {
+  color: var(--text-3);
+}
+
+.dash-card-line {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.dash-card-line[data-tone="failed"],
+.dash-row-text[data-tone="failed"] {
+  color: var(--fail-ink);
+}
+
+.dash-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* No fifth colour: a build nobody heard back from is plain. */
+.status[data-state="unknown"] {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+/* ── Loading ── */
+
+.dash-bone {
+  display: block;
+  height: 14px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.dash-bone--sm {
+  height: 11px;
+}
+
+.dash-bone--chip {
+  width: 120px;
+  height: 22px;
+  border-radius: 999px;
+}
+
+.dash-tile.dash-bone {
+  border-color: transparent;
+}
+
+.dash-card--skeleton:hover {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.dash-detail-skeleton {
+  display: grid;
+  gap: 20px;
+  margin-top: 20px;
+}
+
+/* ── Empty, signed out ── */
+
+.dash-empty {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 64px 24px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+  text-align: center;
+}
+
+.dash-empty h1,
+.dash-empty h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.dash-empty p {
+  max-width: 46ch;
+  margin: 0 0 8px;
+  color: var(--text-2);
+}
+
+.dash-empty--quiet {
+  padding: 48px 24px;
+}
+
+.dash-signin {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  width: min(460px, 100%);
+  margin: 6vh auto 0;
+  padding: 36px 28px 32px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: var(--shadow-box);
+  text-align: center;
+}
+
+.dash-signin + .dash-section {
+  margin-top: 64px;
+}
+
+.dash-signin-mark {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 4px;
+}
+
+.dash-signin h1 {
+  margin: 0;
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.dash-signin p {
+  max-width: 40ch;
+  margin: 0 0 8px;
+  color: var(--text-2);
+}
+
+/* ── Project detail ── */
+
+.dash-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 16px;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.dash-back:hover {
+  color: var(--text);
+}
+
+.dash-back svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dash-detail-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.dash-detail-id {
+  min-width: 0;
+}
+
+.dash-detail-id h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dash-detail-actions .pill-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dash-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+/* The live site at desktop width, scaled down; always on white, like the preview. */
+.dash-shot {
+  position: relative;
+  display: block;
+  min-height: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  background: var(--surface-2);
+  color: inherit;
+  text-decoration: none;
+}
+
+.dash-shot-frame {
+  position: absolute;
+  inset: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.dash-shot iframe {
+  width: 1280px;
+  height: 1600px;
+  border: 0;
+  background: #ffffff;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.dash-shot-open,
+.dash-shot-note {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: var(--shadow-pop);
+}
+
+.dash-shot-open {
+  right: 24px;
+  bottom: 24px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 150ms ease, transform 200ms var(--ease-out);
+}
+
+.dash-shot-open svg {
+  width: 13px;
+  height: 13px;
+}
+
+.dash-shot:hover .dash-shot-open,
+.dash-shot:focus-visible .dash-shot-open {
+  opacity: 1;
+  transform: none;
+}
+
+.dash-shot-note {
+  top: 24px;
+  left: 24px;
+  color: var(--build-ink);
+}
+
+.dash-shot--state {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 32px;
+  text-align: center;
+}
+
+.dash-state-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 4px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.dash-state-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.dash-state-icon[data-tone="failed"] {
+  background: var(--fail-soft);
+  color: var(--fail-ink);
+}
+
+.dash-state-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.dash-state-text {
+  max-width: 46ch;
+  margin: 0 0 6px;
+  color: var(--text-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.dash-facts {
+  display: grid;
+  align-content: start;
+  margin: 0;
+  padding: 6px 22px;
+}
+
+.dash-fact {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.dash-fact:last-child {
+  border-bottom: 0;
+}
+
+.dash-fact dt {
+  padding-top: 2px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.dash-fact dd {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.dash-fact dd a {
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+
+.dash-fact dd a:hover {
+  text-decoration: underline;
+}
+
+.dash-fact dd .dash-git {
+  color: var(--text-2);
+}
+
+.dash-fact-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dash-fact-link a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-copy {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+}
+
+.dash-copy svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dash-fact-status,
+.dash-fact-git {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.dash-fact-error {
+  color: var(--fail-ink);
+  font-size: 12.5px;
+}
+
+.dash-fact-quote {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-2);
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.dash-fact .gh-btn,
+.dash-fact .gh-card,
+.dash-fact .gh-note {
+  margin: 0;
+  justify-self: start;
+}
+
+.dash-subhead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 36px 0 12px;
+  font-size: 12.5px;
+}
+
+.dash-subhead h2 {
+  margin: 0;
+  font-family: var(--font-display), var(--font-sans), system-ui, sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+/* ── Rows: versions and deployments ── */
+
+.dash-list {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  list-style: none;
+}
+
+.dash-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) minmax(0, 220px) 72px 34px;
+  align-items: center;
+  gap: 16px;
+  min-height: 60px;
+  padding: 10px 12px 10px 16px;
+  transition: background-color 150ms ease;
+}
+
+.dash-row + .dash-row {
+  border-top: 1px solid var(--line);
+}
+
+.dash-row:hover {
+  background: color-mix(in srgb, var(--surface-2) 55%, var(--surface));
+}
+
+.dash-list--deployments .dash-row {
+  grid-template-columns: minmax(0, 1.1fr) 150px minmax(0, 1.4fr) 72px 34px;
+}
+
+.dash-row-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.dash-row-took,
+.dash-row-id,
+.dash-row-time,
+.dash-row-label {
+  color: var(--text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-row-main,
+.dash-row-project {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dash-row-label {
+  font-weight: 500;
+}
+
+.dash-row-text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-list--deployments .dash-row-text {
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.dash-row-kind {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: var(--text-3);
+}
+
+.dash-row-link {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-row-link a,
+.dash-row-addr {
+  overflow: hidden;
+  color: var(--accent-ink);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-row-link a {
+  font-size: 12.5px;
+}
+
+.dash-row-link a:hover,
+a.dash-row-addr:hover {
+  text-decoration: underline;
+}
+
+.dash-row-addr.dash-faint {
+  color: var(--text-3);
+}
+
+.dash-row-project-btn {
+  justify-self: start;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dash-row-project-btn:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.dash-row-time {
+  text-align: right;
+}
+
+.dash-row-open {
+  width: 32px;
+  height: 32px;
+}
+
+/* ── Smaller screens ── */
+
+@media (max-width: 900px) {
+  .dash-overview {
+    grid-template-columns: 1fr;
+  }
+  .dash-shot {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .dash-row,
+  .dash-list--deployments .dash-row {
+    grid-template-columns: minmax(0, 1fr) auto 32px;
+    grid-template-areas:
+      "status time open"
+      "main main main"
+      "link link link";
+    gap: 6px 12px;
+    padding: 12px 10px 12px 14px;
+  }
+  .dash-list--deployments .dash-row {
+    grid-template-areas:
+      "status time open"
+      "main main main"
+      "project project project";
+  }
+  .dash-row-status {
+    grid-area: status;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+  .dash-row-main {
+    grid-area: main;
+  }
+  .dash-row-link {
+    grid-area: link;
+  }
+  .dash-row-project {
+    grid-area: project;
+  }
+  .dash-row-time {
+    grid-area: time;
+  }
+  .dash-row-open {
+    grid-area: open;
+  }
+}
+
+@media (max-width: 640px) {
+  .dash-main {
+    width: calc(100% - 32px);
+    padding-top: 24px;
+  }
+  .dash-tabs {
+    padding: 0 8px;
+  }
+  .dash-credits {
+    display: none;
+  }
+  .dash-head h1,
+  .dash-detail-id h1 {
+    font-size: 24px;
+  }
+  .dash-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dash-search {
+    flex-basis: auto;
+  }
+  .dash-seg {
+    align-self: flex-start;
+  }
+  .dash-detail-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .dash-detail-actions {
+    grid-column: 1 / -1;
+  }
+  .dash-detail-actions .pill-btn {
+    flex: 1;
+  }
+  .dash-tile[data-size="lg"] {
+    width: 44px;
+    height: 44px;
+    font-size: 18px;
+  }
+  .dash-facts {
+    padding: 4px 16px;
+  }
+  .dash-fact {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .dash-shot-open {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-bone,
+  .dash-dot[data-state="building"] {
+    animation: none;
+  }
+  .dash-shot-open {
+    transition: none;
+  }
 }

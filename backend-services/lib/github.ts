@@ -261,6 +261,58 @@ export async function isPublicRepository(repo: RepositoryRef): Promise<boolean |
 	}
 }
 
+export interface BranchList {
+	defaultBranch: string
+	/** The default branch first, then the rest as GitHub lists them. */
+	branches: string[]
+	/** More branches exist than were read. */
+	truncated: boolean
+}
+
+/** GitHub lists 100 branches a page; this many pages covers nearly every repository. */
+const BRANCH_PAGES = 3
+const BRANCH_CACHE_SECONDS = 60
+const branchCacheKey = (repo: RepositoryRef) => `rwaft:github:branches:${repo.owner.toLowerCase()}/${repo.name.toLowerCase()}`
+
+/**
+ * A public repository's branches, for the pull request tab's base picker,
+ * asked as the OAuth App like isPublicRepository. null when the repository is
+ * private or doesn't exist: before the consent screen there is no way to tell
+ * which, and nothing to list either way. Cached briefly, since the picker asks
+ * again whenever the repository field settles.
+ */
+export async function listPublicBranches(repo: RepositoryRef): Promise<BranchList | null> {
+	const redis = await getRedisClient().catch(() => null)
+	const cached = await redis?.get(branchCacheKey(repo)).catch(() => null)
+	if (cached) return cached === "none" ? null : JSON.parse(cached) as BranchList
+
+	const basic = Buffer.from(`${GITHUB_CLIENT_ID}:${GITHUB_CLIENT_SECRET}`).toString("base64")
+	const headers = { Authorization: `Basic ${basic}` }
+	let result: BranchList | null
+	try {
+		const info = await request<RepositoryInfo>(`${API}/repos/${repo.owner}/${repo.name}`, { method: "GET", headers })
+		if (info.private) {
+			result = null
+		} else {
+			const names: string[] = []
+			let truncated = false
+			for (let page = 1; page <= BRANCH_PAGES; page++) {
+				const batch = await request<{ name?: unknown }[]>(`${API}/repos/${repo.owner}/${repo.name}/branches?per_page=100&page=${page}`, { method: "GET", headers })
+				for (const branch of batch) if (isBranchName(branch.name)) names.push(branch.name)
+				if (batch.length < 100) break
+				if (page === BRANCH_PAGES) truncated = true
+			}
+			const rest = names.filter((name) => name !== info.default_branch)
+			result = { defaultBranch: info.default_branch, branches: [info.default_branch, ...rest], truncated }
+		}
+	} catch (error) {
+		if (!(error instanceof GitHubError) || error.status !== 404) throw error
+		result = null
+	}
+	await redis?.set(branchCacheKey(repo), result ? JSON.stringify(result) : "none", { EX: BRANCH_CACHE_SECONDS }).catch(() => { })
+	return result
+}
+
 // ── Source snapshots ────────────────────────────────────────────────────────
 
 export interface SourceFile {

@@ -39,6 +39,12 @@ export const PR_TOKEN_DEADLINES = "rwaft:github:pr-token-deadlines"
 /** Pull requests whose checks are being followed, scored by when to look next. */
 export const PR_WATCHING = "rwaft:pr:watching"
 export const prWatchKey = (jobId: string) => `rwaft:pr:watch:${jobId}`
+/**
+ * A deployment's record for the dashboard, written by the API when the job is
+ * accepted (only for signed-in accounts). The worker adds how it ended, and
+ * only to a record that exists. Same as the API's.
+ */
+export const deploymentKey = (jobId: string) => `rwaft:deployment:${jobId}`
 
 const redisUrl = process.env.REDIS_URL
 

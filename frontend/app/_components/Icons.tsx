@@ -34,6 +34,13 @@ export const CrossIcon = icon(<path d="M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2" />)
 export const CopyIcon = icon(<><rect x="5.4" y="5.4" width="7.4" height="7.4" rx="1.4" /><path d="M10.4 5.4V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v5.4a1 1 0 0 0 1 1h1.4" /></>)
 export const RefreshIcon = icon(<><path d="M12.8 7.4A4.8 4.8 0 0 0 4 5.2M3.2 8.6A4.8 4.8 0 0 0 12 10.8" /><path d="M4 2.8v2.6h2.6M12 13.2v-2.6H9.4" /></>)
 export const SoundIcon = icon(<><path d="M2.8 6.2h2.2L8.4 3.4v9.2L5 9.8H2.8V6.2Z" /><path d="M10.8 5.8a3 3 0 0 1 0 4.4M12.6 4a5.4 5.4 0 0 1 0 8" /></>)
+export const LockIcon = icon(<><rect x="3.4" y="7" width="9.2" height="6.4" rx="1.6" /><path d="M5.4 7V5.2a2.6 2.6 0 0 1 5.2 0V7" /></>)
+export const SearchIcon = icon(<><circle cx="7.2" cy="7.2" r="4.4" /><path d="m10.4 10.4 3 3" /></>)
+export const PlusIcon = icon(<path d="M8 3.4v9.2M3.4 8h9.2" />)
+export const MoreIcon = icon(<><circle cx="3.6" cy="8" r=".9" fill="currentColor" /><circle cx="8" cy="8" r=".9" fill="currentColor" /><circle cx="12.4" cy="8" r=".9" fill="currentColor" /></>)
+export const GridIcon = icon(<><rect x="2.6" y="2.6" width="4.4" height="4.4" rx="1.1" /><rect x="9" y="2.6" width="4.4" height="4.4" rx="1.1" /><rect x="2.6" y="9" width="4.4" height="4.4" rx="1.1" /><rect x="9" y="9" width="4.4" height="4.4" rx="1.1" /></>)
+export const TrashIcon = icon(<><path d="M3 4.6h10M6.4 4.6V3.4a.8.8 0 0 1 .8-.8h1.6a.8.8 0 0 1 .8.8v1.2" /><path d="M4.4 4.6l.6 8a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.6-8" /></>)
+export const OpenAppIcon = icon(<><rect x="2.4" y="3" width="11.2" height="10" rx="1.6" /><path d="M2.4 6h11.2" /></>)
 export const SignOutIcon =icon(<><path d="M6.4 13.2H4a1 1 0 0 1-1-1V3.8a1 1 0 0 1 1-1h2.4" /><path d="m10 5 3 3-3 3M13 8H6.4" /></>)
 
 /** GitHub's own mark is a filled shape, so it opts out of the stroke family. */
