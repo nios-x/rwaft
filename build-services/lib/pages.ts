@@ -5,6 +5,7 @@ import { jobLog } from "./joblog.ts"
 import { loadSkill } from "./skills.ts"
 import { KIT_REFERENCE } from "./foundation.ts"
 import type { AppPlan, PagePlan } from "./plan.ts"
+import { autofixUx, describeFindings, findUxProblems, type UxFinding } from "./uxcheck.ts"
 
 /**
  * Step 3 of generation: the pages.
@@ -46,16 +47,26 @@ bg-background text-foreground · bg-card text-card-foreground · bg-primary text
 Opacity modifiers and gradients of tokens are fine (bg-primary/10, from-primary to-accent). Fonts: font-heading for headings and display text, font-body otherwise. Corners: rounded-ui (or rounded-full for pills).
 NEVER use raw colours: no hex or rgb values, no bg-white, text-black, gray-*, slate-*, zinc-*, blue-*, etc., no colours in style={{}}.
 
-CONTENT: write real, specific copy for this product: names, numbers, prices, testimonials that fit it. Never lorem ipsum, "Feature 1", "Your title here" or TODO. Images only from https://picsum.photos/seed/<one-word>/<width>/<height>, with meaningful alt text.
+CONTENT: write real, specific copy for this product: its offer, items, prices and schedule as realistic samples that fit it. Never lorem ipsum, "Feature 1", "Your title here" or TODO. Never invent testimonials, reviews, ratings, customer logos, user counts or awards the request did not give: leave that section out. Contact details are samples: emails on the .example domain, no phone number in a real format, no house numbers. Images only from https://picsum.photos/seed/<one-word>/<width>/<height>, with meaningful alt text and width and height attributes matching the URL.
 
 QUALITY: mobile-first and responsive (sm:, md:, lg:), generous spacing and a clear type scale, visible hover and focus states, semantic HTML, <button> for actions, labels on inputs. Make it look designed: committed to the mood, not a generic template.
 
 CODE: export default function <PageComponent>(). Import every hook you use from "react". TypeScript with no any. Packages available: react, react-router-dom, lucide-react; nothing else. Type timers as ReturnType<typeof setInterval>. Clean up effects. Keep each file under about 250 lines and split the rest into src/components/<PageComponent>/ files. Write complete code: never truncate, never "...", never placeholders.`
 
-async function pageSystemPrompt(): Promise<string> {
-	const skill = await loadSkill("frontend-design")
-	const aesthetics = skill?.split("## Working inside this pipeline")[0]?.trim()
-	return aesthetics ? `${PAGE_RULES}\n\n--- DESIGN QUALITY GUIDANCE (the rules above win any conflict) ---\n\n${aesthetics}` : PAGE_RULES
+/**
+ * The page rules, then the UI/UX rules every page must meet (skills/ui-ux-rules.md),
+ * then the aesthetic direction (skills/frontend-design.md). Each later block
+ * gives way to the ones before it, so ambition never breaks usability, and
+ * neither breaks the build.
+ */
+export async function pageSystemPrompt(): Promise<string> {
+	const [design, ux] = await Promise.all([loadSkill("frontend-design"), loadSkill("ui-ux-rules")])
+	const aesthetics = design?.split("## Working inside this pipeline")[0]?.trim()
+	return [
+		PAGE_RULES,
+		ux ? `--- UI AND UX RULES (binding; the rules above win any conflict) ---\n\n${ux}` : "",
+		aesthetics ? `--- DESIGN QUALITY GUIDANCE (the rules above win any conflict) ---\n\n${aesthetics}` : "",
+	].filter(Boolean).join("\n\n")
 }
 
 function pageBrief(plan: AppPlan, page: PagePlan, prompt: string): string {
@@ -370,7 +381,73 @@ export async function generatePages(projectDir: string, plan: AppPlan, prompt: s
 			`It imports ${specifiers.join(", ")}, which do not exist. Import only from the kit listed above or from files you include in this answer; otherwise inline the code in this file.`)
 		if (fixed && !syntaxProblem(file, fixed)) await fs.writeFile(path.join(projectDir, file), fixed, "utf-8")
 	}
+
+	await reviewUx(projectDir, plan, prompt, system, written)
 	return written
+}
+
+/** Model passes per file for UI/UX findings; 0 only logs them. */
+const UX_FIX_PASSES = Math.max(0, Number(process.env.UX_FIX_PASSES ?? 1))
+
+/**
+ * The usability check (lib/uxcheck.ts) over every page file just written: it
+ * fixes what it can by itself, then sends each file with findings back once,
+ * with the list. A model's fix is kept only when it still parses, still keeps
+ * the page's contract, and leaves fewer findings than before; otherwise the
+ * page stays as it was, which already builds.
+ */
+async function reviewUx(projectDir: string, plan: AppPlan, prompt: string, system: string, files: string[]): Promise<void> {
+	const context = { prompt }
+	const automatic = new Set<string>()
+	const flagged: Array<{ file: string; content: string; findings: UxFinding[] }> = []
+
+	for (const file of files) {
+		if (!file.endsWith(".tsx")) continue
+		const target = path.join(projectDir, file)
+		let content = await fs.readFile(target, "utf-8").catch(() => null)
+		if (content === null) continue
+		const fixed = autofixUx(file, content, context)
+		if (fixed.content !== content && !syntaxProblem(file, fixed.content)) {
+			content = fixed.content
+			await fs.writeFile(target, content, "utf-8")
+			for (const fix of fixed.fixes) automatic.add(fix)
+		}
+		const findings = findUxProblems(file, content, context)
+		if (findings.length > 0) flagged.push({ file, content, findings })
+	}
+
+	if (automatic.size > 0) jobLog(`Usability check fixed: ${[...automatic].join(", ")}`)
+	if (flagged.length === 0) {
+		jobLog("✓ Usability check passed", "success")
+		return
+	}
+	const total = flagged.reduce((sum, item) => sum + item.findings.length, 0)
+	if (UX_FIX_PASSES === 0) {
+		for (const item of flagged) jobLog(`  ${item.file}: ${item.findings.map((finding) => finding.rule).join(", ")}`, "warn")
+		return
+	}
+	jobLog(`Usability check found ${total} problem${total === 1 ? "" : "s"} in ${flagged.length} file${flagged.length === 1 ? "" : "s"}. Asking the AI to fix them`, "warn")
+
+	await pool(flagged, PAGE_CONCURRENCY, async (item) => {
+		const page = pageOwning(plan, item.file)
+		const brief = page ? pageBrief(plan, page, prompt) : `The user asked for: ${prompt}`
+		let { content, findings } = item
+		for (let attempt = 1; attempt <= UX_FIX_PASSES && findings.length > 0; attempt++) {
+			const answer = await repairFile(system, brief, item.file, content,
+				`It breaks these UI and UX rules. Fix each one and keep everything else as it is:\n${describeFindings(findings)}`).catch(() => null)
+			if (!answer) break
+			const candidate = autofixUx(item.file, answer, context).content
+			if (page && contractProblems(page, { path: item.file, content: candidate, truncated: false }).length > 0) break
+			if (!page && syntaxProblem(item.file, candidate)) break
+			const after = findUxProblems(item.file, candidate, context)
+			if (after.length >= findings.length) break
+			content = candidate
+			findings = after
+			await fs.writeFile(path.join(projectDir, item.file), content, "utf-8")
+		}
+		if (findings.length === 0) jobLog(`  ✓ ${item.file}: fixed`, "success")
+		else jobLog(`  ${item.file}: left as is (${findings.map((finding) => finding.rule).join(", ")})`, "warn")
+	})
 }
 
 /**

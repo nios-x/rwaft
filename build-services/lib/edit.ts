@@ -4,6 +4,8 @@ import { complete } from "./ai.ts"
 import { jobLog } from "./joblog.ts"
 import { KIT_REFERENCE } from "./foundation.ts"
 import { fixIconImports, parseFiles, repairFile, syntaxProblem } from "./pages.ts"
+import { loadSkill } from "./skills.ts"
+import { autofixUx } from "./uxcheck.ts"
 
 /**
  * A follow-up change to an app that is already built: "make the hero darker",
@@ -43,10 +45,26 @@ ${KIT_REFERENCE}
 RULES:
 - Change only what the request needs. Keep existing copy, layout, behaviour and design unless the request is about them.
 - Colours only through the token utilities (bg-primary, text-muted-foreground, border-border, bg-primary/10, ...). No raw hex or rgb, no bg-white, text-black, gray-*, slate-*, blue-* or colours in style={{}}.
-- Content: real, specific copy that fits the product. Never lorem ipsum, "Feature 1" or TODO. Images only from https://picsum.photos/seed/<one-word>/<width>/<height>, with meaningful alt text.
+- Content: real, specific copy that fits the product. Never lorem ipsum, "Feature 1" or TODO. Never invent testimonials, reviews, ratings, customer logos or user counts the user did not give. Sample emails use the .example domain. Images only from https://picsum.photos/seed/<one-word>/<width>/<height>, with meaningful alt text and width and height attributes matching the URL.
 - Quality: responsive (sm:, md:, lg:), visible hover and focus states, semantic HTML, <button> for actions, labels on inputs.
 - Code: TypeScript with no any. Import every hook you use from "react". Packages available: react, react-router-dom, lucide-react; nothing else. Type timers as ReturnType<typeof setInterval>. Keep each file under about 250 lines; put new pieces in new files under src/components/ or src/hooks/.
 - Paths: only files under src/ and index.html. Never change src/main.tsx.`
+
+/**
+ * A change meets the same UI/UX rules as a new page (skills/ui-ux-rules.md),
+ * and anything it adds follows the design guidance (skills/frontend-design.md).
+ * Both give way to "change only what the request needs": a follow-up never
+ * restyles what nobody asked about.
+ */
+async function editSystemPrompt(): Promise<string> {
+	const [design, ux] = await Promise.all([loadSkill("frontend-design"), loadSkill("ui-ux-rules")])
+	const aesthetics = design?.split("## Working inside this pipeline")[0]?.trim()
+	return [
+		EDIT_RULES,
+		ux ? `--- UI AND UX RULES (for what you change or add; the rules above win any conflict) ---\n\n${ux}` : "",
+		aesthetics ? `--- DESIGN QUALITY GUIDANCE (only for what you add; keep the site's existing look; the rules above win any conflict) ---\n\n${aesthetics}` : "",
+	].filter(Boolean).join("\n\n")
+}
 
 interface SourceFile {
 	path: string
@@ -118,11 +136,12 @@ export async function editApp(projectDir: string, request: string, history: stri
 	const brief = editBrief(sources, request, history)
 	jobLog(`Sending the AI your app's ${sources.length} source files and the change`)
 
-	let answer = await complete({ system: EDIT_RULES, user: brief, label: "change" })
+	const system = await editSystemPrompt()
+	let answer = await complete({ system, user: brief, label: "change" })
 	if (parseFiles(answer).length === 0 && parseDeletes(answer).length === 0) {
 		jobLog("The AI's answer had no file changes in it. Asking again", "warn")
 		answer = await complete({
-			system: EDIT_RULES,
+			system,
 			label: "change (retry)",
 			user: `${brief}\n\nYour previous answer contained no <file> blocks (it began: ${JSON.stringify(answer.slice(0, 160))}). Make the change: return every file you change, complete, in <file path="..."> blocks.`,
 		})
@@ -139,7 +158,7 @@ export async function editApp(projectDir: string, request: string, history: stri
 		let problems = problemsIn(file.path, content, file.truncated)
 		for (let attempt = 1; problems.length > 0 && attempt <= FILE_REPAIRS; attempt++) {
 			jobLog(`  ${file.path}: ${problems[0]} Asking the AI to fix this one file (${attempt}/${FILE_REPAIRS})`, "warn")
-			const fixed = await repairFile(EDIT_RULES, brief, file.path, content, problems.join("\n"))
+			const fixed = await repairFile(system, brief, file.path, content, problems.join("\n"))
 			if (fixed) content = fixed
 			problems = problemsIn(file.path, content, !fixed && file.truncated)
 		}
@@ -148,6 +167,10 @@ export async function editApp(projectDir: string, request: string, history: stri
 			jobLog(`  Kept the previous ${file.path}: the new one still had a problem (${problems[0]})`, "warn")
 			continue
 		}
+		// The usability check's own fixes (image sizes, transition-all, dvh, sample
+		// emails); a change gets no extra model pass, so it stays one request.
+		const polished = autofixUx(file.path, content, { prompt: request }).content
+		if (polished !== content && !syntaxProblem(file.path, polished)) content = polished
 		if (before.get(file.path) === content) continue
 		const target = path.join(projectDir, file.path)
 		await fs.mkdir(path.dirname(target), { recursive: true })
