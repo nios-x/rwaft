@@ -183,8 +183,8 @@ services:
         sync: false
       - key: GEMINI_API_KEY8
         sync: false
-      # The models are fixed in build-services/lib/ai.ts (gemini-4-hydrogen,
-      # then gemini-3.8-flash); AI_MODEL is no longer read.
+      - key: AI_MODEL
+        value: gemini-3.8-flash
       # Optional second provider (any OpenAI-compatible API), tried after every
       # Gemini model: a Gemini overload (503) hits every key at once. All three
       # must be set; leave them empty to stay Gemini-only.
