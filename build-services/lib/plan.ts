@@ -317,10 +317,16 @@ Rules:
 
 /** Turns a request into a plan. Never throws: a failed or unreadable answer still yields a usable plan. */
 export async function planApp(prompt: string): Promise<AppPlan> {
-	const skill = await loadSkill("frontend-design")
+	const [design, planning] = await Promise.all([loadSkill("frontend-design"), loadSkill("site-planning")])
 	// Only the aesthetic half: the pipeline half is about files the planner never touches.
-	const aesthetics = skill?.split("## Working inside this pipeline")[0]?.trim()
-	const system = aesthetics ? `${PLANNER_PROMPT}\n\n--- DESIGN DIRECTION GUIDANCE ---\n\n${aesthetics}` : PLANNER_PROMPT
+	const aesthetics = design?.split("## Working inside this pipeline")[0]?.trim()
+	// Which pages and sections a site needs comes before how it looks, and the
+	// JSON shape and rules above win over both.
+	const system = [
+		PLANNER_PROMPT,
+		planning ? `--- SITE PLANNING GUIDANCE (the rules above win any conflict) ---\n\n${planning}` : "",
+		aesthetics ? `--- DESIGN DIRECTION GUIDANCE ---\n\n${aesthetics}` : "",
+	].filter(Boolean).join("\n\n")
 
 	for (let attempt = 1; attempt <= 2; attempt++) {
 		try {

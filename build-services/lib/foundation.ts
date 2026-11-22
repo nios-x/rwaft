@@ -74,6 +74,14 @@ ${colors}
 		outline: 2px solid var(--color-ring);
 		outline-offset: 2px;
 	}
+	/* In-page links land below the sticky header, not under it. */
+	[id] {
+		scroll-margin-top: 5rem;
+	}
+	/* No double-tap zoom delay on taps. */
+	a, button, [role="button"], input, label, select, textarea {
+		touch-action: manipulation;
+	}
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -264,6 +272,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
 	return (
 		<div className="flex min-h-dvh flex-col bg-background text-foreground">
+			<a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-3 focus:z-50 focus:rounded-ui focus:bg-primary focus:px-4 focus:py-2.5 focus:text-sm focus:font-medium focus:text-primary-foreground">Skip to content</a>
 			<header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur">
 				<Container className="flex h-16 items-center justify-between gap-6">
 					<Link to="/" className="font-heading text-lg font-bold tracking-tight">{site.name}</Link>
@@ -284,17 +293,19 @@ export default function Layout({ children }: { children: ReactNode }) {
 					{hasNav && (
 						<button
 							type="button"
-							className="inline-flex h-10 w-10 items-center justify-center rounded-ui text-foreground hover:bg-muted md:hidden"
-							aria-label={open ? "Close menu" : "Open menu"}
+							className="inline-flex h-11 items-center gap-2 rounded-ui px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted md:hidden"
 							aria-expanded={open}
+							aria-controls="mobile-nav"
 							onClick={() => setOpen((value) => !value)}
 						>
-							{open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+							{open ? <X className="h-5 w-5" aria-hidden="true" /> : <Menu className="h-5 w-5" aria-hidden="true" />}
+							{/* A labelled menu: a bare icon hides that navigation exists at all. */}
+							<span>{open ? "Close" : "Menu"}</span>
 						</button>
 					)}
 				</Container>
 				{hasNav && open && (
-					<nav className="border-t border-border md:hidden" aria-label="Main">
+					<nav id="mobile-nav" className="border-t border-border md:hidden" aria-label="Main">
 						<Container className="flex flex-col py-2">
 							{pages.map((page) => (
 								<NavLink
@@ -312,7 +323,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 				)}
 			</header>
 
-			<main className="flex-1">{children}</main>
+			<main id="main" className="flex-1">{children}</main>
 
 			<footer className="border-t border-border">
 				<Container className="flex flex-col gap-2 py-10 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
