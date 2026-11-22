@@ -6,20 +6,22 @@ import { GitHubClient, GitHubError } from "./github.ts"
 /**
  * "Open a pull request": an AI change to a GitHub repository, without a clone.
  *
- * 1. Read: the repository, its default branch, and the whole file list in one
- *    recursive tree call (paths and sizes, no contents).
- * 2. Explore: the model asks for the files it needs, a round at a time, and
- *    only those are downloaded. Everything stays in memory.
+ * 1. Read: the repository, the branch to change, and its whole file list in
+ *    one recursive tree call (paths and sizes, no contents).
+ * 2. Explore: the model asks for files, folders, path matches or code search
+ *    results a round at a time, and only the files it names are downloaded.
+ *    Everything stays in memory.
  * 3. Edit: one call with those files and the request; the model answers with
  *    whole files in the <file path="..."> tags the rest of rwaft uses. Each
  *    is parsed before it goes anywhere, and a broken one goes back alone with
  *    its exact error.
  * 4. Write: blobs for the changed files, a tree on top of the current one, a
- *    commit, a new branch (on the user's fork when they can't push), and the
- *    pull request, all from the user's account.
+ *    commit, and then either a new branch and pull request (on the user's
+ *    fork when they can't push), or, for a follow-up or a CI fix, the open
+ *    pull request's branch moved forward with a comment saying what changed.
  *
- * Nothing is built or run: that would need the checkout this avoids. The
- * description says so, for the reviewer.
+ * Nothing is built or run here: that would need the checkout this avoids. The
+ * CI watch (ci.ts) is what runs the project's own checks against the change.
  */
 
 const MAX_READ_FILES = Number(process.env.PR_MAX_READ_FILES || 40)
@@ -27,6 +29,9 @@ const MAX_READ_CHARS = Number(process.env.PR_MAX_READ_CHARS || 300_000)
 const MAX_FILE_BYTES = Number(process.env.PR_MAX_FILE_BYTES || 150_000)
 const EXPLORE_ROUNDS = Math.max(1, Number(process.env.PR_EXPLORE_ROUNDS || 3))
 const READS_PER_ROUND = 20
+/** GitHub allows 10 code searches a minute per user; a job keeps well under it. */
+const MAX_SEARCHES = Number(process.env.PR_MAX_SEARCHES || 5)
+const SEARCH_RESULTS = 20
 /** Characters of file list in a brief; a bigger tree is summarised by folder. */
 const MAX_LISTING_CHARS = Number(process.env.PR_MAX_LISTING_CHARS || 60_000)
 const MAX_LIST_RESULTS = 400
@@ -34,24 +39,54 @@ const MAX_CHANGED_FILES = 30
 const FILE_REPAIRS = Math.max(0, Number(process.env.FILE_REPAIRS || 2))
 const BLOB_BATCH_SIZE = 6
 const FORK_READY_ATTEMPTS = 20
+const ISSUE_BODY_CHARS = 12_000
+const ISSUE_COMMENTS = 10
+const ISSUE_COMMENT_CHARS = 2_000
 const SITE_URL = (process.env.PR_FOOTER_URL || "https://rwaft.live").replace(/\/+$/, "")
 
 export interface PullRequestJob {
 	owner: string
 	name: string
+	/** What the user typed; may be empty when an issue says what to do. */
 	prompt: string
 	jobId: string
+	/** The branch to open the pull request against; the repository's default otherwise. */
+	base?: string
+	draft?: boolean
+	/** An issue to resolve: its text becomes the request, and merging closes it. */
+	issue?: number
 }
 
-export interface PullRequestResult {
-	url: string
+/** An open pull request, as follow-ups, CI fixes and the console need it. */
+export interface PullRequestRef {
+	/** "owner/name" of the repository the pull request is on. */
+	repo: string
 	number: number
+	url: string
 	title: string
-	files: string[]
+	/** "owner/name" of the repository holding the branch: the same one, or the user's fork. */
+	head: string
 	branch: string
 	base: string
-	/** Opened from the user's fork, because they can't push to the repository. */
 	fork: boolean
+	/** Every request behind the pull request, oldest first. */
+	history: string[]
+}
+
+export interface PullRequestResult extends PullRequestRef {
+	/** Files this job changed. */
+	files: string[]
+	/** The branch's head commit after this job. */
+	sha: string
+}
+
+/** A follow-up the user asked for, or a fix for failing checks. */
+export interface PullRequestUpdate {
+	jobId: string
+	request: string
+	kind: "change" | "fix"
+	/** For a fix: the names of the failing checks, for the commit and the comment. */
+	checks?: string[]
 }
 
 // ── What can be read and written ────────────────────────────────────────────
@@ -128,18 +163,19 @@ function listing(files: RepoFile[], budget = MAX_LISTING_CHARS): string {
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
 
-const EXPLORE_RULES = `You are preparing a code change to a GitHub repository, to be opened as a pull request. You cannot run anything or see anything you don't ask for: you get the repository's file list, the files read so far, and the change the user wants.
+const EXPLORE_RULES = `You are preparing a code change to a GitHub repository, to be opened as a pull request. You cannot run anything or see anything you don't ask for: you get the repository's file list, the files read so far, and the change to make.
 
 Reply with what you need next, using only these tags, and nothing else (no prose, no markdown):
 <read path="exact/path/from/the/list" />   the full text of a file; at most ${READS_PER_ROUND} per reply
+<search query="useAuth" />                  where some text appears in the code (GitHub code search: words or identifiers, no regular expressions); at most ${MAX_SEARCHES} for the whole job
 <list dir="some/folder" />                  every file under a folder the list summarised
 <find name="part-of-a-file-name" />         files whose path contains this text
 <ready />                                   you have read enough to make the change
 <cannot reason="why" />                     the change can't be made in this repository
 
-Read every file you will change, plus the ones that show how this project does things: what they import, a sibling of a file you'll add, the router or registry new code must be added to, the manifest (package.json, pyproject.toml, go.mod, ...) when dependencies matter. Don't read files the change doesn't touch. A file you haven't read can't be changed, only added. Use exact paths from the list.`
+Read every file you will change, plus the ones that show how this project does things: what they import, a sibling of a file you'll add, the router or registry new code must be added to, the manifest (package.json, pyproject.toml, go.mod, ...) when dependencies matter. Search when you don't know where something lives. Don't read files the change doesn't touch. A file you haven't read can't be changed, only added. Use exact paths from the list.`
 
-const EDIT_RULES = `You are opening a pull request on someone's GitHub repository. You get its file list, the full text of the files that matter, and the change the user wants. Make that change completely and correctly, and leave everything else as it is. Nobody builds or runs this before it is reviewed, so it has to be right as written.
+const EDIT_RULES = `You are changing someone's GitHub repository through a pull request. You get its file list, the full text of the files that matter, and the change to make. Make that change completely and correctly, and leave everything else as it is. Nobody builds or runs this before it is reviewed, so it has to be right as written.
 
 OUTPUT, in this order and nothing else (no prose outside the tags, no markdown fences around them):
 <pr title="Short imperative summary, under 72 characters">
@@ -172,39 +208,97 @@ interface Repository {
 
 interface Snapshot {
 	repo: Repository
+	/** "owner/name" the files are read from: the repository, or a fork holding the PR's branch. */
+	readFrom: string
+	branch: string
 	baseSha: string
 	baseTree: string
 	files: Map<string, RepoFile>
 	truncated: boolean
 }
 
-async function readRepository(github: GitHubClient, job: PullRequestJob): Promise<Snapshot> {
-	jobLog(`Reading the repository ${job.owner}/${job.name} on GitHub…`)
-	const repo = await github.get<Repository>(`/repos/${job.owner}/${job.name}`).catch((error) => {
-		if (error instanceof GitHubError && error.status === 404) throw new Error(`GitHub says you can't see ${job.owner}/${job.name}`)
+async function getRepo(github: GitHubClient, fullName: string): Promise<Repository> {
+	try {
+		return await github.get<Repository>(`/repos/${fullName}`)
+	} catch (error) {
+		if (error instanceof GitHubError && error.status === 404) throw new Error(`GitHub says you can't see ${fullName}`)
 		throw error
-	})
-	if (repo.archived) throw new Error(`${repo.full_name} is archived, so it can't take pull requests`)
+	}
+}
+
+/**
+ * The branch a job changes and its file list: the base branch for a new pull
+ * request, or an open pull request's own branch (wherever it lives) for a
+ * follow-up.
+ */
+async function readRepository(github: GitHubClient, repo: Repository, target: { branch?: string; head?: string; number?: number }): Promise<Snapshot> {
+	const readFrom = target.head ?? repo.full_name
+	const branchName = target.branch ?? repo.default_branch
+	jobLog(`Reading the repository ${repo.full_name} on GitHub${target.number ? ` (the branch of pull request #${target.number})` : ""}…`)
+	if (repo.archived) throw new Error(`${repo.full_name} is archived, so it can't take changes`)
 
 	let branch: { commit: { sha: string; commit: { tree: { sha: string } } } }
 	try {
-		branch = await github.get(`/repos/${repo.full_name}/branches/${encodeURIComponent(repo.default_branch)}`)
+		branch = await github.get(`/repos/${readFrom}/branches/${encodeURIComponent(branchName)}`)
 	} catch (error) {
-		if (error instanceof GitHubError && (error.status === 404 || error.status === 409)) throw new Error(`${repo.full_name} has no commits yet, so there's nothing to change`)
+		if (error instanceof GitHubError && (error.status === 404 || error.status === 409)) {
+			if (target.number) throw new Error(`The branch of pull request #${target.number} is gone (merged or deleted?), so nothing can be added to it`)
+			if (target.branch) throw new Error(`There's no branch "${branchName}" in ${repo.full_name}`)
+			throw new Error(`${repo.full_name} has no commits yet, so there's nothing to change`)
+		}
 		throw error
 	}
 	const baseSha = branch.commit.sha
 	const baseTree = branch.commit.commit.tree.sha
 
-	const tree = await github.get<{ tree: TreeEntry[]; truncated: boolean }>(`/repos/${repo.full_name}/git/trees/${baseTree}?recursive=1`)
+	const tree = await github.get<{ tree: TreeEntry[]; truncated: boolean }>(`/repos/${readFrom}/git/trees/${baseTree}?recursive=1`)
 	const files = new Map<string, RepoFile>()
 	for (const entry of tree.tree) {
 		const file = classify(entry)
 		if (file) files.set(file.path, file)
 	}
-	if (files.size === 0) throw new Error(`${repo.full_name} has no files on ${repo.default_branch}`)
-	jobLog(`Found ${files.size} files on ${repo.default_branch}${tree.truncated ? " (GitHub cut the list short: a very large repository)" : ""}. Nothing is cloned; only the files the AI asks for are downloaded`)
-	return { repo, baseSha, baseTree, files, truncated: tree.truncated }
+	if (files.size === 0) throw new Error(`${repo.full_name} has no files on ${branchName}`)
+	jobLog(`Found ${files.size} files on ${branchName}${tree.truncated ? " (GitHub cut the list short: a very large repository)" : ""}. Nothing is cloned; only the files the AI asks for are downloaded`)
+	return { repo, readFrom, branch: branchName, baseSha, baseTree, files, truncated: tree.truncated }
+}
+
+interface Issue {
+	number: number
+	title: string
+	/** The request the model works from. */
+	request: string
+}
+
+/** An issue's title, text and latest comments, as the request to work from. */
+async function readIssue(github: GitHubClient, repo: string, number: number, extra: string): Promise<Issue> {
+	let issue: { title: string; body: string | null; state: string; pull_request?: unknown }
+	try {
+		issue = await github.get(`/repos/${repo}/issues/${number}`)
+	} catch (error) {
+		if (error instanceof GitHubError && (error.status === 404 || error.status === 410)) throw new Error(`There's no issue #${number} in ${repo}`)
+		throw error
+	}
+	if (issue.pull_request) throw new Error(`#${number} in ${repo} is a pull request, not an issue`)
+	jobLog(`Reading issue #${number}: ${issue.title}`)
+	if (issue.state !== "open") jobLog(`  Issue #${number} is ${issue.state}; working on it anyway`, "warn")
+
+	const comments = await github.get<Array<{ user?: { login?: string }; body?: string | null }>>(`/repos/${repo}/issues/${number}/comments?per_page=100`)
+		.catch(() => [])
+	const recent = comments.slice(-ISSUE_COMMENTS)
+		.filter((comment) => comment.body?.trim())
+		.map((comment) => `- ${comment.user?.login ?? "someone"}: ${comment.body!.trim().slice(0, ISSUE_COMMENT_CHARS)}`)
+	const body = (issue.body ?? "").trim().slice(0, ISSUE_BODY_CHARS)
+	return {
+		number,
+		title: issue.title,
+		request: [
+			`Resolve issue #${number} in this repository: "${issue.title}"`,
+			"",
+			body || "(The issue has no description beyond its title.)",
+			...(recent.length > 0 ? ["", "Recent comments on the issue, oldest first:", ...recent] : []),
+			...(extra ? ["", `What the user asked for on top: ${extra}`] : [])
+		].join("\n")
+	}
 }
 
 interface ReadFile {
@@ -222,7 +316,7 @@ const decode = (base64: string): string | null => {
 	return bytes.toString("utf-8")
 }
 
-/** Downloads files the model asked for, within the read budget. Returns what each request came to. */
+/** Downloads files the model asked for, within the read budget, noting why any request came to nothing. */
 async function readFiles(github: GitHubClient, snapshot: Snapshot, wanted: string[], read: Map<string, ReadFile>, notes: string[]): Promise<void> {
 	let chars = [...read.values()].reduce((sum, file) => sum + file.content.length, 0)
 	const fetchable: RepoFile[] = []
@@ -239,7 +333,7 @@ async function readFiles(github: GitHubClient, snapshot: Snapshot, wanted: strin
 	for (let index = 0; index < fetchable.length; index += BLOB_BATCH_SIZE) {
 		const batch = fetchable.slice(index, index + BLOB_BATCH_SIZE)
 		const blobs = await Promise.all(batch.map((file) =>
-			github.get<{ content: string; encoding: string }>(`/repos/${snapshot.repo.full_name}/git/blobs/${file.sha}`)
+			github.get<{ content: string; encoding: string }>(`/repos/${snapshot.readFrom}/git/blobs/${file.sha}`)
 				.then((blob) => ({ file, blob }))
 		))
 		for (const { file, blob } of blobs) {
@@ -264,6 +358,35 @@ async function readFiles(github: GitHubClient, snapshot: Snapshot, wanted: strin
 	}
 }
 
+/**
+ * GitHub code search, scoped to this repository. It only indexes the default
+ * branch (and skips most forks), so an unavailable search is reported to the
+ * model as such, and it falls back on listing and reading.
+ */
+async function searchCode(github: GitHubClient, snapshot: Snapshot, query: string): Promise<string> {
+	const terms = query.replace(/\b(repo|org|user|path|language|extension|filename):\S+/gi, "").replace(/\s+/g, " ").trim().slice(0, 200)
+	if (!terms) return `<search query="${query}">: empty search`
+	try {
+		const result = await github.get<{ total_count: number; items: Array<{ path: string; text_matches?: Array<{ fragment?: string }> }> }>(
+			`/search/code?q=${encodeURIComponent(`${terms} repo:${snapshot.repo.full_name}`)}&per_page=${SEARCH_RESULTS}`,
+			{ Accept: "application/vnd.github.text-match+json" }
+		)
+		if (result.items.length === 0) return `<search query="${query}">: no matches`
+		const note = snapshot.branch === snapshot.repo.default_branch && snapshot.readFrom === snapshot.repo.full_name ? "" : `, searched on ${snapshot.repo.default_branch}`
+		return [
+			`<search query="${query}"> (${result.total_count} match${result.total_count === 1 ? "" : "es"}${note}):`,
+			...result.items.map((item) => {
+				const fragment = item.text_matches?.[0]?.fragment?.replace(/\s+/g, " ").trim().slice(0, 160)
+				return fragment ? `${item.path}: ${fragment}` : item.path
+			})
+		].join("\n")
+	} catch (error) {
+		if (error instanceof GitHubError && (error.status === 403 || error.status === 429)) return `<search query="${query}">: search is rate-limited right now; use <find> and <list> instead`
+		if (error instanceof GitHubError && error.status === 422) return `<search query="${query}">: GitHub hasn't indexed this repository for search; use <find> and <list> instead`
+		return `<search query="${query}">: search failed (${(error as Error).message})`
+	}
+}
+
 /** README and root manifests, read before the model asks: nearly every change needs them. */
 function startingFiles(snapshot: Snapshot): string[] {
 	const root = [...snapshot.files.values()].filter((file) => !file.path.includes("/") && !file.unreadable)
@@ -277,8 +400,16 @@ const fileBlocks = (read: Map<string, ReadFile>) =>
 
 const attr = (tag: string, name: string) => new RegExp(`<${tag}\\s+${name}\\s*=\\s*["']([^"']+)["']\\s*/?>`, "g")
 
+/** What the model is told about the pull request so far, before the change it makes now. */
+const contextLines = (history: string[]) =>
+	history.length === 0 ? [] : [
+		`This pull request was opened for: ${history[0]}`,
+		...(history.length > 1 ? [`Changes added since, oldest first:\n${history.slice(1).map((entry, index) => `${index + 1}. ${entry}`).join("\n")}`] : []),
+		""
+	]
+
 /** Lets the model ask for files a round at a time, until it is ready or the budget runs out. */
-async function explore(github: GitHubClient, snapshot: Snapshot, job: PullRequestJob): Promise<Map<string, ReadFile>> {
+async function explore(github: GitHubClient, snapshot: Snapshot, request: string, history: string[]): Promise<Map<string, ReadFile>> {
 	const read = new Map<string, ReadFile>()
 	const notes: string[] = []
 	await readFiles(github, snapshot, startingFiles(snapshot), read, notes)
@@ -286,12 +417,13 @@ async function explore(github: GitHubClient, snapshot: Snapshot, job: PullReques
 	const all = [...snapshot.files.values()]
 	const fileList = listing(all)
 	let answers: string[] = []
+	let searches = 0
 	jobLog("Asking the AI which files to read…")
 
 	for (let round = 1; round <= EXPLORE_ROUNDS; round++) {
 		const chars = [...read.values()].reduce((sum, file) => sum + file.content.length, 0)
 		const brief = [
-			`THE REPOSITORY: ${snapshot.repo.full_name}, branch ${snapshot.repo.default_branch}${snapshot.truncated ? " (GitHub cut the file list short: the repository is very large)" : ""}`,
+			`THE REPOSITORY: ${snapshot.repo.full_name}, branch ${snapshot.branch}${snapshot.truncated ? " (GitHub cut the file list short: the repository is very large)" : ""}`,
 			"",
 			"FILES:",
 			fileList,
@@ -299,9 +431,10 @@ async function explore(github: GitHubClient, snapshot: Snapshot, job: PullReques
 			read.size > 0 ? `FILES READ SO FAR:\n${fileBlocks(read)}` : "FILES READ SO FAR: none",
 			...(answers.length > 0 ? ["", `RESULTS OF YOUR LAST REQUESTS:\n${answers.join("\n")}`] : []),
 			"",
-			`Read ${read.size} of at most ${MAX_READ_FILES} files (${chars} of ${MAX_READ_CHARS} characters). Round ${round} of ${EXPLORE_ROUNDS}${round === EXPLORE_ROUNDS ? ": the last one, so ask for everything you still need now" : ""}.`,
+			`Read ${read.size} of at most ${MAX_READ_FILES} files (${chars} of ${MAX_READ_CHARS} characters), ${searches} of ${MAX_SEARCHES} searches used. Round ${round} of ${EXPLORE_ROUNDS}${round === EXPLORE_ROUNDS ? ": the last one, so ask for everything you still need now" : ""}.`,
 			"",
-			`THE CHANGE TO MAKE: ${job.prompt}`
+			...contextLines(history),
+			`THE CHANGE TO MAKE NOW: ${request}`
 		].join("\n")
 
 		const answer = await complete({ system: EXPLORE_RULES, user: brief, label: `explore (round ${round})` })
@@ -310,6 +443,12 @@ async function explore(github: GitHubClient, snapshot: Snapshot, job: PullReques
 
 		const wanted = [...answer.matchAll(attr("read", "path"))].map((match) => match[1]!).slice(0, READS_PER_ROUND)
 		answers = []
+		for (const match of answer.matchAll(attr("search", "query"))) {
+			if (searches >= MAX_SEARCHES) { answers.push(`<search query="${match[1]}">: not run, the limit of ${MAX_SEARCHES} searches is reached`); continue }
+			searches++
+			jobLog(`  Searching the code for "${match[1]}"`)
+			answers.push(await searchCode(github, snapshot, match[1]!))
+		}
 		for (const match of answer.matchAll(attr("list", "dir"))) {
 			const dir = `${match[1]!.replace(/^\.?\/+|\/+$/g, "")}/`
 			const inside = all.filter((file) => file.path.startsWith(dir))
@@ -341,6 +480,12 @@ interface Change {
 	/** null deletes the file. */
 	content: string | null
 	mode: string
+}
+
+interface Edit {
+	changes: Change[]
+	title: string
+	body: string
 }
 
 const LOADERS: Record<string, "js" | "jsx" | "ts" | "tsx"> = { js: "jsx", jsx: "jsx", mjs: "js", cjs: "js", ts: "ts", mts: "ts", cts: "ts", tsx: "tsx" }
@@ -386,16 +531,17 @@ function restoreFormatting(content: string, original: ReadFile | undefined): str
 	return original?.crlf ? text.replace(/\n/g, "\r\n") : text
 }
 
-function parseDescription(answer: string, prompt: string): { title: string; body: string } {
+function parseDescription(answer: string, fallback: string): { title: string; body: string } {
 	const match = /<pr\s+title\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>([\s\S]*?)<\/pr>/.exec(answer)
-	const fallback = prompt.replace(/\s+/g, " ").trim()
-	const title = (match?.[1] ?? match?.[2] ?? "").replace(/\s+/g, " ").trim() || (fallback.length > 68 ? `${fallback.slice(0, 67)}…` : fallback)
+	const plain = fallback.replace(/\s+/g, " ").trim()
+	const title = (match?.[1] ?? match?.[2] ?? "").replace(/\s+/g, " ").trim() || (plain.length > 68 ? `${plain.slice(0, 67)}…` : plain)
 	return { title: title.slice(0, 120), body: (match?.[3] ?? "").trim().slice(0, 8_000) }
 }
 
-async function writeChange(snapshot: Snapshot, read: Map<string, ReadFile>, job: PullRequestJob) {
+async function writeChange(snapshot: Snapshot, read: Map<string, ReadFile>, request: string, history: string[], addingTo?: number): Promise<Edit> {
 	const brief = [
-		`THE REPOSITORY: ${snapshot.repo.full_name}, branch ${snapshot.repo.default_branch}`,
+		`THE REPOSITORY: ${snapshot.repo.full_name}, branch ${snapshot.branch}`,
+		...(addingTo ? [`This adds a commit to the open pull request #${addingTo}: your <pr title> becomes the commit's title, and the description is posted on the pull request as a comment.`] : []),
 		"",
 		"ALL FILES (for where new files go and what they import):",
 		listing([...snapshot.files.values()]),
@@ -403,7 +549,8 @@ async function writeChange(snapshot: Snapshot, read: Map<string, ReadFile>, job:
 		"THE FILES YOU READ (the only existing files you may change or delete):",
 		fileBlocks(read),
 		"",
-		`THE CHANGE TO MAKE NOW: ${job.prompt}`
+		...contextLines(history),
+		`THE CHANGE TO MAKE NOW: ${request}`
 	].join("\n")
 
 	jobLog(`Asking the AI to write the change, with the ${read.size} files it read…`)
@@ -427,7 +574,7 @@ async function writeChange(snapshot: Snapshot, read: Map<string, ReadFile>, job:
 		if (LOCKFILE.test(path)) { skip(path, "lockfiles are left to the project's package manager"); continue }
 		if (existing && !original) { skip(path, existing.unreadable ? `it's ${existing.unreadable}` : "the AI changed it without reading it first"); continue }
 		if (changes.some((change) => change.path === path)) continue
-		if (changes.length >= MAX_CHANGED_FILES) { skip(path, `a pull request here changes at most ${MAX_CHANGED_FILES} files`); continue }
+		if (changes.length >= MAX_CHANGED_FILES) { skip(path, `a change here touches at most ${MAX_CHANGED_FILES} files`); continue }
 
 		let { content } = file
 		let problems = problemsIn(path, content, file.truncated, original)
@@ -453,7 +600,7 @@ async function writeChange(snapshot: Snapshot, read: Map<string, ReadFile>, job:
 	}
 
 	if (changes.length === 0) throw new Error("The AI didn't change any files for this request. Try describing the change in more detail")
-	const description = parseDescription(answer, job.prompt)
+	const description = parseDescription(answer, request)
 	jobLog(`Prepared ${changes.length} file change${changes.length === 1 ? "" : "s"}: ${changes.map((change) => change.content === null ? `${change.path} (deleted)` : change.path).join(", ")}`, "success")
 	return { changes, ...description }
 }
@@ -463,9 +610,9 @@ async function writeChange(snapshot: Snapshot, read: Map<string, ReadFile>, job:
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
- * Where the branch goes: the repository itself when the user can push to it,
- * otherwise their fork, made (or found) by GitHub on its side and brought up
- * to the commit the change was written against.
+ * Where a new pull request's branch goes: the repository itself when the
+ * user can push to it, otherwise their fork, made (or found) by GitHub on its
+ * side and brought up to the commit the change was written against.
  */
 async function branchHome(github: GitHubClient, snapshot: Snapshot): Promise<{ fullName: string; owner: string; fork: boolean }> {
 	if (snapshot.repo.permissions?.push) return { fullName: snapshot.repo.full_name, owner: snapshot.repo.full_name.split("/")[0]!, fork: false }
@@ -473,7 +620,8 @@ async function branchHome(github: GitHubClient, snapshot: Snapshot): Promise<{ f
 	jobLog(`Forking ${snapshot.repo.full_name} to your account (you can't push to it directly)…`)
 	let fork: { full_name: string; owner: { login: string }; default_branch: string }
 	try {
-		fork = await github.post(`/repos/${snapshot.repo.full_name}/forks`, { default_branch_only: true })
+		// A base other than the default branch needs every branch in the fork.
+		fork = await github.post(`/repos/${snapshot.repo.full_name}/forks`, { default_branch_only: snapshot.branch === snapshot.repo.default_branch })
 	} catch (error) {
 		if (error instanceof GitHubError && (error.status === 403 || error.status === 422)) {
 			throw new Error(`You can't push to ${snapshot.repo.full_name} and GitHub won't let you fork it (${error.message})`)
@@ -492,86 +640,104 @@ async function branchHome(github: GitHubClient, snapshot: Snapshot): Promise<{ f
 		}
 		if (!synced && attempt >= 2) {
 			synced = true
-			await github.post(`/repos/${fork.full_name}/merge-upstream`, { branch: fork.default_branch }).catch(() => { })
+			await github.post(`/repos/${fork.full_name}/merge-upstream`, { branch: snapshot.branch }).catch(() => { })
 		}
 		await sleep(Math.min(1_000 * attempt, 5_000))
 	}
 	throw new Error(`Your fork ${fork.full_name} isn't up to date with ${snapshot.repo.full_name}. Sync it on GitHub ("Sync fork") and try again`)
 }
 
-const branchSlug = (title: string) =>
-	title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "") || "change"
-
-const quote = (text: string) => text.trim().split("\n").map((line) => `> ${line}`).join("\n")
-
-function prBody(description: string, prompt: string): string {
-	const asked = prompt.length > 2_000 ? `${prompt.slice(0, 2_000)}…` : prompt
-	return [
-		description || "_No description was written for this change._",
-		"",
-		"---",
-		`<sub>Opened with [rwaft](${SITE_URL}) from this request:</sub>`,
-		"",
-		quote(asked),
-		"",
-		"<sub>rwaft wrote this change through GitHub's API without cloning the repository, so it hasn't been built or tested. Review it, and let CI run before merging.</sub>"
-	].join("\n")
-}
-
-async function publish(github: GitHubClient, snapshot: Snapshot, job: PullRequestJob, change: { changes: Change[]; title: string; body: string }): Promise<PullRequestResult> {
-	const home = await branchHome(github, snapshot)
-	const base = snapshot.repo.default_branch
-	let branch = `rwaft/${branchSlug(change.title)}-${job.jobId}`
-	jobLog(`Committing ${change.changes.length} file${change.changes.length === 1 ? "" : "s"} to a new branch, ${branch}…`)
-
+/** Blobs, a tree on top of the snapshot's and a commit, in the repository holding the branch. Returns the commit. */
+async function commitChange(github: GitHubClient, home: string, snapshot: Snapshot, changes: Change[], message: string): Promise<string> {
 	const tree: Array<{ path: string; mode: string; type: "blob"; sha: string | null }> = []
-	for (let index = 0; index < change.changes.length; index += BLOB_BATCH_SIZE) {
-		const batch = change.changes.slice(index, index + BLOB_BATCH_SIZE)
+	for (let index = 0; index < changes.length; index += BLOB_BATCH_SIZE) {
+		const batch = changes.slice(index, index + BLOB_BATCH_SIZE)
 		tree.push(...await Promise.all(batch.map(async (file) => {
 			if (file.content === null) return { path: file.path, mode: file.mode, type: "blob" as const, sha: null }
-			const blob = await github.post<{ sha: string }>(`/repos/${home.fullName}/git/blobs`, {
+			const blob = await github.post<{ sha: string }>(`/repos/${home}/git/blobs`, {
 				content: Buffer.from(file.content, "utf-8").toString("base64"),
 				encoding: "base64"
 			})
 			return { path: file.path, mode: file.mode, type: "blob" as const, sha: blob.sha }
 		})))
 	}
-	const created = await github.post<{ sha: string }>(`/repos/${home.fullName}/git/trees`, { base_tree: snapshot.baseTree, tree })
-	const commit = await github.post<{ sha: string }>(`/repos/${home.fullName}/git/commits`, {
-		message: `${change.title}\n\nRequested in rwaft: ${job.prompt.replace(/\s+/g, " ").slice(0, 500)}`,
-		tree: created.sha,
-		parents: [snapshot.baseSha]
-	})
+	const created = await github.post<{ sha: string }>(`/repos/${home}/git/trees`, { base_tree: snapshot.baseTree, tree })
+	const commit = await github.post<{ sha: string }>(`/repos/${home}/git/commits`, { message, tree: created.sha, parents: [snapshot.baseSha] })
+	return commit.sha
+}
+
+const branchSlug = (title: string) =>
+	title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "") || "change"
+
+const quote = (text: string) => text.trim().split("\n").map((line) => `> ${line}`).join("\n")
+const clip = (text: string, length: number) => text.length > length ? `${text.slice(0, length)}…` : text
+
+function prBody(description: string, asked: string, issue: Issue | undefined): string {
+	return [
+		description || "_No description was written for this change._",
+		...(issue ? ["", `Closes #${issue.number}`] : []),
+		"",
+		"---",
+		`<sub>Opened with [rwaft](${SITE_URL}) from this request:</sub>`,
+		"",
+		quote(clip(asked, 2_000)),
+		"",
+		"<sub>rwaft wrote this change through GitHub's API without cloning the repository, so it hasn't been built or tested. Review it, and let CI run before merging.</sub>"
+	].join("\n")
+}
+
+/** A new branch and pull request for the change. */
+async function publishNew(github: GitHubClient, snapshot: Snapshot, job: PullRequestJob, edit: Edit, issue: Issue | undefined, request: string): Promise<PullRequestResult> {
+	const home = await branchHome(github, snapshot)
+	const base = snapshot.branch
+	let branch = `rwaft/${branchSlug(edit.title)}-${job.jobId}`
+	jobLog(`Committing ${edit.changes.length} file${edit.changes.length === 1 ? "" : "s"} to a new branch, ${branch}…`)
+	const asked = job.prompt || (issue ? `Issue #${issue.number}: ${issue.title}` : request)
+	const sha = await commitChange(github, home.fullName, snapshot, edit.changes,
+		`${edit.title}\n\n${issue ? `Fixes #${issue.number}\n\n` : ""}Requested in rwaft: ${clip(asked.replace(/\s+/g, " "), 500)}`)
 
 	for (let attempt = 1; ; attempt++) {
 		try {
-			await github.post(`/repos/${home.fullName}/git/refs`, { ref: `refs/heads/${branch}`, sha: commit.sha })
+			await github.post(`/repos/${home.fullName}/git/refs`, { ref: `refs/heads/${branch}`, sha })
 			break
 		} catch (error) {
 			if (!(error instanceof GitHubError) || error.status !== 422 || attempt >= 5) throw error
-			branch = `rwaft/${branchSlug(change.title)}-${job.jobId}-${attempt + 1}`
+			branch = `rwaft/${branchSlug(edit.title)}-${job.jobId}-${attempt + 1}`
 		}
 	}
 
 	jobLog("Opening the pull request…")
 	const head = home.fork ? `${home.owner}:${branch}` : branch
+	const open = (draft: boolean) => github.post<{ html_url: string; number: number }>(`/repos/${snapshot.repo.full_name}/pulls`, {
+		title: edit.title,
+		body: prBody(edit.body, asked, issue),
+		head,
+		base,
+		draft,
+		...(home.fork ? { maintainer_can_modify: true } : {})
+	})
 	try {
-		const pull = await github.post<{ html_url: string; number: number }>(`/repos/${snapshot.repo.full_name}/pulls`, {
-			title: change.title,
-			body: prBody(change.body, job.prompt),
-			head,
-			base,
-			draft: false,
-			...(home.fork ? { maintainer_can_modify: true } : {})
-		})
+		let pull: { html_url: string; number: number }
+		try {
+			pull = await open(Boolean(job.draft))
+		} catch (error) {
+			// Draft pull requests need a paid plan on private repositories.
+			if (!job.draft || !(error instanceof GitHubError) || error.status !== 422 || !/draft/i.test(error.message + error.detail)) throw error
+			jobLog("  GitHub doesn't allow draft pull requests on this repository, so it's opened ready for review", "warn")
+			pull = await open(false)
+		}
 		return {
-			url: pull.html_url,
+			repo: snapshot.repo.full_name,
 			number: pull.number,
-			title: change.title,
-			files: change.changes.map((file) => file.path),
-			branch: `${home.fullName}:${branch}`,
+			url: pull.html_url,
+			title: edit.title,
+			head: home.fullName,
+			branch,
 			base,
-			fork: home.fork
+			fork: home.fork,
+			history: [asked],
+			files: edit.changes.map((file) => file.path),
+			sha
 		}
 	} catch (error) {
 		// The commit is already on the branch; say where, so the work isn't lost.
@@ -580,10 +746,56 @@ async function publish(github: GitHubClient, snapshot: Snapshot, job: PullReques
 	}
 }
 
-/** The whole job: read, explore, edit, publish. Throws in plain words; the pump fails and refunds the job. */
+/** One more commit on an open pull request's branch, and a comment saying what it was for. */
+async function publishUpdate(github: GitHubClient, snapshot: Snapshot, pr: PullRequestRef, update: PullRequestUpdate, edit: Edit): Promise<PullRequestResult> {
+	const message = update.kind === "fix"
+		? `${edit.title || "Fix failing checks"}\n\nFixes the failing check${update.checks?.length === 1 ? "" : "s"} ${(update.checks ?? []).join(", ")}, found by rwaft.`
+		: `${edit.title}\n\nRequested in rwaft: ${clip(update.request.replace(/\s+/g, " "), 500)}`
+	jobLog(`Committing ${edit.changes.length} file${edit.changes.length === 1 ? "" : "s"} to the pull request's branch, ${pr.branch}…`)
+	const sha = await commitChange(github, pr.head, snapshot, edit.changes, message)
+	try {
+		// Not forced: if someone pushed to the branch meanwhile, their work wins and this stops.
+		await github.patch(`/repos/${pr.head}/git/refs/heads/${pr.branch}`, { sha, force: false })
+	} catch (error) {
+		if (error instanceof GitHubError && error.status === 422) throw new Error(`Someone pushed to ${pr.branch} while rwaft was working, so the change wasn't added. Try again`)
+		throw error
+	}
+
+	const files = edit.changes.map((file) => `\`${file.path}\`${file.content === null ? " (deleted)" : ""}`).join(", ")
+	const comment = update.kind === "fix"
+		? `rwaft pushed a fix for the failing check${update.checks?.length === 1 ? "" : "s"} ${(update.checks ?? []).map((name) => `\`${name}\``).join(", ")}: ${files}.\n\n${edit.body}`
+		: `rwaft added a commit for this request:\n\n${quote(clip(update.request, 2_000))}\n\nChanged ${files}.\n\n${edit.body}`
+	await github.post(`/repos/${pr.repo}/issues/${pr.number}/comments`, { body: comment.trim() })
+		.catch((error) => jobLog(`  Couldn't comment on the pull request (${(error as Error).message})`, "warn"))
+
+	return {
+		...pr,
+		history: update.kind === "change" ? [...pr.history, update.request] : pr.history,
+		files: edit.changes.map((file) => file.path),
+		sha
+	}
+}
+
+// ── Jobs ────────────────────────────────────────────────────────────────────
+
+/** A new pull request: read, explore, edit, publish. Throws in plain words; the pump fails and refunds the job. */
 export async function openPullRequest(github: GitHubClient, job: PullRequestJob): Promise<PullRequestResult> {
-	const snapshot = await readRepository(github, job)
-	const read = await explore(github, snapshot, job)
-	const change = await writeChange(snapshot, read, job)
-	return publish(github, snapshot, job, change)
+	const repo = await getRepo(github, `${job.owner}/${job.name}`)
+	const issue = job.issue ? await readIssue(github, repo.full_name, job.issue, job.prompt) : undefined
+	const request = issue?.request ?? job.prompt
+	const snapshot = await readRepository(github, repo, { branch: job.base })
+	const read = await explore(github, snapshot, request, [])
+	const edit = await writeChange(snapshot, read, request, [])
+	return publishNew(github, snapshot, job, edit, issue, request)
+}
+
+/** A follow-up change, or a fix for failing checks, added to an open pull request. */
+export async function updatePullRequest(github: GitHubClient, pr: PullRequestRef, update: PullRequestUpdate): Promise<PullRequestResult> {
+	const pull = await github.get<{ state: string; merged?: boolean }>(`/repos/${pr.repo}/pulls/${pr.number}`)
+	if (pull.state !== "open") throw new Error(`Pull request #${pr.number} is ${pull.merged ? "merged" : "closed"}, so nothing can be added to it. Start a new one`)
+	const repo = await getRepo(github, pr.repo)
+	const snapshot = await readRepository(github, repo, { branch: pr.branch, head: pr.head, number: pr.number })
+	const read = await explore(github, snapshot, update.request, pr.history)
+	const edit = await writeChange(snapshot, read, update.request, pr.history, pr.number)
+	return publishUpdate(github, snapshot, pr, update, edit)
 }

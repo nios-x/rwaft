@@ -22,7 +22,8 @@ import {
 	userKey,
 	refundKey,
 	prTokenKey,
-	prResultKey
+	prResultKey,
+	PR_TOKEN_DEADLINES
 } from "./lib/config.ts"
 import { getAllFileNames } from "./lib/helper.ts"
 import { uploadFile } from "./lib/upload.ts"
@@ -43,7 +44,8 @@ import { run, installDependencies, buildProject } from "./lib/run.ts"
 import { withBuildSlot, buildSlotStats } from "./lib/jobslot.ts"
 import { restoreSourceSnapshot, saveSourceSnapshot } from "./lib/source.ts"
 import { editApp } from "./lib/edit.ts"
-import { openPullRequest } from "./lib/pr.ts"
+import { openPullRequest, updatePullRequest, type PullRequestRef, type PullRequestResult } from "./lib/pr.ts"
+import { startWatching, watchChecksForever } from "./lib/ci.ts"
 import { GitHubClient, canHandlePullRequests, openToken, revokeToken } from "./lib/github.ts"
 import { assertNoUndefinedIdentifiers } from "./lib/validate.ts"
 import {
@@ -100,6 +102,17 @@ interface JobPayload {
 	baseId?: string
 	/** A pull request job's target repository. */
 	repo?: { owner: string; name: string }
+	/** Pull requests: whether access to private repositories was granted. */
+	private?: boolean
+	/** Pull requests: an issue to resolve. */
+	issue?: number
+	/** Pull requests: the branch to open against, instead of the default one. */
+	base?: string
+	draft?: boolean
+	/** Pull requests: follow the checks afterwards and fix failing ones. */
+	watchChecks?: boolean
+	/** Pull requests: the earlier PR job whose pull request this adds a commit to. */
+	from?: string
 	deploymentUrl?: string
 	/**
 	 * Path the built site's assets will be served from ("/" for wildcard
@@ -826,6 +839,12 @@ function parsePayload(raw: string, label: string): JobPayload | null {
 				&& /^[A-Za-z0-9-]{1,39}$/.test(parsed.repo.owner) && /^[A-Za-z0-9._-]{1,100}$/.test(parsed.repo.name)
 				? { owner: parsed.repo.owner, name: parsed.repo.name }
 				: undefined,
+			private: parsed.private === true,
+			issue: Number.isInteger(parsed.issue) && parsed.issue > 0 ? parsed.issue : undefined,
+			base: typeof parsed.base === "string" && /^[A-Za-z0-9._/-]{1,200}$/.test(parsed.base) && !parsed.base.includes("..") ? parsed.base : undefined,
+			draft: parsed.draft === true,
+			watchChecks: parsed.watchChecks === true,
+			from: typeof parsed.from === "string" && /^[a-z0-9]{8}$/.test(parsed.from) ? parsed.from : undefined,
 			deploymentUrl: parsed.deploymentUrl,
 			assetBase: typeof parsed.assetBase === "string" ? parsed.assetBase : `/${parsed.id}/`,
 			charge: typeof parsed.charge?.userId === "string" && Number.isInteger(parsed.charge?.tokens) && parsed.charge.tokens > 0
@@ -872,7 +891,7 @@ async function pump(
 	kind: JobKind,
 	queue: string,
 	processing: string,
-	handler: (payload: JobPayload, redis: RedisLike) => Promise<void | { url: string }>
+	handler: (payload: JobPayload, redis: RedisLike) => Promise<void | { url: string; done?: string }>
 ) {
 	const redis = createRedisClient()
 	await redis.connect()
@@ -922,7 +941,7 @@ async function pump(
 				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: STATUS_TTL_SECONDS })
 				const url = result?.url ?? payload.deploymentUrl
 				// The console reads these two lines; keep them in sync with frontend/lib/stages.ts.
-				jobLog(kind === "pr" ? `Opened pull request ${url}` : `Deployment ${id} is live`, "success")
+				jobLog(result?.done ?? (kind === "pr" ? `Opened pull request ${url}` : `Deployment ${id} is live`), "success")
 				jobStatus("ready", { url })
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error)
@@ -1025,15 +1044,62 @@ const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESS
 })
 
 /**
- * An AI change to a GitHub repository, opened as a pull request. No project
+ * An AI change to a GitHub repository: a new pull request, or (with `from`)
+ * one more commit on a pull request an earlier job opened. No project
  * directory and no clone: files are read and written through GitHub's API.
- * The user's token arrives encrypted beside the job and is deleted and
- * revoked when the job ends, however it ends.
+ * The user's token arrives sealed beside the job under a revoke deadline. It
+ * is revoked when the job ends, unless the job hands it to the CI watch,
+ * which revokes it when the watch ends.
  */
+const writePrResult = async (redis: RedisLike, payload: JobPayload, result: PullRequestResult) => {
+	await redis.multi()
+		.hSet(prResultKey(payload.id), {
+			owner: payload.userId,
+			url: result.url,
+			title: result.title,
+			number: String(result.number),
+			files: JSON.stringify(result.files),
+			branch: `${result.head}:${result.branch}`,
+			base: result.base,
+			fork: result.fork ? "1" : "0",
+			repo: result.repo,
+			head: result.head,
+			branchName: result.branch,
+			private: payload.private ? "1" : "0",
+			history: JSON.stringify(result.history),
+			sha: result.sha
+		})
+		.expire(prResultKey(payload.id), STATUS_TTL_SECONDS)
+		.exec()
+}
+
+/** The pull request an earlier job opened or added to, as a follow-up needs it. */
+const readPrRef = async (redis: RedisLike, jobId: string): Promise<PullRequestRef | null> => {
+	const fields = await redis.hGetAll(prResultKey(jobId))
+	if (!fields.url || !fields.repo || !fields.head || !fields.branchName || !Number(fields.number)) return null
+	let history: string[] = []
+	try {
+		const parsed = JSON.parse(fields.history || "[]")
+		if (Array.isArray(parsed)) history = parsed.filter((entry): entry is string => typeof entry === "string")
+	} catch { /* an unreadable history only loses context */ }
+	return {
+		repo: fields.repo,
+		number: Number(fields.number),
+		url: fields.url,
+		title: fields.title || "",
+		head: fields.head,
+		branch: fields.branchName,
+		base: fields.base || "",
+		fork: fields.fork === "1",
+		history
+	}
+}
+
 const prWorker = () => pump("pr", "pr", PR_QUEUE, PR_PROCESSING, async (payload, redis) => {
 	let token: string | undefined
+	let handedToWatch = false
 	try {
-		if (!payload.prompt || !payload.repo) throw new Error("Pull request job carried no repository or request")
+		if (!payload.repo || (!payload.prompt && !payload.issue)) throw new Error("Pull request job carried no repository or request")
 		if (!canHandlePullRequests) {
 			console.error("[pr] GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be set on build-services (the API's values) to handle pull requests")
 			throw new Error("Pull requests aren't set up on the build server yet")
@@ -1046,25 +1112,40 @@ const prWorker = () => pump("pr", "pr", PR_QUEUE, PR_PROCESSING, async (payload,
 			console.error("[pr] Could not decrypt a token: GITHUB_TOKEN_KEY or GITHUB_CLIENT_SECRET differ between the API and build-services")
 			throw new Error("GitHub access for this request couldn't be read on the build server. Start it again")
 		}
-		const result = await openPullRequest(new GitHubClient(token), { ...payload.repo, prompt: payload.prompt, jobId: payload.id })
-		await redis.multi()
-			.hSet(prResultKey(payload.id), {
-				owner: payload.userId,
-				url: result.url,
-				title: result.title,
-				number: String(result.number),
-				files: JSON.stringify(result.files),
-				branch: result.branch,
-				base: result.base,
-				fork: result.fork ? "1" : "0"
+		// Past its deadline the API's sweep may be revoking it right now; a fresh request is the safe way on.
+		const deadline = await redis.zScore(PR_TOKEN_DEADLINES, payload.id)
+		if (deadline === null || deadline < Date.now()) throw new Error("GitHub access for this request ran out while it waited in line. Start it again")
+		await redis.zAdd(PR_TOKEN_DEADLINES, { score: Date.now() + JOB_TIMEOUT_MS + 10 * 60_000, value: payload.id })
+
+		const github = new GitHubClient(token)
+		let result: PullRequestResult
+		if (payload.from) {
+			const parent = await readPrRef(redis, payload.from)
+			if (!parent) throw new Error("This pull request's details are no longer kept, so the change couldn't be added. Start a new pull request")
+			result = await updatePullRequest(github, parent, { jobId: payload.id, request: payload.prompt ?? "", kind: "change" })
+		} else {
+			result = await openPullRequest(github, {
+				...payload.repo,
+				prompt: payload.prompt ?? "",
+				jobId: payload.id,
+				base: payload.base,
+				draft: payload.draft,
+				issue: payload.issue
 			})
-			.expire(prResultKey(payload.id), STATUS_TTL_SECONDS)
-			.exec()
-		return { url: result.url }
+		}
+		await writePrResult(redis, payload, result)
+
+		if (payload.watchChecks) {
+			await startWatching(redis, { jobId: payload.id, userId: payload.userId, pr: result, sha: result.sha, since: Date.now(), fixes: 0 })
+			handedToWatch = true
+		}
+		return payload.from ? { url: result.url, done: `Added your change to pull request ${result.url}` } : { url: result.url }
 	} finally {
-		await redis.del(prTokenKey(payload.id)).catch(() => { })
-		if (token) {
-			await revokeToken(token).catch((error) => console.warn(`[pr] Token revoke for ${payload.id} failed:`, (error as Error).message))
+		if (!handedToWatch) {
+			await redis.multi().del(prTokenKey(payload.id)).zRem(PR_TOKEN_DEADLINES, payload.id).exec().catch(() => { })
+			if (token) {
+				await revokeToken(token).catch((error) => console.warn(`[pr] Token revoke for ${payload.id} failed:`, (error as Error).message))
+			}
 		}
 	}
 })
@@ -1160,5 +1241,6 @@ process.on("SIGINT", () => { void shutdown("SIGINT") })
 await Promise.all([
 	runWorkerForever("deploy", deployWorker),
 	runWorkerForever("prompt", promptWorker),
-	runWorkerForever("pr", prWorker)
+	runWorkerForever("pr", prWorker),
+	runWorkerForever("ci", () => watchChecksForever(createRedisClient, () => shuttingDown))
 ])

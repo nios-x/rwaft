@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { annotate, type BuildKind, type Stage } from "../../lib/stages"
+import { PR_DONE, annotate, checksFrom, type BuildKind, type Stage } from "../../lib/stages"
 import type { LogLine } from "../../lib/useBuildLogs"
 import { clockTime, formatElapsed, type BuildView } from "../../lib/builds"
 import { BACKEND_URL, readApiJson } from "../../lib/config"
@@ -32,7 +32,7 @@ function stepsFrom(lines: LogLine[], kind: BuildKind): Step[] {
 				ts: line.ts,
 				// A refund is good news even though the worker logs it as a warning.
 				tone: line.level === "error" ? "bad"
-					: /is live$|^Refunded \d+ token|^Opened pull request /.test(line.message) ? "good"
+					: /is live$|^Refunded \d+ token|^Opened pull request |^Added your change to pull request |^All \d+ checks? passed/.test(line.message) ? "good"
 					: line.level === "warn" ? "warn" : "info",
 				raw: [line],
 			})
@@ -110,6 +110,19 @@ function usePullRequestResult(build: BuildView, headers: () => Record<string, st
 
 const prLabel = (build: BuildView, pr: PullRequestInfo) => `${build.repo ?? "pull request"}${pr.number ? ` #${pr.number}` : ""}`
 
+/** Where the pull request's CI watch stands, read off its log. */
+function ChecksLine({ lines }: { lines: LogLine[] }) {
+	const checks = useMemo(() => checksFrom(lines), [lines])
+	if (!checks) return null
+	const busy = checks.state === "watching" || checks.state === "fixing"
+	return (
+		<p className="pr-checks" data-state={checks.state}>
+			{busy ? <span className="gh-spinner" aria-hidden="true" /> : <span className="pr-checks-dot" aria-hidden="true" />}
+			{checks.text}
+		</p>
+	)
+}
+
 /** The files a pull request changed, the first few by name. */
 function ChangedFiles({ files }: { files: string[] }) {
 	if (files.length === 0) return null
@@ -161,6 +174,21 @@ function Chat({ build, lines, connected, failure, billing, prompt, editing, onOp
 	const [pinned, setPinned] = useState(true)
 	const steps = useMemo(() => stepsFrom(lines, build.kind), [lines, build.kind])
 	const inFlight = build.state === "line" || build.state === "building"
+	// A pull request's result goes where the job ended; the CI watch's replies follow it.
+	const doneAt = build.kind === "pr" && build.state === "live" ? steps.findIndex((step) => step.raw.some((line) => PR_DONE.test(line.message))) : -1
+	const before = doneAt >= 0 ? steps.slice(0, doneAt + 1) : steps
+	const after = doneAt >= 0 ? steps.slice(doneAt + 1) : []
+	const renderStep = (step: Step, index: number, list: Step[]) => (
+		<div key={step.key} className="msg" data-tone={step.tone}>
+			<p>{step.note}</p>
+			<details className="msg-raw" open={inFlight && index === list.length - 1}>
+				<summary><ChevronRight className="msg-raw-chev" />{step.raw.length} log line{step.raw.length === 1 ? "" : "s"}</summary>
+				{step.raw.map((line) => (
+					<code key={line.key} className="raw" data-level={line.level}>{line.message}</code>
+				))}
+			</details>
+		</div>
+	)
 	const refunded = lines.some((line) => /^Refunded \d+ (?:token|credit)/.test(line.message))
 
 	// Follow new replies while the reader is at the bottom.
@@ -197,21 +225,18 @@ function Chat({ build, lines, connected, failure, billing, prompt, editing, onOp
 					</div>
 				)}
 
-				{steps.map((step, index) => (
-					<div key={step.key} className="msg" data-tone={step.tone}>
-						<p>{step.note}</p>
-						<details className="msg-raw" open={inFlight && index === steps.length - 1}>
-							<summary><ChevronRight className="msg-raw-chev" />{step.raw.length} log line{step.raw.length === 1 ? "" : "s"}</summary>
-							{step.raw.map((line) => (
-								<code key={line.key} className="raw" data-level={line.level}>{line.message}</code>
-							))}
-						</details>
-					</div>
-				))}
+				{before.map((step, index) => renderStep(step, index, before))}
 
 				{build.state === "live" && build.kind === "pr" && (
 					<div className="msg" data-tone="good">
-						<p className="msg-live"><LiveCheck key={build.id} /><span><strong>Your pull request is open.</strong> {build.pr?.fork ? "It comes from your fork, since you can't push to this repository." : "It's on a new branch, ready for review."}</span></p>
+						<p className="msg-live">
+							<LiveCheck key={build.id} />
+							{build.parentId ? (
+								<span><strong>Your change is on the pull request.</strong> rwaft added a commit to its branch and commented on what changed.</span>
+							) : (
+								<span><strong>Your pull request is open.</strong> {build.pr?.fork ? "It comes from your fork, since you can't push to this repository." : "It's on a new branch, ready for review."}</span>
+							)}
+						</p>
 						{build.pr ? (
 							<>
 								<a className="msg-link" href={build.pr.url} target="_blank" rel="noreferrer">{build.pr.title || prLabel(build, build.pr)} <ExternalIcon /></a>
@@ -220,9 +245,12 @@ function Chat({ build, lines, connected, failure, billing, prompt, editing, onOp
 						) : (
 							<a className="msg-link" href={`${build.url.replace(/\/+$/, "")}/pulls`} target="_blank" rel="noreferrer">Open the repository&apos;s pull requests <ExternalIcon /></a>
 						)}
-						<p className="gh-note">rwaft changed these files through GitHub without cloning the repository, so nothing was built or tested. Review it, and let CI run before merging.</p>
+						<ChecksLine lines={lines} />
+						<p className="gh-note">rwaft changed these files through GitHub without cloning the repository, so nothing was built here. Review it, and let CI run before merging.</p>
+						{editing && <p>Want more? Describe another change below and rwaft adds it to this pull request.</p>}
 					</div>
 				)}
+				{after.map((step, index) => renderStep(step, index, after))}
 				{build.state === "live" && build.kind !== "pr" && (
 					<div className="msg" data-tone="good">
 						<p className="msg-live"><LiveCheck key={build.id} /><span><strong>Your site is live.</strong> Share the link with anyone.</span></p>
@@ -255,7 +283,9 @@ function Chat({ build, lines, connected, failure, billing, prompt, editing, onOp
 			<PromptBox
 				{...prompt}
 				size="compact"
-				placeholder={editing ? "Describe a change to this app…" : prompt.mode === "prompt" ? "Describe another app…" : prompt.mode === "pr" ? "Describe a change to make in this repository…" : "Paste a GitHub repo URL…"}
+				placeholder={editing
+					? build.kind === "pr" ? "Describe another change to this pull request…" : "Describe a change to this app…"
+					: prompt.mode === "prompt" ? "Describe another app…" : prompt.mode === "pr" ? "Describe a change to make in this repository…" : "Paste a GitHub repo URL…"}
 			/>
 		</section>
 	)
@@ -329,9 +359,10 @@ function Panel({ build, lines, stages, running, failure, onRetry }: Pick<Workspa
 				) : build.state === "live" && isPr ? (
 					<div className="state">
 						<span className="state-icon state-icon--good"><PullRequestIcon /></span>
-						<h2>{build.pr?.title || "Pull request opened"}</h2>
-						{build.pr && <p>{prLabel(build, build.pr)}{build.pr.fork ? ", from your fork" : ""}</p>}
+						<h2>{build.pr?.title || (build.parentId ? "Change added" : "Pull request opened")}</h2>
+						{build.pr && <p>{prLabel(build, build.pr)}{build.pr.fork ? ", from your fork" : ""}{build.parentId ? ": one more commit" : ""}</p>}
 						{build.pr && <ChangedFiles files={build.pr.files} />}
+						<ChecksLine lines={lines} />
 						<div className="state-actions">
 							<a className="pill-btn pill-btn--ink" href={build.pr?.url ?? `${build.url.replace(/\/+$/, "")}/pulls`} target="_blank" rel="noreferrer">
 								{build.pr ? "Review it on GitHub" : "Open the repository's pull requests"}

@@ -45,6 +45,14 @@ export const githubPrKey = (requestId: string) => `rwaft:github:pr:${requestId}`
 export const prTokenKey = (jobId: string) => `rwaft:github:pr-token:${jobId}`
 /** What a PR job opened, written by the worker. */
 export const prResultKey = (jobId: string) => `rwaft:pr:result:${jobId}`
+/**
+ * Every sealed PR token, scored by the time it must be revoked. The job (or
+ * its CI watch) revokes its own token and moves the deadline while it works;
+ * the API's sweep revokes any token still here past its deadline, so a job
+ * that never ran or a worker that died can't leave a live token behind.
+ * Keep in sync with build-services/lib/config.ts.
+ */
+export const PR_TOKEN_DEADLINES = "rwaft:github:pr-token-deadlines"
 
 /** The tokens a job paid for, carried on the job so the worker can refund a failed build. */
 export interface JobCharge {

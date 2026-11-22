@@ -38,11 +38,13 @@ rwaft turns a description in plain words into a real website with its own link. 
 ## Open a pull request on any GitHub repository
 
 - Pick **Pull request**, paste a GitHub repository link and describe the change, like "add a dark mode toggle to the settings page".
-- GitHub asks you to approve access. rwaft's AI reads only the files it needs, writes the change, and opens a pull request from your account on a new branch. If you can't push to the repository, it opens it from your fork.
-- The repository is never cloned: rwaft reads and writes through GitHub directly, and your GitHub access is revoked as soon as the pull request is open.
-- Tick **Private** for a private repository you have access to.
-- The change isn't built or run before the pull request opens, so review it and let your CI check it.
-- It costs **1 credit**, refunded if no pull request is opened.
+- **Or paste an issue link** (github.com/owner/repo/issues/12). rwaft reads the issue and its comments as the request, and the pull request closes the issue when it's merged.
+- GitHub asks you to approve access. rwaft's AI reads only the files it needs (it can search the code to find them), writes the change, and opens a pull request from your account on a new branch. If you can't push to the repository, it opens it from your fork.
+- **Options:** pick a **Base** branch other than the default, open it as a **Draft**, or tick **Private** for a private repository you have access to. Repositories you've used before are suggested as you type.
+- **Fix failing checks** (on by default): rwaft watches the pull request's CI. If a check fails, the AI reads its log and pushes a fix, up to 2 times, and tells you when everything passes.
+- **Keep going in the chat:** describe another change and rwaft adds it to the same pull request as a new commit, with a comment saying what changed.
+- The repository is never cloned: rwaft reads and writes through GitHub directly. Your GitHub access is revoked as soon as the job (and its check watching) ends.
+- Each pull request, and each change added to one, costs **1 credit**, refunded if nothing reaches GitHub. Fixing failing checks is included.
 
 ## Credits
 

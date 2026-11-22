@@ -1,7 +1,7 @@
 import { gunzipSync } from "node:zlib"
-import { createCipheriv, createHash, randomBytes } from "node:crypto"
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
 import { getRedisClient } from "./redis.ts"
-import { sourceKey } from "./constants.ts"
+import { PR_TOKEN_DEADLINES, prTokenKey, sourceKey } from "./constants.ts"
 
 /**
  * "Push to GitHub" through a GitHub OAuth App.
@@ -113,6 +113,52 @@ export function sealToken(token: string): string {
 	return Buffer.concat([iv, cipher.getAuthTag(), sealed]).toString("base64url")
 }
 
+/** The reverse, for the sweep that revokes tokens whose job never cleaned up. Throws on a foreign key. */
+export function openToken(sealed: string): string {
+	const packed = Buffer.from(sealed, "base64url")
+	const decipher = createDecipheriv("aes-256-gcm", tokenKey(), packed.subarray(0, 12))
+	decipher.setAuthTag(packed.subarray(12, 28))
+	return Buffer.concat([decipher.update(packed.subarray(28)), decipher.final()]).toString("utf-8")
+}
+
+/**
+ * Revokes every sealed PR token past its deadline and forgets it. A running
+ * job or CI watch keeps pushing its own deadline forward, so what is left
+ * here belongs to a job that never ran, or a worker that died. A failed
+ * revoke stays for the next sweep; one GitHub says is already gone doesn't.
+ */
+export async function revokeExpiredTokens(): Promise<number> {
+	const redis = await getRedisClient()
+	// One sweep at a time across API instances.
+	if (await redis.set(`${PR_TOKEN_DEADLINES}:sweep`, "1", { NX: true, EX: 50 }) !== "OK") return 0
+	const due = await redis.zRangeByScore(PR_TOKEN_DEADLINES, "-inf", Date.now(), { LIMIT: { offset: 0, count: 50 } })
+	let revoked = 0
+	for (const jobId of due) {
+		const sealed = await redis.get(prTokenKey(jobId))
+		if (sealed) {
+			let token: string | null = null
+			try {
+				token = openToken(sealed)
+			} catch {
+				console.warn(`[github] Dropping the PR token of ${jobId}: it was sealed with another key`)
+			}
+			if (token) {
+				try {
+					await revokeToken(token)
+					revoked++
+				} catch (error) {
+					if (!(error instanceof GitHubError) || (error.status !== 404 && error.status !== 422)) {
+						console.warn(`[github] Revoking the PR token of ${jobId} failed, retrying next sweep:`, (error as Error).message)
+						continue
+					}
+				}
+			}
+		}
+		await redis.multi().del(prTokenKey(jobId)).zRem(PR_TOKEN_DEADLINES, jobId).exec()
+	}
+	return revoked
+}
+
 /** Ends the token's life the moment the push is over. Failure here is logged, never surfaced. */
 export async function revokeToken(token: string): Promise<void> {
 	const basic = Buffer.from(`${GITHUB_CLIENT_ID}:${GITHUB_CLIENT_SECRET}`).toString("base64")
@@ -135,9 +181,10 @@ const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 /**
  * Reads "owner/name" out of what people paste: a github.com URL (with or
  * without .git, /tree/main/src, a query or a fragment) or the bare
- * "owner/name" itself.
+ * "owner/name" itself. An issue link (/owner/name/issues/12) also gives the
+ * issue the pull request should resolve.
  */
-export function parseRepository(raw: unknown): { ok: true; repo: RepositoryRef } | { ok: false; reason: string } {
+export function parseRepository(raw: unknown): { ok: true; repo: RepositoryRef; issue?: number } | { ok: false; reason: string } {
 	if (typeof raw !== "string" || !raw.trim()) return { ok: false, reason: "A GitHub repository is required" }
 	let value = raw.trim()
 	if (value.length > 500) return { ok: false, reason: "That repository link is too long" }
@@ -155,13 +202,33 @@ export function parseRepository(raw: unknown): { ok: true; repo: RepositoryRef }
 		return { ok: false, reason: "Use a github.com repository link, like https://github.com/owner/repo" }
 	}
 
-	const [owner = "", rawName = ""] = value.split("/")
+	const [owner = "", rawName = "", section = "", number = ""] = value.split("/")
 	const name = rawName.replace(/\.git$/i, "")
 	if (!OWNER.test(owner) || !isRepositoryName(name)) {
 		return { ok: false, reason: "Use a github.com repository link, like https://github.com/owner/repo" }
 	}
-	return { ok: true, repo: { owner, name } }
+	const issue = section === "issues" && /^\d{1,9}$/.test(number) ? Number(number) : undefined
+	return { ok: true, repo: { owner, name }, ...(issue ? { issue } : {}) }
 }
+
+/**
+ * An issue the description points at: a link to an issue in the same
+ * repository anywhere in it, or a description that is only "#12".
+ */
+export function issueInDescription(prompt: string, repo: RepositoryRef): number | undefined {
+	const bare = /^\s*#(\d{1,9})\s*$/.exec(prompt)
+	if (bare) return Number(bare[1])
+	for (const match of prompt.matchAll(/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)\/issues\/(\d{1,9})/gi)) {
+		if (match[1]!.toLowerCase() === repo.owner.toLowerCase() && match[2]!.toLowerCase() === repo.name.toLowerCase()) return Number(match[3])
+	}
+	return undefined
+}
+
+/** A branch name git and GitHub accept, without the corner cases a ref can't be. */
+export const isBranchName = (value: unknown): value is string =>
+	typeof value === "string" && value.length <= 200 && /^[A-Za-z0-9._/-]+$/.test(value)
+	&& !value.startsWith("/") && !value.startsWith("-") && !value.endsWith("/") && !value.endsWith(".")
+	&& !value.endsWith(".lock") && !value.includes("..") && !value.includes("//")
 
 export interface RepositoryInfo {
 	full_name: string

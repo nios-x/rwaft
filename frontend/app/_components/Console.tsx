@@ -11,6 +11,7 @@ import { useTheme } from "../../lib/useTheme"
 import { addRecentBuild, buildTitle, settleRecentBuild, useRecentBuilds } from "../../lib/recentBuilds"
 import { deriveProgress, type BuildKind } from "../../lib/stages"
 import { repositoryLabel, usePullRequest, type PullRequestInput } from "../../lib/usePullRequest"
+import { rememberRepo, useRecentRepos } from "../../lib/recentRepos"
 import { STATE_LABEL, viewOf } from "../../lib/builds"
 import { GoogleButton, TokenShop, openTokenShop } from "./Account"
 import { Header } from "./Header"
@@ -18,7 +19,7 @@ import { Home } from "./Home"
 import { Workspace } from "./Workspace"
 import { FluidBackground } from "./FluidBackground"
 import { ChevronLeft } from "./Icons"
-import type { PromptBoxProps } from "./PromptBox"
+import { hasIssueLink, type PromptBoxProps } from "./PromptBox"
 
 interface ConsoleProps {
   /**
@@ -36,11 +37,16 @@ export function Console({ footer, features }: ConsoleProps) {
   const [mode, setMode] = useState<BuildKind>("prompt")
   const [promptText, setPromptText] = useState("")
   const [repositoryUrl, setRepositoryUrl] = useState("")
-  // The pull request tab: a repository, the change to make in it, and whether it's private.
+  // The pull request tab: a repository (or issue), the change to make in it, and its options.
   const [prRepo, setPrRepo] = useState("")
   const [prText, setPrText] = useState("")
   const [prPrivate, setPrPrivate] = useState(false)
-  const pendingPr = useRef<PullRequestInput | null>(null)
+  const [prBase, setPrBase] = useState("")
+  const [prDraft, setPrDraft] = useState(false)
+  const [prWatchChecks, setPrWatchChecks] = useState(true)
+  const recentRepos = useRecentRepos()
+  // What was sent, for the build the GitHub callback queues.
+  const pendingPr = useRef<{ input: PullRequestInput; repo: string; parentId?: string } | null>(null)
   const [error, setError] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
   // null = the home screen; an id = that build's workspace.
@@ -109,21 +115,27 @@ export function Console({ footer, features }: ConsoleProps) {
     return () => clearInterval(timer)
   }, [refresh])
 
-  // The /make pages link here with #prompt=<text>, or #deploy for the repo
-  // box, so a visitor lands with the box ready. A fragment never reaches the
-  // server, so these links add no URLs for search engines to crawl.
+  // The /make pages link here with #prompt=<text>, #deploy for the repo box,
+  // or #pr / #pr=<repo or issue link> for the pull request tab, so a visitor
+  // lands with the box ready. A fragment never reaches the server, so these
+  // links add no URLs for search engines to crawl.
   useEffect(() => {
     let frame = 0
     const take = () => {
       const hash = window.location.hash
-      if (hash !== "#deploy" && !hash.startsWith("#prompt=")) return
+      if (hash !== "#deploy" && hash !== "#pr" && !hash.startsWith("#prompt=") && !hash.startsWith("#pr=")) return
       // After the next paint, so the box it fills is there to focus. The URL
       // is only cleaned up in here: Strict Mode cancels the first run's frame.
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
         window.history.replaceState(null, "", window.location.pathname + window.location.search)
         if (hash === "#deploy") setMode("deploy")
-        else {
+        else if (hash === "#pr" || hash.startsWith("#pr=")) {
+          setMode("pr")
+          if (hash.startsWith("#pr=")) {
+            try { setPrRepo(decodeURIComponent(hash.slice("#pr=".length)).slice(0, 500)) } catch { /* a mangled link just opens empty */ }
+          }
+        } else {
           let text = ""
           try { text = decodeURIComponent(hash.slice("#prompt=".length)) } catch { /* a mangled link just opens empty */ }
           setMode("prompt")
@@ -147,19 +159,21 @@ export function Console({ footer, features }: ConsoleProps) {
   // Opens the build as soon as the GitHub callback has queued its job.
   const pullRequest = usePullRequest({
     headers: () => ({ ...(logUserId ? { "X-User-Id": logUserId } : {}), ...auth.authHeaders() }),
-    onQueued: ({ jobId, repoUrl, charged }) => {
-      const input = pendingPr.current
-      const repo = repositoryLabel(input?.repo ?? prRepo)
+    onQueued: ({ jobId, repoUrl, charged, issue }) => {
+      const sent = pendingPr.current
+      const repo = sent?.repo ?? repositoryLabel(prRepo)
       addRecentBuild({
         id: jobId,
         kind: "pr",
         url: repoUrl || `https://github.com/${repo}`,
         at: Date.now(),
         charged,
-        source: input?.prompt ?? "",
+        source: sent?.input.prompt || (issue ? `Issue #${issue}` : ""),
         repo,
-        private: input?.private ?? false,
+        private: sent?.input.private ?? false,
+        ...(sent?.parentId ? { parentId: sent.parentId } : {}),
       })
+      if (!sent?.parentId) rememberRepo(repo)
       pendingPr.current = null
       setOpenId(jobId)
       setView("chat")
@@ -184,6 +198,15 @@ export function Console({ footer, features }: ConsoleProps) {
   const editTarget = build?.kind === "prompt" && mode === "prompt"
     ? build.state === "live" ? build.id : build.state === "failed" ? build.parentId : undefined
     : undefined
+  // Inside an open pull request, the PR tab adds a commit to it. A failed
+  // follow-up retries against the pull request it was adding to.
+  const prTargetId = build?.kind === "pr" && mode === "pr"
+    ? build.state === "live" ? build.id : build.state === "failed" ? build.parentId : undefined
+    : undefined
+  const prTargetBuild = prTargetId ? builds.find((item) => item.id === prTargetId) ?? (build?.id === prTargetId ? build : undefined) : undefined
+  const prTarget = prTargetId
+    ? { id: prTargetId, repo: prTargetBuild?.repo ?? build?.repo ?? "the pull request", number: prTargetBuild?.pr?.number ?? null }
+    : null
 
   const handleSubmit = async (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault()
@@ -200,8 +223,10 @@ export function Console({ footer, features }: ConsoleProps) {
     // A pull request goes through GitHub's consent window first; the hook opens
     // it before any await, which is why nothing above this awaits.
     if (mode === "pr") {
-      const input = { repo: prRepo.trim(), prompt: value.trim(), private: prPrivate }
-      pendingPr.current = input
+      const input: PullRequestInput = prTarget
+        ? { prompt: value.trim(), watchChecks: prWatchChecks, from: prTarget.id }
+        : { repo: prRepo.trim(), prompt: value.trim(), private: prPrivate, base: prBase.trim() || undefined, draft: prDraft, watchChecks: prWatchChecks }
+      pendingPr.current = { input, repo: prTarget?.repo ?? repositoryLabel(prRepo), parentId: prTarget?.id }
       setIsSubmitting(true)
       const failure = await pullRequest.start(input)
       setIsSubmitting(false)
@@ -274,15 +299,29 @@ export function Console({ footer, features }: ConsoleProps) {
     setValue: mode === "deploy" ? setRepositoryUrl : mode === "pr" ? setPrText : setPromptText,
     onSubmit: handleSubmit,
     submitting: isSubmitting || prBusy,
-    canSubmit: !isSubmitting && !prBusy && value.trim().length > 0 && !needsSignIn && (mode !== "pr" || prRepo.trim().length > 0),
+    canSubmit: !isSubmitting && !prBusy && !needsSignIn && (
+      mode !== "pr" || prTarget ? value.trim().length > 0
+        // A new pull request needs a repository, and a description unless an issue link gives one.
+        : prRepo.trim().length > 0 && (value.trim().length > 0 || hasIssueLink(prRepo))
+    ),
     costLabel: !auth.config ? "" : !billing ? "Free" : `${cost} credit${cost === 1 ? "" : "s"}${signedIn ? ` · ${balance} left` : ""}`,
     blocked,
     error,
-    pullRequests: Boolean(auth.config?.github),
-    repo: prRepo,
-    setRepo: setPrRepo,
-    privateRepo: prPrivate,
-    setPrivateRepo: setPrPrivate,
+    pr: {
+      available: Boolean(auth.config?.github),
+      repo: prRepo,
+      setRepo: setPrRepo,
+      privateRepo: prPrivate,
+      setPrivateRepo: setPrPrivate,
+      base: prBase,
+      setBase: setPrBase,
+      draft: prDraft,
+      setDraft: setPrDraft,
+      watchChecks: prWatchChecks,
+      setWatchChecks: setPrWatchChecks,
+      target: prTarget ? { repo: prTarget.repo, number: prTarget.number } : null,
+      recentRepos,
+    },
     notice: pullRequest.phase.step === "authorizing" ? (
       <>
         <p className="gh-progress"><span className="gh-spinner" aria-hidden="true" />Approve access in the GitHub window…</p>
@@ -292,7 +331,7 @@ export function Console({ footer, features }: ConsoleProps) {
         </div>
       </>
     ) : pullRequest.phase.step === "starting" ? (
-      <p className="gh-progress"><span className="gh-spinner" aria-hidden="true" />Access approved. Starting your pull request…</p>
+      <p className="gh-progress"><span className="gh-spinner" aria-hidden="true" />Access approved. {prTarget ? "Starting your change…" : "Starting your pull request…"}</p>
     ) : null,
   }
 
@@ -364,7 +403,7 @@ export function Console({ footer, features }: ConsoleProps) {
           failure={build.state === "failed" && statusJobId === build.id ? failure : null}
           billing={billing}
           prompt={{ ...promptBase, inputRef: chatInput }}
-          editing={Boolean(editTarget)}
+          editing={Boolean(editTarget || prTarget)}
           onOpen={open}
           onRetry={() => retry(build)}
           githubExport={Boolean(auth.config?.github)}
