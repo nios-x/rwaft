@@ -406,8 +406,7 @@ files are git-ignored and are excluded from Docker images.
 | :--- | :---: | :---: | :--- | :--- |
 | `REDIS_URL` | `string` | **Yes** | Same Redis instance as the API | — |
 | `CLOUDINARY_*` | `string` | **Yes** | Same Cloudinary settings as the API | — |
-| `GEMINI_API_KEY` | `string` | **Yes**† | Google Gemini key. `GEMINI_API_KEY1`…`9` add rotation across free-tier keys | — |
-| `AI_MODEL` | `string` | No | Preferred Gemini model | `gemini-3.8-flash` |
+| `GEMINI_API_KEY` | `string` | **Yes**† | Google Gemini key. `GEMINI_API_KEY1`…`9` add rotation across free-tier keys. The models are fixed in `lib/ai.ts`: `gemini-4-hydrogen`, then `gemini-3.8-flash` when it is overloaded or failing | — |
 | `BUILD_ROOT` | `string` | No | Scratch space for user builds — keep this off the app directory | `<tmp>/rwaft-builds` |
 | `INSTALL_TIMEOUT_MS` | `number` | No | Timeout for `npm install` | `600000` (10 min) |
 | `BUILD_TIMEOUT_MS` | `number` | No | Timeout for `npm run build` | `600000` (10 min) |
