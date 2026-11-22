@@ -39,5 +39,14 @@ export const CONTACT_HANDLE = (process.env.NEXT_PUBLIC_CONTACT_X?.trim() || "sou
 export const CONTACT_URL = `https://x.com/${CONTACT_HANDLE}`
 export const CONTACT_LABEL = `@${CONTACT_HANDLE}`
 
+/**
+ * The public source repository. Its GitHub homepage field points back here,
+ * and naming it in the Organization's `sameAs` closes that loop: the two
+ * together tell search engines "rwaft" is a product, not a misspelt "raft".
+ * Self-hosters set their own, or an empty value to leave it out.
+ */
+const sourceRepo = process.env.NEXT_PUBLIC_SOURCE_REPO_URL
+export const SOURCE_REPO_URL = (sourceRepo === undefined ? "https://github.com/nios-x/rwaft" : sourceRepo.trim()).replace(/\/+$/, "")
+
 /** When the privacy policy and terms last changed. Update it with them. */
 export const LEGAL_UPDATED = "2026-10-22"

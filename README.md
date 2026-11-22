@@ -425,6 +425,7 @@ files are git-ignored and are excluded from Docker images.
 | `NEXT_PUBLIC_BACKEND_URL` | `string` | **Yes** (prod) | Origin of the API. Inlined at build time, so it must be set **before** the production build runs. There is no hardcoded production fallback. The home page also reads `/auth/config` from it (hourly) to render pricing for search engines | dev `http://localhost:3000` |
 | `NEXT_PUBLIC_SITE_URL` | `string` | No | Canonical origin for canonical links, Open Graph, sitemap and robots | `https://rwaft.live` |
 | `NEXT_PUBLIC_CONTACT_X` | `string` | No | X handle for privacy and support requests, shown in the footer and on `/privacy` and `/terms` | `soumya_7708` |
+| `NEXT_PUBLIC_SOURCE_REPO_URL` | `string` | No | Public source repository, named in the Organization `sameAs`; empty leaves it out | `https://github.com/nios-x/rwaft` |
 | `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION` / `NEXT_PUBLIC_BING_SITE_VERIFICATION` | `string` | No | Search Console / Bing Webmaster ownership tags | — |
 
 ---

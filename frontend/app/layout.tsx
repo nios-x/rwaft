@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, Geist, Geist_Mono } from "next/font/google";
-import { CONTACT_URL, SITE_DESCRIPTION, SITE_NAME, SITE_TITLE, SITE_URL } from "../lib/site";
+import { CONTACT_URL, SITE_DESCRIPTION, SITE_NAME, SITE_TITLE, SITE_URL, SOURCE_REPO_URL } from "../lib/site";
 import { THEME_BOOT_SCRIPT } from "../lib/useTheme";
 import "./globals.css";
 
@@ -103,8 +103,9 @@ const JSON_LD = {
       name: SITE_NAME,
       url: SITE_URL,
       logo: { "@type": "ImageObject", url: `${SITE_URL}/icon-512.png`, width: 512, height: 512 },
-      // The same account the footer shows.
-      sameAs: [CONTACT_URL],
+      // The account the footer shows, and the source repository, whose
+      // GitHub homepage links back to this site.
+      sameAs: [CONTACT_URL, SOURCE_REPO_URL].filter(Boolean),
     },
   ],
 };
