@@ -70,6 +70,11 @@ services:
       # deploy also costs 1. Failed builds are refunded automatically.
       - key: SIGNUP_TOKENS
         value: "2"
+      # Once a week, a balance below this is topped back up to it, free. It is
+      # a floor, not a grant, so bought credits above it are never touched.
+      # 0 turns it off.
+      - key: WEEKLY_CREDITS
+        value: "5"
       - key: PROMPT_TOKEN_COST
         value: "1"
       - key: DEPLOY_TOKEN_COST

@@ -13,7 +13,7 @@ import {
 	type Matchup,
 	type Rival,
 } from "../../lib/compare"
-import { chatsFor, type Pricing } from "../../lib/pricing"
+import { chatsFor, weeklyPhrase, type Pricing } from "../../lib/pricing"
 import { FaqItems, NextStep, type Faq } from "./InfoSections"
 import { Crumbs } from "./UseCases"
 
@@ -277,7 +277,7 @@ export function CompareMatchup({ item, pricing }: { item: Matchup; pricing: Pric
 export function roundupFaq(pricing: Pricing): Faq[] {
 	const freeChats = chatsFor(pricing.signupTokens, pricing)
 	const ourFree = pricing.billing
-		? `rwaft gives ${plural(pricing.signupTokens, "free credit")} when you sign up${freeChats ? `, which is ${plural(freeChats, "chat")}` : ""}, and refunds a build that fails`
+		? `rwaft gives ${plural(pricing.signupTokens, "free credit")} when you sign up${freeChats ? `, which is ${plural(freeChats, "chat")}` : ""}${weeklyPhrase(pricing) ? `, ${weeklyPhrase(pricing)}` : ""}, and refunds a build that fails`
 		: "rwaft is free right now, with no account needed"
 	return [
 		{

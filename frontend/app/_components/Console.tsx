@@ -298,7 +298,8 @@ export function Console({ footer, features }: ConsoleProps) {
       <div className="signin">
         <p>
           Sign up free with Google and get <strong>{auth.config.signupTokens} credits</strong>
-          {auth.config.costs.prompt > 0 && <>: that&apos;s {Math.floor(auth.config.signupTokens / auth.config.costs.prompt)} chats, at {auth.config.costs.prompt} credit each</>}.
+          {auth.config.costs.prompt > 0 && <>: that&apos;s {Math.floor(auth.config.signupTokens / auth.config.costs.prompt)} chats, at {auth.config.costs.prompt} credit each</>}
+          {(auth.config.weeklyTokens ?? 0) > 0 && <>, topped back up to {auth.config.weeklyTokens} every week</>}.
           {" "}Already have an account? The same button signs you in.
         </p>
         <GoogleButton auth={auth} theme={theme} width={260} />

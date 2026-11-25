@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { chatsFor, formatPrice, type Pricing } from "../../lib/pricing"
+import { chatsFor, formatPrice, weeklyPhrase, type Pricing } from "../../lib/pricing"
 import { CONTACT_LABEL, CONTACT_URL } from "../../lib/site"
 import { ChevronRight } from "./Icons"
 import { TrailerPlayer } from "./TrailerPlayer"
@@ -107,7 +107,7 @@ const titleCase = (id: string) => id.charAt(0).toUpperCase() + id.slice(1).repla
 export function costFaq(pricing: Pricing): Faq {
 	const freeChats = chatsFor(pricing.signupTokens, pricing)
 	const answer = pricing.billing
-		? `Sign up with Google and you get ${plural(pricing.signupTokens, "free credit")}${freeChats !== null ? `, which is ${plural(freeChats, "chat")}` : ""}. Each chat you send is one complete build and costs ${plural(pricing.costs.prompt, "credit")}; deploying a GitHub repository costs ${plural(pricing.costs.deploy, "credit")}. If a build fails, its credits are refunded automatically.${pricing.payments ? " When you run out you can buy more, with no subscription." : ""}`
+		? `Sign up with Google and you get ${plural(pricing.signupTokens, "free credit")}${freeChats !== null ? `, which is ${plural(freeChats, "chat")}` : ""}.${weeklyPhrase(pricing) ? ` After that, a balance that has run low is ${weeklyPhrase(pricing)}, free.` : ""} Each chat you send is one complete build and costs ${plural(pricing.costs.prompt, "credit")}; deploying a GitHub repository costs ${plural(pricing.costs.deploy, "credit")}. If a build fails, its credits are refunded automatically.${pricing.payments ? " When you run out you can buy more, with no subscription." : ""}`
 		: "Every build is free right now, and you don't need an account to start."
 	return { question: pricing.billing ? "How do credits work?" : "Is rwaft free?", answer }
 }
@@ -115,7 +115,7 @@ export function costFaq(pricing: Pricing): Faq {
 /** The short version, beside a page's main button. */
 export function costLine(pricing: Pricing) {
 	return pricing.billing
-		? `${plural(pricing.signupTokens, "free credit")} when you sign up · ${plural(pricing.costs.prompt, "credit")} a chat`
+		? `${plural(pricing.signupTokens, "free credit")} when you sign up${weeklyPhrase(pricing) ? `, ${weeklyPhrase(pricing)}` : ""} · ${plural(pricing.costs.prompt, "credit")} a chat`
 		: "Free right now, no account needed"
 }
 
@@ -243,6 +243,11 @@ export function PricingPlans({ pricing }: { pricing: Pricing }) {
 								<strong>{plural(pricing.signupTokens, "credit")}</strong> when you sign up with Google
 								{freeChats !== null && <>: {plural(freeChats, "chat")}</>}
 							</p>
+							{pricing.weeklyTokens > 0 && (
+								<p>
+									Then <strong>{plural(pricing.weeklyTokens, "credit")}</strong> every week: a balance below that is topped back up for free
+								</p>
+							)}
 						</li>
 						{packs.map((pack) => {
 							const chats = chatsFor(pack.tokens, pricing)

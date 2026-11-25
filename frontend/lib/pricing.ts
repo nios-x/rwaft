@@ -7,7 +7,10 @@ import type { AuthConfig, TokenPack } from "./useAccount"
  * up, so the home page only offers it once it works. Server only: the
  * console itself reads the same values live through useAccount.
  */
-export type Pricing = Pick<AuthConfig, "billing" | "signupTokens" | "costs" | "currency" | "packs" | "payments" | "github">
+export type Pricing = Pick<AuthConfig, "billing" | "signupTokens" | "costs" | "currency" | "packs" | "payments" | "github"> & {
+	/** The weekly top-up floor; 0 when there is none. */
+	weeklyTokens: number
+}
 
 /**
  * The API's own defaults (backend-services/lib/accounts.ts and billing.ts).
@@ -19,6 +22,7 @@ export type Pricing = Pick<AuthConfig, "billing" | "signupTokens" | "costs" | "c
 const DEFAULT_PRICING: Pricing = {
 	billing: true,
 	signupTokens: 2,
+	weeklyTokens: 5,
 	costs: { prompt: 1, deploy: 1 },
 	currency: "usd",
 	payments: null,
@@ -50,6 +54,8 @@ export async function getPricing(): Promise<Pricing> {
 		return {
 			billing: data.billing,
 			signupTokens: data.signupTokens,
+			// An API from before the weekly top-up has no such field: advertise none.
+			weeklyTokens: Math.max(0, Math.floor(Number(data.weeklyTokens) || 0)),
 			costs: { prompt: Number(data.costs.prompt) || 0, deploy: Number(data.costs.deploy) || 0 },
 			currency: typeof data.currency === "string" ? data.currency : DEFAULT_PRICING.currency,
 			packs: Array.isArray(data.packs) ? data.packs.filter(isPack) : [],
@@ -70,6 +76,10 @@ export const formatPrice = (amount: number, currency: string) => {
 	const whole = Number.isInteger(value) ? { minimumFractionDigits: 0, maximumFractionDigits: 0 } : {}
 	return new Intl.NumberFormat("en-US", { style: "currency", currency: currency.toUpperCase(), ...whole }).format(value)
 }
+
+/** "topped back up to 5 credits every week", or "" when there is no weekly top-up. */
+export const weeklyPhrase = (pricing: Pick<Pricing, "billing" | "weeklyTokens">) =>
+	pricing.billing && pricing.weeklyTokens > 0 ? `topped back up to ${pricing.weeklyTokens} credit${pricing.weeklyTokens === 1 ? "" : "s"} every week` : ""
 
 /** How many chats a number of credits buys at the configured price. */
 export const chatsFor = (credits: number, pricing: Pricing) =>

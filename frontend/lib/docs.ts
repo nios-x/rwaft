@@ -1,5 +1,5 @@
 import type { Article } from "./articles"
-import { chatsFor, type Pricing } from "./pricing"
+import { chatsFor, weeklyPhrase, type Pricing } from "./pricing"
 import { USE_CASES } from "./useCases"
 
 /**
@@ -46,7 +46,7 @@ export function docsFor(pricing: Pricing): Article[] {
 					heading: "Before you start",
 					body: [
 						billing
-							? `You need a Google account to build. New accounts get ${plural(pricing.signupTokens, "free credit")}${freeChats ? `, which is ${plural(freeChats, "chat")}` : ""}, so you can try rwaft before paying anything.`
+							? `You need a Google account to build. New accounts get ${plural(pricing.signupTokens, "free credit")}${freeChats ? `, which is ${plural(freeChats, "chat")}` : ""}, so you can try rwaft before paying anything.${weeklyPhrase(pricing) ? ` After that, a balance that has run low is ${weeklyPhrase(pricing)}.` : ""}`
 							: "You don't need an account: every build is free right now.",
 						"Have a rough idea of what you want. A sentence is enough to start; more detail gets you closer on the first try.",
 					],
@@ -247,6 +247,9 @@ export function docsFor(pricing: Pricing): Article[] {
 							heading: "Free credits",
 							body: [
 								`Sign in with Google and you get ${plural(pricing.signupTokens, "free credit")}${freeChats ? `, which is ${plural(freeChats, "chat")}` : ""}.`,
+								...(weeklyPhrase(pricing)
+									? [`Once a week, if your balance is below ${plural(pricing.weeklyTokens, "credit")}, it is ${weeklyPhrase(pricing).replace(" every week", "")} for free. The week counts from your last top-up, and a bigger balance, such as bought credits, is never touched.`]
+									: []),
 							],
 						},
 						{

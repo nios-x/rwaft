@@ -33,6 +33,7 @@ import {
 	BILLING_ENABLED,
 	SIGNUP_TOKENS,
 	TOKEN_COSTS,
+	WEEKLY_CREDITS,
 	authenticate,
 	createSession,
 	destroySession,
@@ -392,6 +393,8 @@ app.get("/auth/config", (_req, res) => {
 		billing: BILLING_ENABLED,
 		googleClientId: GOOGLE_CLIENT_ID || null,
 		signupTokens: SIGNUP_TOKENS,
+		// Each account is topped back up to this once a week (lib/refill.ts); 0 = off.
+		weeklyTokens: BILLING_ENABLED ? WEEKLY_CREDITS : 0,
 		costs: TOKEN_COSTS,
 		currency: CURRENCY,
 		// The packs are always listed with billing on, so recharging is visible

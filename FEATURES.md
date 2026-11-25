@@ -63,6 +63,7 @@ rwaft turns a description in plain words into a real website with its own link. 
 ## Credits
 
 - Sign in with Google and get **2 free credits**.
+- **Every week, a balance below 5 credits is topped back up to 5 for free.** The week counts from your last top-up, and a bigger balance (bought credits, say) is never touched.
 - Each message you send is one build and costs **1 credit**. Deploying a repository also costs 1.
 - **If a build fails, you get your credit back automatically.**
 - Your balance is always on screen, and you see the cost before you build.
