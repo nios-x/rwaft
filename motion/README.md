@@ -1,9 +1,10 @@
 # rwaft films
 
-Two films, made entirely in HTML, CSS and JavaScript and rendered frame by frame by the same engine and renderer.
+Three films, made entirely in HTML, CSS and JavaScript (plus WebGL for the trailer) and rendered frame by frame by the same engine and renderer.
 
 | Film | What | Entry | Output |
 |---|---|---|---|
+| **Keynote trailer** | 19.2 s, 1920 × 1080 world, rendered at 4K. A monochrome teaser cut beat-for-beat to its music track: a dark-studio cold open, the mark assembling on three hits, the mark as a raymarched 3D object in billowing smoke, black-glass product close-ups, keynote text cards, a twisting-ribbon "rwaft AI" shot, a ring of built sites, glossy black lettering and the end mark over chrome arcs. | `trailer.html`, `src/trailer/` | `out/rwaft-trailer-4k.mp4`, `out/rwaft-trailer-1080p.mp4` |
 | **Product overview** | 29 s, 1920 × 1080. The real rwaft UI in its dark theme, in a browser card on a white page, with one caption per beat: describe → real build → self-repair → live link → share → change by asking → React repo → pricing → rwaft.live → end card. | `overview.html`, `src/overview/` | `out/rwaft-overview.mp4` |
 | **Launch loop** | 16 s, 1440 × 1440, dark, seamless loop. One morphing object: mark → deploy card → build panel → live URL → preview → builds → mark. | `index.html`, `src/composition/` | `out/rwaft-launch.mp4` |
 
@@ -26,6 +27,47 @@ its copy in [src/overview/content.js](src/overview/content.js): chat replies are
 (`lib/stages.ts`), log lines are what the worker emits, pricing is the API's defaults (`lib/pricing.ts`). The app UI is
 rebuilt with rwaft's dark-theme tokens and class structure ([src/styles/overview.css](src/styles/overview.css)), and
 the camera zooms inside a fixed card, the way the reference product video frames its shots.
+
+## Keynote trailer
+
+Timing is measured from the track, not guessed: onset analysis gives 80.21 BPM with beat k at 0.279 + 0.748·k s (every
+strong onset within ±2 ms), a quiet intro, near silence at 2.1–2.5 s, three pickup hits at 2.508 / 2.772 / 3.043 s and a fill
+at 12.694 s. Every cut in [src/trailer/beatmap.js](src/trailer/beatmap.js) sits on one of those. Shots live in
+[src/trailer/shots.js](src/trailer/shots.js); WebGL programs (dark studio, smoke, the 3D mark, black-glass lettering,
+chrome arcs, corner gradient, grain) in [src/trailer/gl.js](src/trailer/gl.js). Copy follows FEATURES.md and the
+product's own replies; no invented numbers.
+
+- **Look.** Black, zinc and white, with violet only in the mark's endpoint and status colours where they mean something.
+  Panels are black glass: a gradient reflection that drifts across them, a lit top edge, faint matte grain. Text cards
+  are bold Geist filled white to zinc. The one burst of colour is "rwaft AI": a twisting ribbon (after VengeanceUI's
+  Twisting Ribbon) over warm corner light.
+- **Smoke** ([src/trailer/smoke.js](src/trailer/smoke.js)) is particles: each puff is born at an emitter, flies out,
+  slows, rises and swells with age; the shader sums them as soft blobs eroded by noise into wisps and lights them toward
+  the light. So it billows and spreads instead of sliding, and every frame is still a pure function of t.
+- **Transitions** ([src/trailer/transitions.js](src/trailer/transitions.js)). Each cut has a type in `CUTS`: push (zoom
+  through, with a bloom), whip, blur dissolve, smoke surge, flash or light sweep. Cuts stay on the beat; transitions shape
+  the frames either side by moving the camera layer, so canvases and DOM move together.
+- **End.** A ring of built sites (a native, time-driven take on VengeanceUI's Circular Gallery) around the 3D mark, the
+  name in glossy black, and the mark over glossy black chrome arcs (a port of Louis Studios' Chrome Arcs shader).
+
+The demo sites are illustrative builds in [site/](site/): KAIZEN (the film's prompt) plus a café menu, a habit tracker
+and an RSVP page (the home screen's three example prompts), with Unsplash photos via picsum.photos (the source rwaft's
+page writer falls back to). `node scripts/site.mjs` renders them: the KAIZEN home screen at 2.75× for 4K close-ups, the
+same screen with a violet accent for the "change it by asking" shot, four KAIZEN pages for the plan list, and ten
+thumbnails for the ring. It needs the network once, for the photos.
+
+```
+node scripts/site.mjs                                    # assets/kaizen-*.jpg and assets/gallery-*.jpg
+npm run preview                                          # then open /trailer.html
+node scripts/stills.mjs --film trailer                   # one still per shot + contact sheet → out/trailer-stills/
+node scripts/render.mjs --film trailer --preset preview --music <track>
+node scripts/render.mjs --film trailer --preset final --scale 2 --crf 14 --music <track> --music-gain 1 --keep --out out/rwaft-trailer-4k.mp4
+node scripts/render.mjs --film trailer --preset final --encode-only --scale 1 --crf 16 --music <track> --music-gain 1 --out out/rwaft-trailer-1080p.mp4
+```
+
+With `--film trailer`, `--music` is the whole sound track (no UI sounds), faded over the last 0.22 s. The 1080p copy is
+encoded from the kept 4K segments, so it is supersampled. WebGL needs a GPU-backed Chromium; with no Playwright build
+installed, point `CHROMIUM_PATH` at an installed Chrome or Edge.
 
 ## Launch loop
 

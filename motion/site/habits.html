@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Streak</title>
+<!--
+	A demo site for the trailer's gallery ring: what rwaft builds for "A habit
+	tracker with streaks". Rendered by scripts/site.mjs.   ?page=today|stats
+-->
+<style>
+@font-face { font-family: "Geist"; font-weight: 100 900; src: url("../node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2") format("woff2-variations"); }
+@font-face { font-family: "Geist Mono"; font-weight: 100 900; src: url("../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2") format("woff2-variations"); }
+@font-face { font-family: "Bricolage Grotesque"; font-weight: 200 800; src: url("../node_modules/@fontsource-variable/bricolage-grotesque/files/bricolage-grotesque-latin-wght-normal.woff2") format("woff2-variations"); }
+:root { --bg: #09090b; --panel: #111113; --line: #222226; --text: #fafafa; --muted: #8b8b94; --dim: #55555c; --g: #22c55e; --g2: #4ade80; --sans: "Geist", system-ui, sans-serif; --mono: "Geist Mono", monospace; --display: "Bricolage Grotesque", sans-serif; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); font-family: var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; }
+.page { display: none; height: 100vh; }
+.page.on { display: grid; grid-template-columns: 260px 1fr; }
+aside { border-right: 1px solid var(--line); padding: 34px 26px; display: flex; flex-direction: column; gap: 6px; }
+.logo { font: 800 30px var(--display); letter-spacing: -0.03em; display: flex; align-items: center; gap: 10px; margin-bottom: 34px; }
+.logo b { width: 30px; height: 30px; border-radius: 9px; background: var(--g); display: grid; place-items: center; color: #04130a; font-size: 18px; }
+.nav a { display: flex; align-items: center; gap: 12px; height: 46px; padding: 0 14px; border-radius: 12px; font: 500 17px var(--sans); color: var(--muted); }
+.nav a.on { background: #1a1a1d; color: var(--text); }
+.nav a i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.6; }
+main { padding: 40px 48px; }
+.top { display: flex; align-items: flex-end; justify-content: space-between; }
+.hello { font: 700 54px/1 var(--display); letter-spacing: -0.035em; }
+.date { font: 400 18px var(--sans); color: var(--muted); margin-top: 10px; }
+.add { height: 50px; padding: 0 22px; border-radius: 999px; background: var(--text); color: var(--bg); display: inline-flex; align-items: center; font: 600 17px var(--sans); }
+.grid2 { display: grid; grid-template-columns: 1.35fr 1fr; gap: 22px; margin-top: 32px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 22px; padding: 26px; }
+.card h3 { font: 500 15px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 18px; }
+.habit { display: flex; align-items: center; gap: 16px; height: 74px; border-top: 1px solid var(--line); }
+.habit:first-of-type { border-top: none; }
+.chk { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #3a3a40; display: grid; place-items: center; flex: none; }
+.chk.on { background: var(--g); border-color: var(--g); color: #04130a; font-weight: 800; }
+.habit .nm { font: 500 22px var(--sans); }
+.habit .sub { font: 400 15px var(--sans); color: var(--muted); margin-top: 3px; }
+.habit .st { margin-left: auto; font: 600 17px var(--mono); color: var(--g2); }
+.bar { width: 140px; height: 8px; border-radius: 99px; background: #26262b; overflow: hidden; margin-left: auto; }
+.bar i { display: block; height: 100%; background: var(--g); border-radius: 99px; }
+.streak { display: flex; align-items: center; gap: 22px; }
+.streak .big { font: 800 120px/0.9 var(--display); letter-spacing: -0.05em; background: linear-gradient(180deg, #86efac, #16a34a); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.streak .lbl { font: 600 26px var(--sans); }
+.streak .lbl span { display: block; font: 400 16px var(--sans); color: var(--muted); margin-top: 6px; }
+.heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 1fr); gap: 6px; margin-top: 22px; }
+.heat i { width: 100%; aspect-ratio: 1; border-radius: 4px; background: #1d1d21; }
+.stats3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 32px; }
+.stat .v { font: 800 64px/1 var(--display); letter-spacing: -0.04em; margin-top: 4px; }
+.stat .d { font: 400 16px var(--sans); color: var(--muted); margin-top: 8px; }
+.bars { display: flex; align-items: flex-end; gap: 14px; height: 170px; margin-top: 10px; }
+.bars div { flex: 1; border-radius: 10px 10px 4px 4px; background: linear-gradient(180deg, var(--g2), #15803d); }
+.bars div.dim { background: #26262b; }
+</style>
+</head>
+<body>
+<template id="side">
+	<aside>
+		<div class="logo"><b>✓</b>Streak</div>
+		<div class="nav"><a data-p="today"><i></i>Today</a><a><i></i>Habits</a><a data-p="stats"><i></i>Stats</a><a><i></i>Reminders</a><a><i></i>Settings</a></div>
+	</aside>
+</template>
+
+<div class="page" id="today">
+	<div class="side-slot"></div>
+	<main>
+		<div class="top"><div><div class="hello">Good morning, Sam</div><div class="date">Monday, 23 November · 3 of 5 done</div></div><span class="add">+ New habit</span></div>
+		<div class="grid2">
+			<div class="card">
+				<h3>Today</h3>
+				<div class="habit"><span class="chk on">✓</span><div><div class="nm">Read 20 pages</div><div class="sub">Before bed</div></div><span class="st">23 days</span></div>
+				<div class="habit"><span class="chk on">✓</span><div><div class="nm">Walk 8,000 steps</div><div class="sub">Any time</div></div><span class="st">12 days</span></div>
+				<div class="habit"><span class="chk on">✓</span><div><div class="nm">Journal</div><div class="sub">Morning</div></div><span class="st">9 days</span></div>
+				<div class="habit"><span class="chk"></span><div><div class="nm">Drink 8 glasses</div><div class="sub">6 of 8</div></div><span class="bar"><i style="width:75%"></i></span></div>
+				<div class="habit"><span class="chk"></span><div><div class="nm">Meditate 10 min</div><div class="sub">Evening</div></div><span class="st" style="color:var(--dim)">0 days</span></div>
+			</div>
+			<div class="card">
+				<h3>Current streak</h3>
+				<div class="streak"><div class="big">23</div><div class="lbl">days in a row<span>Your best yet. Keep it going.</span></div></div>
+				<div class="heat" id="heat1"></div>
+			</div>
+		</div>
+	</main>
+</div>
+
+<div class="page" id="stats">
+	<div class="side-slot"></div>
+	<main>
+		<div class="top"><div><div class="hello">Your year</div><div class="date">Every check, every day</div></div><span class="add">Export</span></div>
+		<div class="card" style="margin-top:32px"><h3>Activity</h3><div class="heat" id="heat2" style="grid-template-columns:repeat(40,1fr)"></div></div>
+		<div class="stats3">
+			<div class="card stat"><h3>Longest streak</h3><div class="v">41</div><div class="d">days, in March</div></div>
+			<div class="card stat"><h3>This week</h3><div class="v">86%</div><div class="d">of habits checked</div></div>
+			<div class="card stat"><h3>Weekly</h3><div class="bars"><div style="height:60%"></div><div style="height:82%"></div><div style="height:74%"></div><div style="height:95%"></div><div style="height:88%"></div><div class="dim" style="height:40%"></div><div class="dim" style="height:30%"></div></div></div>
+		</div>
+	</main>
+</div>
+
+<script>
+const q = new URLSearchParams(location.search)
+const page = q.get("page") || "today"
+const side = document.getElementById("side").content
+for (const slot of document.querySelectorAll(".side-slot")) {
+	const n = side.cloneNode(true)
+	const owner = slot.closest(".page").id
+	for (const a of n.querySelectorAll(".nav a")) if (a.dataset.p === owner) a.classList.add("on")
+	slot.replaceWith(n)
+}
+// a deterministic year of checks
+let s = 7
+const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647)
+const shades = ["#1d1d21", "#14532d", "#15803d", "#22c55e", "#4ade80"]
+const fill = (el, n) => { for (let i = 0; i < n; i++) { const c = document.createElement("i"); const v = rnd(); const lvl = i > n - 30 ? 3 + Math.round(rnd()) : v < 0.18 ? 0 : v < 0.4 ? 1 : v < 0.65 ? 2 : v < 0.88 ? 3 : 4; c.style.background = shades[lvl]; el.appendChild(c) } }
+fill(document.getElementById("heat1"), 7 * 13)
+fill(document.getElementById("heat2"), 7 * 40)
+document.getElementById(page).classList.add("on")
+window.siteReady = (async () => { await document.fonts.ready; return true })()
+</script>
+</body>
+</html>

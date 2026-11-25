@@ -4,8 +4,8 @@ import { JsonLd, PageShell, pageMetadata } from "../_components/PageShell"
 
 export const metadata = pageMetadata(
 	"/trailer",
-	"Trailer: watch rwaft build a live website in 29 seconds",
-	"A 29-second look at rwaft's AI website builder: describe an app, watch the real build fix its own error, share the live link and change it by asking."
+	"Trailer: rwaft, from idea to live link in 19 seconds",
+	"A 19-second trailer for rwaft's AI website builder: describe an app, watch the real build fix its own errors, share the live link, change it by asking and open pull requests on any GitHub repository."
 )
 
 export default function TrailerPage() {

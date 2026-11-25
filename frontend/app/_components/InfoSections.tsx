@@ -88,15 +88,15 @@ const STACK = [
 	"Sign-in is with Google, and payments are handled by Dodo Payments",
 ]
 
-/** The product overview film, rendered from motion/ (motion/out/rwaft-overview.mp4, with its score). */
+/** The keynote trailer, rendered from motion/ (`--film trailer`, motion/out/rwaft-trailer-1080p.mp4). */
 export const TRAILER = {
-	src: "/video/rwaft-overview.mp4",
-	poster: "/video/rwaft-overview-poster.jpg",
-	duration: "PT29S",
-	uploaded: "2026-10-22",
-	title: "rwaft in 29 seconds",
+	src: "/video/rwaft-trailer.mp4",
+	poster: "/video/rwaft-trailer-poster.jpg",
+	duration: "PT19S",
+	uploaded: "2026-11-23",
+	title: "rwaft in 19 seconds",
 	description:
-		"Describe an app in plain words, watch the real build fix its own error, share the live link, then change it by asking. Or deploy a React repo instead.",
+		"Describe an app in plain words, watch the real build fix its own errors, share the live link, then change it by asking. Or open pull requests on any GitHub repository.",
 }
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`

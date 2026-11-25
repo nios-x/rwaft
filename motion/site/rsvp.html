@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Maya turns thirty</title>
+<!--
+	A demo site for the trailer's gallery ring: what rwaft builds for "An RSVP
+	page for a party". Rendered by scripts/site.mjs.   ?page=invite|form
+	Photos: Unsplash via picsum.photos (195, 158), Unsplash licence.
+-->
+<style>
+@font-face { font-family: "Geist"; font-weight: 100 900; src: url("../node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2") format("woff2-variations"); }
+@font-face { font-family: "Instrument Serif"; font-style: normal; font-weight: 400; src: url("../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Instrument Serif"; font-style: italic; font-weight: 400; src: url("../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-italic.woff2") format("woff2"); }
+:root { --bg: #0b0907; --text: #fbf3e6; --muted: #b9a991; --gold: #f2c46d; --line: rgba(251, 243, 230, 0.14); --serif: "Instrument Serif", Georgia, serif; --sans: "Geist", system-ui, sans-serif; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); font-family: var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; }
+img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.page { display: none; position: relative; height: 100vh; }
+.page.on { display: block; }
+.bgimg { position: absolute; inset: 0; }
+.bgimg::after { content: ""; position: absolute; inset: 0; background: radial-gradient(900px 600px at 50% 52%, rgba(11, 9, 7, 0.55), rgba(11, 9, 7, 0.9)); }
+.center { position: relative; z-index: 1; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.kicker { font: 500 16px var(--sans); letter-spacing: 0.32em; text-transform: uppercase; color: var(--gold); }
+h1 { font: italic 400 170px/0.9 var(--serif); letter-spacing: -0.03em; margin-top: 24px; }
+.when { font: 400 26px var(--sans); color: var(--muted); margin-top: 26px; }
+.when b { color: var(--text); font-weight: 500; }
+.btn { display: inline-flex; align-items: center; gap: 10px; height: 60px; padding: 0 32px; border-radius: 999px; font: 600 19px var(--sans); background: var(--gold); color: #1d1406; margin-top: 38px; box-shadow: 0 10px 50px -10px rgba(242, 196, 109, 0.7); }
+.count { display: flex; gap: 14px; margin-top: 40px; }
+.count div { width: 104px; padding: 14px 0; border-radius: 18px; border: 1px solid var(--line); background: rgba(11, 9, 7, 0.5); backdrop-filter: blur(8px); }
+.count b { display: block; font: 400 44px/1 var(--serif); }
+.count span { font: 500 13px var(--sans); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+.split { display: grid; grid-template-columns: 1fr 1fr; height: 100%; }
+.left { position: relative; }
+.left::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(11, 9, 7, 0.1), rgba(11, 9, 7, 0.85)); }
+.left .cap { position: absolute; left: 56px; bottom: 56px; right: 56px; z-index: 1; }
+.left .cap h2 { font: italic 400 84px/0.95 var(--serif); }
+.left .cap p { font: 400 21px/1.5 var(--sans); color: var(--muted); margin-top: 16px; }
+.right { padding: 60px 64px; display: flex; flex-direction: column; }
+.right h3 { font: 400 60px/1 var(--serif); }
+.right .sub { font: 400 18px var(--sans); color: var(--muted); margin-top: 10px; }
+.f { margin-top: 26px; }
+.f label { display: block; font: 500 13px var(--sans); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+.in { height: 58px; border-radius: 14px; border: 1px solid var(--line); background: rgba(251, 243, 230, 0.04); display: flex; align-items: center; padding: 0 18px; font: 400 19px var(--sans); }
+.in.ph { color: #7d705f; }
+.chips { display: flex; gap: 10px; }
+.chips span { height: 52px; padding: 0 24px; border-radius: 999px; border: 1px solid var(--line); display: inline-flex; align-items: center; font: 500 18px var(--sans); color: var(--muted); }
+.chips span.on { background: var(--gold); color: #1d1406; border-color: transparent; font-weight: 600; }
+.step { display: inline-flex; align-items: center; gap: 22px; height: 58px; padding: 0 10px; border-radius: 14px; border: 1px solid var(--line); font: 500 22px var(--sans); }
+.step b { width: 38px; height: 38px; border-radius: 10px; background: rgba(251, 243, 230, 0.08); display: grid; place-items: center; font-weight: 500; }
+.who { display: flex; align-items: center; gap: 14px; margin-top: auto; padding-top: 22px; border-top: 1px solid var(--line); color: var(--muted); font: 400 17px var(--sans); }
+.av { display: flex; }
+.av i { width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--bg); margin-left: -10px; display: grid; place-items: center; font: 600 14px var(--sans); font-style: normal; color: #1d1406; }
+</style>
+</head>
+<body>
+<div class="page" id="invite">
+	<div class="bgimg"><img src="https://picsum.photos/id/195/1600/1000" alt=""></div>
+	<div class="center">
+		<span class="kicker">You're invited</span>
+		<h1>Maya turns thirty</h1>
+		<p class="when"><b>Saturday 14 March</b> · 8 pm till late · The Glasshouse, Canal Street</p>
+		<a class="btn">RSVP by 1 March</a>
+		<div class="count"><div><b>18</b><span>Days</span></div><div><b>06</b><span>Hours</span></div><div><b>42</b><span>Min</span></div></div>
+	</div>
+</div>
+
+<div class="page" id="form">
+	<div class="split">
+		<div class="left"><img src="https://picsum.photos/id/158/800/1000" alt=""><div class="cap"><h2>Dance, eat,<br>stay late.</h2><p>Live DJ from ten. Dinner from eight. Dress code: something that sparkles.</p></div></div>
+		<div class="right">
+			<h3>Will you come?</h3>
+			<p class="sub">Let Maya know by 1 March.</p>
+			<div class="f"><label>Your name</label><div class="in">Jordan Lee</div></div>
+			<div class="f"><label>Coming?</label><div class="chips"><span class="on">Yes, I'll be there</span><span>Sadly, no</span></div></div>
+			<div class="f"><label>Guests</label><div class="step"><b>−</b>2<b>+</b></div></div>
+			<div class="f"><label>A song for the DJ</label><div class="in ph">Something we can all sing to</div></div>
+			<a class="btn" style="align-self:flex-start;margin-top:28px">Send RSVP</a>
+			<div class="who"><div class="av"><i style="background:#f2c46d;margin-left:0">AK</i><i style="background:#e8a87c">JL</i><i style="background:#d6c2a1">RM</i><i style="background:#f5d9a8">TS</i></div>24 people are coming</div>
+		</div>
+	</div>
+</div>
+
+<script>
+const q = new URLSearchParams(location.search)
+const page = q.get("page") || "invite"
+document.getElementById(page).classList.add("on")
+window.siteReady = (async () => {
+	await document.fonts.ready
+	await Promise.all([...document.querySelectorAll(`#${page} img`)].map((img) => img.decode().catch(() => {})))
+	return true
+})()
+</script>
+</body>
+</html>
