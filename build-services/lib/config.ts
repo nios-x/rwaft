@@ -84,7 +84,18 @@ export const getRawAssetUrl = (publicId: string): string => cloudinary.url(publi
 
 export { cloudinary }
 
-export function createRedisClient() {
+/**
+ * How often an otherwise idle connection sends PING. Managed Redis bills every
+ * command, PINGs included, so this is minutes rather than seconds; TCP
+ * keepalive (below, free) is what keeps the socket alive between them.
+ */
+const PING_INTERVAL_MS = Math.max(0, Number(process.env.REDIS_PING_MS ?? 240_000))
+
+/**
+ * `ping: false` for a connection that spends its life inside a blocking
+ * command (the job pumps): it is never idle, so a PING would only cost.
+ */
+export function createRedisClient({ ping = true }: { ping?: boolean } = {}) {
 	const client = createClient({
 		url: redisUrl,
 		socket: {
@@ -95,13 +106,13 @@ export function createRedisClient() {
 				return delay
 			},
 			connectTimeout: 10_000,
-			// Managed Redis providers drop idle connections. A periodic PING keeps
-			// long-lived worker/subscriber sockets from being reaped mid-wait.
+			// Managed Redis providers drop idle connections. TCP keepalive probes
+			// keep long-lived sockets from being reaped and cost no commands.
 			keepAlive: true,
 			keepAliveInitialDelay: 30_000,
 			...(redisUrl?.startsWith("rediss://") ? { tls: true } : {})
 		},
-		pingInterval: 30_000
+		...(ping && PING_INTERVAL_MS > 0 ? { pingInterval: PING_INTERVAL_MS } : {})
 	})
 	client.on("error", (error) => {
 		// Log but don't crash — reconnectStrategy handles recovery.

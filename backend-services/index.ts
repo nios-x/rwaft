@@ -1174,7 +1174,12 @@ const PR_REQUEST_TTL_SECONDS = 15 * 60
 const PR_TOKEN_TTL_SECONDS = Number(process.env.PR_TOKEN_TTL_SECONDS || 60 * 60)
 /** The sealed copy outlives its deadline, so the sweep can still read it to revoke it. */
 const PR_TOKEN_KEEP_SECONDS = PR_TOKEN_TTL_SECONDS + 24 * 60 * 60
-const PR_TOKEN_SWEEP_MS = 60_000
+/**
+ * How often expired PR tokens are swept. Each sweep is a Redis command even
+ * when nothing has expired, and managed Redis bills every one; a token is
+ * revoked at most this long after its deadline.
+ */
+const PR_TOKEN_SWEEP_MS = Number(process.env.PR_TOKEN_SWEEP_MS || 5 * 60_000)
 const PR_RATE_LIMIT = Number(process.env.PR_RATE_LIMIT || (BILLING_ENABLED ? 20 : 3))
 const PR_RESULT_FIELDS = ["owner", "url", "title", "number", "files", "branch", "base", "fork", "repo"] as const
 
