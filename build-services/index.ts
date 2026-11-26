@@ -47,9 +47,10 @@ import { restoreSourceSnapshot, saveSourceSnapshot } from "./lib/source.ts"
 import { resolvePhotos } from "./lib/photos.ts"
 import { editApp } from "./lib/edit.ts"
 import { openPullRequest, updatePullRequest, type PullRequestRef, type PullRequestResult } from "./lib/pr.ts"
-import { startWatching, watchChecksForever } from "./lib/ci.ts"
+import { nudgeWatcher, startWatching, watchChecksForever } from "./lib/ci.ts"
 import { GitHubClient, canHandlePullRequests, openToken, revokeToken } from "./lib/github.ts"
 import { assertNoUndefinedIdentifiers } from "./lib/validate.ts"
+import { nextBackoff } from "./lib/pacing.ts"
 import {
 	RUNTIME_DEPENDENCIES,
 	BUILD_DEPENDENCIES,
@@ -83,8 +84,16 @@ const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 15 * 60_000)
 const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 30_000)
 const CLOUDINARY_API_TIMEOUT_MS = Number(process.env.CLOUDINARY_API_TIMEOUT_MS || 60_000)
 const STATUS_TTL_SECONDS = Number(process.env.STATUS_TTL_SECONDS || 24 * 60 * 60)
-/** How long BLMOVE parks before looping, so shutdown stays responsive. */
-const QUEUE_BLOCK_SECONDS = Number(process.env.QUEUE_BLOCK_SECONDS || 5)
+/**
+ * How long BLMOVE parks before asking again. A job still starts the moment it
+ * is pushed (BLMOVE wakes on it); this only sets what an idle worker costs:
+ * each pump sends one command per wait, and managed Redis bills every command.
+ * Shutdown does not wait for it: idle pumps are disconnected (see shutdown).
+ */
+const QUEUE_BLOCK_SECONDS = Math.max(1, Number(process.env.QUEUE_BLOCK_SECONDS || 60))
+/** After a failed queue read: wait 2 s, then double up to a minute, so an outage isn't hammered. */
+const QUEUE_RETRY_MIN_MS = 2_000
+const QUEUE_RETRY_MAX_MS = 60_000
 /** Abandon a build directory older than this during periodic sweeps. */
 const STALE_BUILD_MS = Number(process.env.STALE_BUILD_MS || 60 * 60_000)
 
@@ -904,6 +913,13 @@ async function refundFailedJob(redis: RedisLike, payload: JobPayload) {
 }
 
 /**
+ * Pump connections currently parked in BLMOVE with no job in hand. Shutdown
+ * closes them so it never waits out a long block; a job BLMOVE handed over in
+ * that instant stays in the processing list and is recovered on the next start.
+ */
+const parkedClients = new Set<RedisLike>()
+
+/**
  * Shared job pump: claim -> run inside a per-user log context -> ack.
  * `handler` throws to mark the job failed, and may return the URL the job
  * produced when that isn't the deployment URL (a pull request's).
@@ -915,20 +931,27 @@ async function pump(
 	processing: string,
 	handler: (payload: JobPayload, redis: RedisLike) => Promise<void | { url: string; done?: string }>
 ) {
-	const redis = createRedisClient()
+	// Lives inside BLMOVE, so it is never idle and never needs a PING.
+	const redis = createRedisClient({ ping: false })
 	await redis.connect()
 	await recoverOrphanedJobs(redis, queue, processing, label)
 	console.log(`[${label}] Listening on ${queue}`)
 
+	let backoff = 0
 	while (!shuttingDown) {
 		let raw: string | null = null
+		parkedClients.add(redis)
 		try {
 			raw = await claimJob(redis, queue, processing)
+			backoff = 0
 		} catch (error) {
 			if (shuttingDown) break
-			console.error(`[${label}] Queue read failed, backing off:`, (error as Error).message)
-			await new Promise(r => setTimeout(r, 2_000))
+			backoff = nextBackoff(backoff, QUEUE_RETRY_MIN_MS, QUEUE_RETRY_MAX_MS)
+			console.error(`[${label}] Queue read failed, retrying in ${Math.round(backoff / 1000)}s:`, (error as Error).message)
+			await new Promise(r => setTimeout(r, backoff))
 			continue
+		} finally {
+			parkedClients.delete(redis)
 		}
 		if (!raw) continue
 
@@ -1266,6 +1289,10 @@ const shutdown = async (signal: string) => {
 	console.log(`[worker] ${signal} received - finishing current job, then exiting`)
 	clearInterval(sweepTimer)
 	healthServer?.close()
+	// Idle pumps are parked in a long BLMOVE; close them instead of waiting it out.
+	for (const client of parkedClients) client.destroy()
+	// The check watcher may be in a long sleep; wake it so it sees the shutdown.
+	nudgeWatcher()
 	// Give the in-flight job a bounded window to finish and flush its logs.
 	setTimeout(() => {
 		console.warn("[worker] Shutdown grace period elapsed, forcing exit")

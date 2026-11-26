@@ -3,6 +3,7 @@ import { flushLogs, jobLog, runWithJobContext, type LogLevel } from "./joblog.ts
 import { GitHubClient, GitHubError, openToken, revokeToken } from "./github.ts"
 import { updatePullRequest, type PullRequestRef } from "./pr.ts"
 import { withBuildSlot } from "./jobslot.ts"
+import { BUSY_LOOP_MS, nextBackoff, watchLoopDelay } from "./pacing.ts"
 
 /**
  * Watching a pull request's checks, and fixing the ones that fail.
@@ -33,7 +34,12 @@ const NO_CHECKS_MS = Number(process.env.CI_NO_CHECKS_MS || 4 * 60_000)
 const MAX_FIXES = Math.max(0, Number(process.env.CI_MAX_FIXES || 2))
 const POLL_MS = Number(process.env.CI_POLL_MS || 30_000)
 const FIRST_LOOK_MS = 15_000
-const LOOP_MS = 5_000
+/**
+ * The longest the watch loop sleeps with nothing due. Watches added or
+ * re-scheduled in this process wake it at once (nudgeWatcher), so this is only
+ * a safety net, and it sets what an idle worker costs in Redis commands.
+ */
+const IDLE_LOOP_MS = Number(process.env.CI_IDLE_MS || 5 * 60_000)
 const MAX_PARALLEL = 3
 const FIX_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS || 15 * 60_000)
 /** A visit's claim on its watch; longer than a fix, so a slow fix isn't visited twice. */
@@ -65,6 +71,7 @@ export async function startWatching(redis: RedisLike, watch: Watch): Promise<voi
 		.zAdd(PR_WATCHING, { score: Date.now() + FIRST_LOOK_MS, value: watch.jobId })
 		.zAdd(PR_TOKEN_DEADLINES, { score: Date.now() + TOKEN_HEARTBEAT_MS, value: watch.jobId })
 		.exec()
+	nudgeWatcher()
 }
 
 /** Claims a due watch by moving it a lease ahead; 1 when this visit owns it. */
@@ -77,32 +84,68 @@ end
 return 0
 `
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+/** Ends the watch loop's current wait early, when this process adds or re-schedules a watch. */
+let wakeWatchLoop: (() => void) | null = null
+export const nudgeWatcher = () => wakeWatchLoop?.()
 
-/** Visits due watches until told to stop. Runs beside the job pumps in the worker. */
+/** Sleeps for `ms`, or until nudgeWatcher is called. */
+const nap = (ms: number) => new Promise<void>((resolve) => {
+	const done = () => {
+		clearTimeout(timer)
+		if (wakeWatchLoop === done) wakeWatchLoop = null
+		resolve()
+	}
+	const timer = setTimeout(done, ms)
+	wakeWatchLoop = done
+})
+
+/**
+ * Visits due watches until told to stop. Runs beside the job pumps in the
+ * worker. Each pass reads only the soonest few watches, with their scores, so
+ * it knows both what is due and how long it may sleep until the next one.
+ */
 export async function watchChecksForever(createClient: () => RedisLike, stopping: () => boolean): Promise<void> {
 	const redis = createClient()
 	await redis.connect()
 	const active = new Set<string>()
+	let backoff = 0
 	console.log(`[ci] Watching pull request checks (${PR_WATCHING})`)
 	while (!stopping()) {
+		let delay: number
 		try {
 			const now = Date.now()
-			const due = await redis.zRangeByScore(PR_WATCHING, "-inf", now, { LIMIT: { offset: 0, count: MAX_PARALLEL * 2 } })
-			for (const jobId of due) {
-				if (active.has(jobId) || active.size >= MAX_PARALLEL) continue
+			const soonest = await redis.zRangeWithScores(PR_WATCHING, 0, MAX_PARALLEL * 2 - 1)
+			let nextDue: number | null = null
+			let waiting = false
+			for (const { value: jobId, score } of soonest) {
+				if (score > now) {
+					nextDue = nextDue === null ? score : Math.min(nextDue, score)
+					continue
+				}
+				if (active.has(jobId) || active.size >= MAX_PARALLEL) {
+					waiting = true
+					continue
+				}
 				const claimed = Number(await redis.sendCommand(["EVAL", CLAIM_SCRIPT, "1", PR_WATCHING, jobId, String(now), String(now + LEASE_MS)]))
 				if (claimed !== 1) continue
 				active.add(jobId)
 				void visitWatch(redis, jobId)
 					.catch((error) => console.error(`[ci] Visit to ${jobId} failed:`, (error as Error).message))
-					.finally(() => active.delete(jobId))
+					.finally(() => {
+						active.delete(jobId)
+						// It re-scheduled itself (or finished): look again now rather than after a long sleep.
+						nudgeWatcher()
+					})
 			}
+			backoff = 0
+			delay = watchLoopDelay(nextDue, now, waiting, IDLE_LOOP_MS)
 		} catch (error) {
 			if (stopping()) break
-			console.error("[ci] Watch loop failed, backing off:", (error as Error).message)
+			backoff = nextBackoff(backoff, BUSY_LOOP_MS, 60_000)
+			delay = backoff
+			console.error(`[ci] Watch loop failed, retrying in ${Math.round(delay / 1000)}s:`, (error as Error).message)
 		}
-		await sleep(LOOP_MS)
+		await nap(delay)
 	}
 	// Whatever is mid-visit keeps its lease and is picked up again after a restart.
 	await redis.quit().catch(() => { })

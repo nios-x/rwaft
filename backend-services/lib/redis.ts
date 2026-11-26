@@ -1,6 +1,7 @@
 import { createClient } from "redis"
 
 const redisUrl = process.env.REDIS_URL
+const PING_INTERVAL_MS = Math.max(0, Number(process.env.REDIS_PING_MS ?? 240_000))
 
 /**
  * Builds a client with production-appropriate resilience.
@@ -24,12 +25,14 @@ export function createRedisClient() {
 				return delay
 			},
 			connectTimeout: 10_000,
-			// Managed Redis providers reap idle sockets; keep ours warm.
+			// Managed Redis providers reap idle sockets; TCP keepalive probes keep
+			// ours warm and, unlike PING, cost no commands.
 			keepAlive: true,
 			keepAliveInitialDelay: 30_000,
 			...(redisUrl.startsWith("rediss://") ? { tls: true } : {})
 		},
-		pingInterval: 30_000
+		// Managed Redis bills every command, PINGs included: minutes, not seconds.
+		...(PING_INTERVAL_MS > 0 ? { pingInterval: PING_INTERVAL_MS } : {})
 	})
 
 	client.on("error", (error: Error) => {
