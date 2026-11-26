@@ -289,7 +289,7 @@ export const GUIDES: Guide[] = [
 				heading: "Vibe coding with rwaft",
 				body: [
 					"rwaft is vibe coding for websites, with the curtain open. You describe a site, and instead of a spinner you watch the real build: the plan, the installs, the build output and the fixes rwaft makes when something breaks. The result is a React and TypeScript app at its own link.",
-					{ link: { text: "See it in", href: "/trailer", label: "the 29-second trailer" } },
+					{ link: { text: "See it in", href: "/trailer", label: "the 19-second trailer" } },
 				],
 			},
 		],

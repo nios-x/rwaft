@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>KAIZEN Studio</title>
+<!--
+	The demo site the trailer shows: what rwaft builds for "A portfolio for my
+	design studio, KAIZEN". Rendered to stills by scripts/site.mjs.
+
+	  ?page=home|works|about|contact   ?accent=lime|violet
+
+	Photos are Unsplash photos served by picsum.photos (the same source rwaft's
+	page writer falls back to), free to use under the Unsplash licence:
+	1081 Julien Moreau · 526 and 508 Jeff Sheldon · 1068 Padurariu Alexandru · 859 Brennan Ehrhardt ·
+	855 Rodion Kutsaev · 1059 Clark Street Mercantile · 677 davide ragusa · 119 Nadir Balcikli
+-->
+<style>
+@font-face { font-family: "Bricolage Grotesque"; font-weight: 200 800; font-stretch: 75% 100%; src: url("../node_modules/@fontsource-variable/bricolage-grotesque/files/bricolage-grotesque-latin-standard-normal.woff2") format("woff2-variations"); }
+@font-face { font-family: "Geist"; font-weight: 100 900; src: url("../node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2") format("woff2-variations"); }
+@font-face { font-family: "Geist Mono"; font-weight: 100 900; src: url("../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2") format("woff2-variations"); }
+@font-face { font-family: "Instrument Serif"; font-style: italic; font-weight: 400; src: url("../node_modules/@fontsource/instrument-serif/files/instrument-serif-latin-400-italic.woff2") format("woff2"); }
+
+:root {
+	--bg: #0c0c0d;
+	--panel: #141416;
+	--panel-2: #1a1a1d;
+	--line: rgba(255, 255, 255, 0.09);
+	--text: #f3f2ee;
+	--muted: #9b9ba1;
+	--dim: #66666c;
+	--accent: #d4ff3f;
+	--accent-soft: rgba(212, 255, 63, 0.14);
+	--on-accent: #0c0c0d;
+	--pad: 64px;
+	--display: "Bricolage Grotesque", system-ui, sans-serif;
+	--sans: "Geist", system-ui, sans-serif;
+	--mono: "Geist Mono", ui-monospace, monospace;
+	--serif: "Instrument Serif", Georgia, serif;
+}
+:root[data-accent="violet"] { --accent: #a48bff; --accent-soft: rgba(164, 139, 255, 0.16); }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+body { overflow: hidden; }
+img { display: block; width: 100%; height: 100%; object-fit: cover; }
+a { color: inherit; text-decoration: none; }
+.page { display: none; min-height: 100vh; flex-direction: column; }
+.page.on { display: flex; }
+.mono { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
+.it { font-family: var(--serif); font-style: italic; font-weight: 400; letter-spacing: -0.01em; color: var(--accent); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+
+/* nav */
+nav { height: 96px; display: flex; align-items: center; padding: 0 var(--pad); border-bottom: 1px solid var(--line); position: relative; z-index: 2; }
+.logo { font: 800 27px/1 var(--display); letter-spacing: -0.03em; display: flex; align-items: center; gap: 3px; }
+.logo i { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-top: 11px; }
+.logo span { font: 500 13px/1 var(--mono); letter-spacing: 0.06em; color: var(--dim); margin-left: 12px; text-transform: uppercase; }
+.links { display: flex; gap: 40px; margin: 0 auto; font: 500 16px/1 var(--sans); color: var(--muted); }
+.links a.on { color: var(--text); position: relative; }
+.links a.on::after { content: ""; position: absolute; left: 50%; bottom: -12px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--accent); }
+.nav-r { display: flex; align-items: center; gap: 22px; }
+.clock { color: var(--dim); }
+.btn { display: inline-flex; align-items: center; gap: 10px; height: 52px; padding: 0 26px; border-radius: 999px; font: 600 16px/1 var(--sans); letter-spacing: -0.01em; white-space: nowrap; }
+.btn.small { height: 44px; padding: 0 20px; font-size: 15px; }
+.btn.primary { background: var(--accent); color: var(--on-accent); box-shadow: 0 10px 40px -10px var(--accent); }
+.btn.ghost { border: 1px solid rgba(255, 255, 255, 0.18); color: var(--text); }
+.btn svg { width: 16px; height: 16px; }
+
+/* home hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) 560px; gap: 72px; padding: 44px var(--pad) 0; height: 804px; }
+.hero-l { display: flex; flex-direction: column; }
+.eyebrow { display: flex; align-items: center; gap: 18px; }
+.pill { display: inline-flex; align-items: center; gap: 10px; height: 34px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, 0.03); color: var(--text); }
+.eyebrow .mono:last-child { color: var(--dim); }
+h1 { font: 720 146px/0.86 var(--display); letter-spacing: -0.052em; margin: 44px 0 0 -6px; font-stretch: 96%; }
+h1 .it { font-size: 1.12em; line-height: 0.7; letter-spacing: -0.02em; padding-right: 0.04em; }
+.lede { font: 400 21px/1.5 var(--sans); color: var(--muted); max-width: 640px; margin-top: 38px; letter-spacing: -0.005em; }
+.lede b { color: var(--text); font-weight: 500; }
+.ctas { display: flex; gap: 14px; margin-top: 36px; }
+.clients { margin-top: auto; padding: 26px 0 44px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 40px; color: #7d7d84; white-space: nowrap; }
+.clients .mono { color: var(--dim); margin-right: 4px; }
+.cl { font-size: 23px; line-height: 1; white-space: nowrap; }
+.cl.a { font: 800 22px var(--display); letter-spacing: 0.18em; }
+.cl.b { font: italic 400 30px var(--serif); }
+.cl.c { font: 600 22px var(--sans); letter-spacing: -0.04em; }
+.cl.d { font: 500 18px var(--mono); letter-spacing: 0.1em; }
+.cl.e { font: 300 24px var(--display); letter-spacing: 0.02em; font-stretch: 80%; }
+
+.hero-r { position: relative; padding-bottom: 40px; }
+.feature { position: relative; height: 100%; border-radius: 30px; overflow: hidden; box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.8); }
+.feature::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(12, 12, 13, 0) 55%, rgba(12, 12, 13, 0.72)); }
+.feature .tag { position: absolute; left: 22px; top: 22px; z-index: 1; color: #0c0c0d; background: rgba(255, 255, 255, 0.86); backdrop-filter: blur(8px); }
+.feature .go { position: absolute; right: 22px; top: 22px; z-index: 1; width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
+.feature .go svg { width: 20px; height: 20px; }
+.feature .cap { position: absolute; left: 28px; right: 28px; bottom: 28px; z-index: 1; display: flex; justify-content: space-between; align-items: flex-end; }
+.cap h3 { font: 650 34px/1.05 var(--display); letter-spacing: -0.03em; }
+.cap p { color: rgba(255, 255, 255, 0.72); font: 400 16px/1.4 var(--sans); margin-top: 8px; }
+.cap .mono { color: rgba(255, 255, 255, 0.7); }
+.badge { position: absolute; left: -58px; top: 300px; z-index: 2; width: 132px; height: 132px; border-radius: 50%; background: var(--panel); border: 1px solid var(--line); display: grid; place-items: center; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6); }
+.badge svg { position: absolute; inset: 10px; width: 112px; height: 112px; }
+.badge text { font: 500 10.6px var(--mono); letter-spacing: 0.24em; fill: var(--muted); text-transform: uppercase; }
+.badge b { width: 40px; height: 40px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; color: var(--on-accent); }
+.badge b svg { position: static; width: 18px; height: 18px; }
+
+/* below the fold */
+.strip { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); height: 120px; display: flex; align-items: center; gap: 44px; padding: 0 var(--pad); white-space: nowrap; overflow: hidden; font: 600 54px/1 var(--display); letter-spacing: -0.03em; color: #2c2c31; }
+.strip em { font: italic 400 60px var(--serif); color: var(--text); }
+.strip i { color: var(--accent); font-style: normal; font-size: 36px; }
+section { padding: 72px var(--pad) 0; }
+.sec-h { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 36px; }
+.sec-h h2 { font: 700 72px/0.95 var(--display); letter-spacing: -0.045em; }
+.sec-h h2 sup { font: 500 16px var(--mono); color: var(--accent); vertical-align: top; margin-left: 10px; letter-spacing: 0.05em; }
+.sec-h a { color: var(--muted); font: 500 16px var(--sans); display: flex; gap: 8px; align-items: center; }
+.grid { display: grid; gap: 22px; }
+.g2 { grid-template-columns: 1.25fr 1fr; }
+.g3 { grid-template-columns: repeat(3, 1fr); margin-top: 22px; }
+.card .ph { border-radius: 22px; overflow: hidden; position: relative; background: var(--panel); }
+.card .ph .chip { position: absolute; left: 16px; top: 16px; color: #0c0c0d; background: rgba(255, 255, 255, 0.86); height: 30px; font-size: 11px; }
+.card .meta { display: flex; justify-content: space-between; align-items: baseline; padding: 18px 4px 0; }
+.card h4 { font: 650 26px/1.1 var(--display); letter-spacing: -0.025em; }
+.card .meta span { color: var(--dim); }
+.card p { color: var(--muted); font: 400 16px/1.45 var(--sans); padding: 6px 4px 0; }
+
+/* inner pages */
+.ph-head { padding: 72px var(--pad) 0; }
+.ph-head .mono { color: var(--accent); }
+.ph-head h1 { font-size: 132px; margin-top: 26px; }
+.ph-head .row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 36px; }
+.filters { display: flex; gap: 10px; }
+.filters span { height: 44px; padding: 0 20px; border-radius: 999px; border: 1px solid var(--line); display: inline-flex; align-items: center; font: 500 16px var(--sans); color: var(--muted); }
+.filters span.on { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
+.works-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 24px; padding: 48px var(--pad) 0; }
+.about-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; padding: 56px var(--pad) 0; }
+.about-grid .ph { border-radius: 26px; overflow: hidden; height: 640px; }
+.about-grid .big { font: 500 34px/1.25 var(--display); letter-spacing: -0.025em; }
+.about-grid .big em { font: italic 400 40px var(--serif); color: var(--accent); }
+.about-grid p { color: var(--muted); font: 400 19px/1.55 var(--sans); margin-top: 26px; }
+.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; padding: 64px var(--pad) 0; }
+.step { border: 1px solid var(--line); background: var(--panel); border-radius: 22px; padding: 30px 30px 34px; }
+.step .n { font: 500 14px var(--mono); color: var(--accent); }
+.step h4 { font: 650 34px/1 var(--display); letter-spacing: -0.03em; margin-top: 40px; }
+.step p { color: var(--muted); font: 400 17px/1.5 var(--sans); margin-top: 12px; }
+.contact-grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 28px; padding: 52px var(--pad) 0; }
+.form { background: var(--panel); border: 1px solid var(--line); border-radius: 28px; padding: 40px; }
+.field { margin-bottom: 26px; }
+.field label { display: block; color: var(--dim); margin-bottom: 12px; }
+.field .in { height: 60px; border-radius: 14px; background: var(--bg); border: 1px solid var(--line); padding: 0 20px; display: flex; align-items: center; font: 400 18px var(--sans); color: var(--text); }
+.field .in.ph { color: var(--dim); }
+.field .in.area { height: 150px; align-items: flex-start; padding-top: 18px; line-height: 1.5; }
+.field .in.focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.chips { display: flex; gap: 10px; flex-wrap: wrap; }
+.chips span { height: 46px; padding: 0 20px; border-radius: 999px; border: 1px solid var(--line); display: inline-flex; align-items: center; font: 500 16px var(--sans); color: var(--muted); }
+.chips span.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.side { display: flex; flex-direction: column; gap: 22px; }
+.side .ph { border-radius: 28px; overflow: hidden; height: 430px; position: relative; }
+.side .ph::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 50%, rgba(12, 12, 13, 0.75)); }
+.side .ph .cap { position: absolute; left: 26px; bottom: 24px; z-index: 1; }
+.info { background: var(--panel); border: 1px solid var(--line); border-radius: 28px; padding: 32px; display: grid; gap: 22px; }
+.info .mono { color: var(--dim); }
+.info div div { font: 500 22px var(--sans); margin-top: 8px; letter-spacing: -0.01em; }
+footer { margin-top: auto; padding: 88px var(--pad) 0; }
+.foot { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1.4fr; gap: 32px; padding-top: 40px; border-top: 1px solid var(--line); }
+.foot .mono { color: var(--dim); display: block; margin-bottom: 16px; }
+.foot div div { font: 400 17px/1.7 var(--sans); color: var(--muted); }
+.foot .news { height: 56px; border-radius: 999px; border: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 6px 0 22px; color: var(--dim); font: 400 16px var(--sans); }
+.foot .news b { height: 44px; padding: 0 18px; border-radius: 999px; background: var(--accent); color: var(--on-accent); display: inline-flex; align-items: center; font: 600 15px var(--sans); }
+.word { font: 800 404px/0.8 var(--display); letter-spacing: -0.035em; color: #18181b; margin: 56px 0 0 -14px; display: flex; align-items: flex-end; white-space: nowrap; }
+.word i { width: 54px; height: 54px; border-radius: 50%; background: var(--accent); margin: 0 0 18px 10px; flex: none; }
+.credit { display: flex; justify-content: space-between; color: var(--dim); padding: 22px 0 30px; }
+</style>
+</head>
+<body>
+
+<template id="nav">
+	<nav>
+		<a class="logo">KAIZEN<i></i><span>Studio</span></a>
+		<div class="links"><a data-p="works">Work</a><a data-p="about">Studio</a><a data-p="process">Process</a><a data-p="journal">Journal</a><a data-p="contact">Contact</a></div>
+		<div class="nav-r"><span class="mono clock">Tokyo 07:05</span><a class="btn small primary">Start a project <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11 11 5M6 5h5v5"/></svg></a></div>
+	</nav>
+</template>
+
+
+<template id="footer">
+	<footer>
+		<div class="foot">
+			<div><span class="mono">Studios</span><div>Tokyo, Nakameguro<br>Berlin, Kreuzberg</div></div>
+			<div><span class="mono">Follow</span><div>Instagram<br>Dribbble<br>LinkedIn</div></div>
+			<div><span class="mono">Studio</span><div>Work<br>Process<br>Journal</div></div>
+			<div><span class="mono">Newsletter</span><div class="news">Your email<b>Subscribe</b></div></div>
+		</div>
+		<div class="word">KAIZEN<i></i></div>
+		<div class="credit"><span class="mono">© 2026 KAIZEN Studio</span><span class="mono">Photos from Unsplash</span></div>
+	</footer>
+</template>
+
+<!-- HOME -->
+<div class="page" id="home">
+	<div class="nav-slot"></div>
+	<div class="hero">
+		<div class="hero-l">
+			<div class="eyebrow"><span class="pill mono"><span class="dot"></span>Booking spring 2027</span><span class="mono">Independent design studio · Tokyo — Berlin</span></div>
+			<h1>Design that<br>gets better,<br>every <span class="it">day.</span></h1>
+			<p class="lede">A small studio for <b>brand identity, product design and the web</b>. We ship, listen and refine, one careful step at a time.</p>
+			<div class="ctas">
+				<a class="btn primary">Start a project <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+				<a class="btn ghost">See selected work</a>
+			</div>
+			<div class="clients"><span class="mono">Trusted by</span><span class="cl a">HŌSHI</span><span class="cl b">Aoi Ceramics</span><span class="cl c">rosso.</span><span class="cl d">KIIRO/TRANSIT</span></div>
+		</div>
+		<div class="hero-r">
+			<div class="feature">
+				<img src="https://picsum.photos/id/1081/1600/2100" alt="">
+				<span class="pill mono tag">Case study 01</span>
+				<span class="go"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11 11 5M6 5h5v5"/></svg></span>
+				<div class="cap"><div><h3>Kōyō Museum</h3><p>Identity, signage and website</p></div><span class="mono">2026</span></div>
+			</div>
+			<div class="badge">
+				<svg viewBox="0 0 112 112"><defs><path id="c" d="M56 56m-44 0a44 44 0 1 1 88 0a44 44 0 1 1-88 0"/></defs><text><textPath href="#c">Better every day · Better every day ·</textPath></text></svg>
+				<b><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M4 9l4 4 4-4"/></svg></b>
+			</div>
+		</div>
+	</div>
+	<div class="strip">Brand identity <i>✳</i> <em>Product design</em> <i>✳</i> Websites <i>✳</i> <em>Motion</em> <i>✳</i> Packaging <i>✳</i> <em>Type</em></div>
+	<section>
+		<div class="sec-h"><h2>Selected work<sup>(06)</sup></h2><a>All projects →</a></div>
+		<div class="grid g2">
+			<div class="card"><div class="ph" style="height:440px"><img src="https://picsum.photos/id/526/1200/880" alt=""><span class="pill mono chip">Identity</span></div><div class="meta"><h4>Hōshi Coffee</h4><span class="mono">2026</span></div><p>A roastery brand built from one star.</p></div>
+			<div class="card"><div class="ph" style="height:440px"><img src="https://picsum.photos/id/1068/1000/880" alt=""><span class="pill mono chip">E-commerce</span></div><div class="meta"><h4>Aoi Ceramics</h4><span class="mono">2025</span></div><p>A calm shop for handmade tableware.</p></div>
+		</div>
+		<div class="grid g3">
+			<div class="card"><div class="ph" style="height:300px"><img src="https://picsum.photos/id/859/800/600" alt=""></div><div class="meta"><h4>Rosso Cycles</h4><span class="mono">2025</span></div></div>
+			<div class="card"><div class="ph" style="height:300px"><img src="https://picsum.photos/id/855/800/600" alt=""></div><div class="meta"><h4>Kiiro Transit</h4><span class="mono">2024</span></div></div>
+			<div class="card"><div class="ph" style="height:300px"><img src="https://picsum.photos/id/508/800/600" alt=""></div><div class="meta"><h4>Kōyō Museum</h4><span class="mono">2026</span></div></div>
+		</div>
+	</section>
+</div>
+
+<!-- WORKS -->
+<div class="page" id="works">
+	<div class="nav-slot"></div>
+	<div class="ph-head">
+		<span class="mono">Work · 2019 — 2026</span>
+		<h1>Selected <span class="it">work.</span></h1>
+		<div class="row"><div class="filters"><span class="on">All</span><span>Identity</span><span>Product</span><span>Web</span><span>Motion</span></div><span class="mono" style="color:var(--dim)">06 projects</span></div>
+	</div>
+	<div class="works-grid">
+		<div class="card"><div class="ph" style="height:400px"><img src="https://picsum.photos/id/526/1000/600" alt=""><span class="pill mono chip">Identity</span></div><div class="meta"><h4>Hōshi Coffee</h4><span class="mono">2026</span></div><p>Identity and packaging for a Kyoto roastery.</p></div>
+		<div class="card"><div class="ph" style="height:400px"><img src="https://picsum.photos/id/1068/1000/600" alt=""><span class="pill mono chip">E-commerce</span></div><div class="meta"><h4>Aoi Ceramics</h4><span class="mono">2025</span></div><p>A shop that sells slowly, on purpose.</p></div>
+		<div class="card"><div class="ph" style="height:400px"><img src="https://picsum.photos/id/859/1000/600" alt=""><span class="pill mono chip">Campaign</span></div><div class="meta"><h4>Rosso Cycles</h4><span class="mono">2025</span></div><p>Launch campaign for a city bike.</p></div>
+		<div class="card"><div class="ph" style="height:400px"><img src="https://picsum.photos/id/855/1000/600" alt=""><span class="pill mono chip">Wayfinding</span></div><div class="meta"><h4>Kiiro Transit</h4><span class="mono">2024</span></div><p>Signs a tired commuter reads in one glance.</p></div>
+		<div class="card"><div class="ph" style="height:400px"><img src="https://picsum.photos/id/508/1000/600" alt=""><span class="pill mono chip">Identity</span></div><div class="meta"><h4>Kōyō Museum</h4><span class="mono">2026</span></div><p>Identity, signage and website.</p></div>
+		<div class="card"><div class="ph" style="height:400px"><img src="https://picsum.photos/id/119/1000/600" alt=""><span class="pill mono chip">Type</span></div><div class="meta"><h4>Sumi Sans</h4><span class="mono">2024</span></div><p>A typeface for small screens.</p></div>
+	</div>
+	<div class="foot-slot"></div>
+</div>
+
+<!-- ABOUT -->
+<div class="page" id="about">
+	<div class="nav-slot"></div>
+	<div class="ph-head">
+		<span class="mono">Studio</span>
+		<h1>A small studio<br>with a long <span class="it">view.</span></h1>
+	</div>
+	<div class="about-grid">
+		<div class="ph"><img src="https://picsum.photos/id/1059/1100/1100" alt=""></div>
+		<div>
+			<p class="big">Kaizen means <em>continuous improvement.</em> We launch early, watch how people really use the work, and keep making it better.</p>
+			<p>Four designers and two engineers between Tokyo and Berlin. We take on a handful of projects a year, so the people you meet are the people who do the work.</p>
+			<div class="ctas" style="margin-top:34px"><a class="btn primary">Meet the team</a><a class="btn ghost">Our process</a></div>
+		</div>
+	</div>
+	<div class="steps">
+		<div class="step"><div class="n">01</div><h4>Listen</h4><p>Workshops, interviews and a clear brief before a single pixel.</p></div>
+		<div class="step"><div class="n">02</div><h4>Make</h4><p>Design and code side by side, shipped in weeks, not quarters.</p></div>
+		<div class="step"><div class="n">03</div><h4>Refine</h4><p>Real use, real feedback, and another small step forward.</p></div>
+	</div>
+	<div class="foot-slot"></div>
+</div>
+
+<!-- CONTACT -->
+<div class="page" id="contact">
+	<div class="nav-slot"></div>
+	<div class="ph-head">
+		<span class="mono">Contact</span>
+		<h1>Let's make it<br><span class="it">better.</span></h1>
+	</div>
+	<div class="contact-grid">
+		<div class="form">
+			<div class="two"><div class="field"><label class="mono">Name</label><div class="in">Mika Tanaka</div></div><div class="field"><label class="mono">Email</label><div class="in focus">mika@studio.jp</div></div></div>
+			<div class="field"><label class="mono">Company</label><div class="in ph">Your company</div></div>
+			<div class="field"><label class="mono">Budget</label><div class="chips"><span>Under $10k</span><span class="on">$10k – $25k</span><span>$25k – $50k</span><span>$50k+</span></div></div>
+			<div class="field"><label class="mono">Project</label><div class="in area">A new identity and website for our tea house in Kyoto.</div></div>
+			<a class="btn primary" style="margin-top:6px">Send message <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+		</div>
+		<div class="side">
+			<div class="ph"><img src="https://picsum.photos/id/677/900/860" alt=""><div class="cap"><span class="mono" style="color:rgba(255,255,255,.7)">Studios</span><h3 style="font:650 32px/1.1 var(--display);letter-spacing:-0.03em;margin-top:8px">Tokyo · Berlin</h3></div></div>
+			<div class="info"><div><span class="mono">Email</span><div>hello@kaizen.studio</div></div><div><span class="mono">New projects</span><div>Booking spring 2027</div></div></div>
+		</div>
+	</div>
+	<div class="foot-slot"></div>
+</div>
+
+<script>
+const q = new URLSearchParams(location.search)
+const page = q.get("page") || "home"
+if (q.get("accent") === "violet") document.documentElement.dataset.accent = "violet"
+const nav = document.getElementById("nav").content
+for (const slot of document.querySelectorAll(".nav-slot")) {
+	const n = nav.cloneNode(true)
+	const owner = slot.closest(".page").id
+	for (const a of n.querySelectorAll(".links a")) if (a.dataset.p === owner) a.classList.add("on")
+	slot.replaceWith(n)
+}
+const foot = document.getElementById("footer").content
+for (const slot of document.querySelectorAll(".foot-slot")) slot.replaceWith(foot.cloneNode(true))
+document.getElementById(page).classList.add("on")
+window.siteReady = (async () => {
+	await document.fonts.ready
+	await Promise.all([...document.querySelectorAll(`#${page} img`)].map((img) => img.decode().catch(() => {})))
+	return true
+})()
+</script>
+</body>
+</html>

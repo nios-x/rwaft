@@ -7,6 +7,8 @@
  *   node scripts/render.mjs --preset sharp     1440², 60 fps, no blur (for debugging motion)
  *   node scripts/render.mjs --preset debug     720², 30 fps, HUD burned in
  *   add --film overview for the 1920×1080 product overview (→ out/rwaft-overview*.mp4)
+ *   add --film trailer for the 19.2 s keynote trailer (→ out/rwaft-trailer*.mp4); with --music it
+ *   carries the music alone (no UI sounds), faded over its last 0.22 s
  *
  * Overrides: --fps --samples --max-step --uniform --shutter --scale --workers --crf --x264-params
  *            --from --to --loops --format --music track.wav --music-gain 0.8 --no-audio --metronome
@@ -62,6 +64,7 @@ const PRESETS = {
 const FILMS = {
 	launch: { entry: "index.html", out: "out/rwaft-launch" },
 	overview: { entry: "overview.html", out: "out/rwaft-overview" },
+	trailer: { entry: "trailer.html", out: "out/rwaft-trailer", musicOnly: true },
 }
 
 const { values } = parseArgs({
@@ -205,7 +208,11 @@ async function encode({ segments, from, to, width, height, meta }) {
 	const inputs = ["-f", "concat", "-safe", "0", "-i", list]
 	const audio = []
 	const span = (to - from) / cfg.fps
-	if (!values["no-audio"]) {
+	if (!values["no-audio"] && film.musicOnly && values.music) {
+		inputs.push("-ss", String(from / cfg.fps), "-t", String(span), "-i", resolve(values.music))
+		const fade = 0.22
+		audio.push("-filter_complex", `[1:a]volume=${values["music-gain"]},afade=t=out:st=${Math.max(0, span - fade).toFixed(3)}:d=${fade}[a]`, "-map", "0:v", "-map", "[a]", "-c:a", "aac", "-b:a", "320k", "-shortest")
+	} else if (!values["no-audio"]) {
 		const sfx = await writeSfx(join(work, "sfx.wav"), { cues: meta.cues, duration: meta.duration, bpm: meta.bpm, loops: cfg.loops, metronome: values.metronome })
 		inputs.push("-ss", String(from / cfg.fps), "-t", String(span * cfg.loops), "-i", sfx)
 		if (values.music) {

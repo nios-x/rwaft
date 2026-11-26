@@ -33,7 +33,7 @@ export async function GET() {
 		`- [Pricing](${SITE_URL}/pricing): free credits, what a build costs, refunds for failed builds`,
 		`- [FAQ](${SITE_URL}/faq): common questions`,
 		`- [About](${SITE_URL}/about): why rwaft shows the real build, its principles and what it runs on`,
-		`- [Trailer](${SITE_URL}/trailer): a 29-second video of an app going from prompt to live link`,
+		`- [Trailer](${SITE_URL}/trailer): a 19-second trailer: an app going from prompt to live link, fixing its own errors on the way`,
 		`- [What you can build](${SITE_URL}/make): every kind of site rwaft makes, with example prompts`,
 		`- [Compare](${SITE_URL}/compare): rwaft beside ${RIVALS.map((item) => item.name).join(", ")}`,
 		`- [Best AI app and website builders](${SITE_URL}${ROUNDUP_PATH}): who each one is best for`,

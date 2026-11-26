@@ -60,7 +60,7 @@ export async function openFilm(baseUrl, { entry = "index.html", format = "square
 	if (debug) query.set("debug", "1")
 	const probe = await browser.newPage()
 	await probe.goto(`${baseUrl}/${entry}?${query}`)
-	await probe.waitForFunction(() => window.__film?.ready === true, null, { timeout: 30_000 })
+	await probe.waitForFunction(() => window.__film?.ready === true, null, { timeout: 90_000 })
 	const view = await probe.evaluate(() => window.__film.view)
 	await probe.close()
 
@@ -70,7 +70,7 @@ export async function openFilm(baseUrl, { entry = "index.html", format = "square
 	const clip = scale < 1 ? { x: 0, y: 0, width: view.width, height: view.height, scale } : undefined
 	const page = await context.newPage()
 	await page.goto(`${baseUrl}/${entry}?${query}`)
-	await page.waitForFunction(() => window.__film?.ready === true, null, { timeout: 30_000 })
+	await page.waitForFunction(() => window.__film?.ready === true, null, { timeout: 90_000 })
 	const film = await page.evaluate(() => ({ duration: window.__film.duration, fps: window.__film.fps, view: window.__film.view, cues: window.__film.cues, bpm: window.__film.bpm }))
 	const cdp = await context.newCDPSession(page)
 
