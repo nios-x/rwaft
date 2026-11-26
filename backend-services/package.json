@@ -10,6 +10,7 @@
     "dev": "bun --watch index.ts",
     "start": "bun index.ts",
     "typecheck": "tsc --noEmit",
+    "test": "bun test",
     "test:prompt": "node test-prompt.mjs"
   },
   "devDependencies": {

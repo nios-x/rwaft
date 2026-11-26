@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from "express"
 import { getRedisClient } from "./redis.ts"
 import { refundKey, sessionKey, userKey, type JobCharge } from "./constants.ts"
 import type { GoogleProfile } from "./google.ts"
+import { READ_ACCOUNT_SCRIPT, SIGNUP_SCRIPT, SPEND_SCRIPT, WEEKLY_CREDITS, nextRefillAt, refillArgs } from "./refill.ts"
 
 /**
  * Accounts, sessions and the token balance.
@@ -27,6 +28,8 @@ export const TOKEN_COSTS = {
 }
 /** Granted once, when an account is first created. */
 export const SIGNUP_TOKENS = Math.max(0, Number(process.env.SIGNUP_TOKENS ?? 2))
+/** Topped up to once a week (lib/refill.ts). */
+export { WEEKLY_CREDITS }
 
 const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS || 30 * 24 * 60 * 60)
 /** How long a refund marker is kept; longer than any job can stay in the queue. */
@@ -38,6 +41,10 @@ export interface Account {
 	name: string
 	picture: string
 	tokens: number
+	/** The last weekly top-up (epoch ms), or null before the first. */
+	refilledAt: number | null
+	/** When the next top-up can happen, or null when none is waiting (see nextRefillAt). */
+	nextRefillAt: number | null
 }
 
 /** Account ids share the log-channel namespace with anonymous `u-` ids, so they get their own prefix. */
@@ -56,9 +63,10 @@ export async function upsertGoogleAccount(profile: GoogleProfile): Promise<{ acc
 	const key = userKey(id)
 	const redis = await getRedisClient()
 	await redis.hSet(key, { email: profile.email, name: profile.name, picture: profile.picture })
-	// HSETNX makes the signup grant once-only even if two first logins race, and
-	// whichever login wins it is the one that reports the sign-up.
-	const created = Number(await redis.hSetNX(key, "tokens", String(SIGNUP_TOKENS))) === 1
+	// The script's HSETNX makes the signup grant once-only even if two first
+	// logins race, and whichever login wins it is the one that reports the
+	// sign-up. It starts the weekly refill clock in the same step.
+	const created = Number(await redis.sendCommand(["EVAL", SIGNUP_SCRIPT, "1", key, String(SIGNUP_TOKENS), String(Date.now())])) === 1
 	await redis.hSetNX(key, "createdAt", new Date().toISOString())
 	const account = await getAccount(id)
 	if (!account) throw new Error("Account vanished after creation")
@@ -66,16 +74,35 @@ export async function upsertGoogleAccount(profile: GoogleProfile): Promise<{ acc
 	return { account, created }
 }
 
+/** Reads an account, applying the weekly top-up first if it is due. One Redis request. */
 export async function getAccount(id: string): Promise<Account | null> {
 	const redis = await getRedisClient()
-	const fields = await redis.hGetAll(userKey(id))
-	if (!fields || Object.keys(fields).length === 0) return null
+	const now = Date.now()
+	const reply = await redis.sendCommand(["EVAL", READ_ACCOUNT_SCRIPT, "1", userKey(id), ...refillArgs(now)])
+	const fields = hashFromReply(reply)
+	if (Object.keys(fields).length === 0) return null
+	return accountFromFields(id, fields, now)
+}
+
+/** HGETALL's flat [field, value, …] reply, as returned from a script, into an object. */
+export function hashFromReply(reply: unknown): Record<string, string> {
+	const fields: Record<string, string> = {}
+	if (!Array.isArray(reply)) return fields
+	for (let i = 0; i + 1 < reply.length; i += 2) fields[String(reply[i])] = String(reply[i + 1])
+	return fields
+}
+
+export function accountFromFields(id: string, fields: Record<string, string>, now: number): Account {
+	const tokens = Number(fields.tokens || 0)
+	const refilledAt = fields.refilledAt && Number.isFinite(Number(fields.refilledAt)) ? Number(fields.refilledAt) : null
 	return {
 		id,
 		email: fields.email || "",
 		name: fields.name || "",
 		picture: fields.picture || "",
-		tokens: Number(fields.tokens || 0)
+		tokens,
+		refilledAt,
+		nextRefillAt: nextRefillAt(tokens, refilledAt, now)
 	}
 }
 
@@ -132,14 +159,6 @@ export const requireAccountWhenBilling = (_req: Request, res: Response, next: Ne
 	next()
 }
 
-/** Deducts only if the whole amount is there, in one atomic step. Returns the new balance, or -1. */
-const SPEND_SCRIPT = `
-local balance = tonumber(redis.call('HGET', KEYS[1], 'tokens') or '0')
-local cost = tonumber(ARGV[1])
-if balance < cost then return -1 end
-return redis.call('HINCRBY', KEYS[1], 'tokens', -cost)
-`
-
 /** Credits a refund at most once per job. Returns the new balance, or -1 if already refunded. */
 const REFUND_SCRIPT = `
 if redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[2]) then
@@ -152,7 +171,8 @@ export type SpendResult = { ok: true; balance: number } | { ok: false; balance: 
 
 export async function spendTokens(accountId: string, cost: number): Promise<SpendResult> {
 	const redis = await getRedisClient()
-	const reply = Number(await redis.sendCommand(["EVAL", SPEND_SCRIPT, "1", userKey(accountId), String(cost)]))
+	// Applies a due weekly top-up first, then deducts only if the whole amount is there, in one atomic step.
+	const reply = Number(await redis.sendCommand(["EVAL", SPEND_SCRIPT, "1", userKey(accountId), String(cost), ...refillArgs(Date.now())]))
 	if (reply < 0) {
 		const account = await getAccount(accountId)
 		return { ok: false, balance: account?.tokens ?? 0 }

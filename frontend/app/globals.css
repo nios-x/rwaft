@@ -3128,6 +3128,13 @@ li[data-state="failed"] .steps-dot {
   color: var(--text-2);
 }
 
+.shop-refill {
+  margin: -4px 0 0;
+  padding: 0 18px 12px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
 .shop-packs {
   margin: 0;
   padding: 0;

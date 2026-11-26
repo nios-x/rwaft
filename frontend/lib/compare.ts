@@ -1,4 +1,4 @@
-import { chatsFor, type Pricing } from "./pricing"
+import { chatsFor, weeklyPhrase, type Pricing } from "./pricing"
 
 /**
  * The /compare pages: rwaft beside the AI app builders (Lovable, Bolt, v0,
@@ -82,7 +82,7 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
 /** rwaft's column, from the API's live configuration. */
 export function rwaftCells(pricing: Pricing): Record<TopicId, string> {
 	const pay = pricing.billing
-		? `${plural(pricing.signupTokens, "free credit")} on sign-up, then one-off credit packs with no subscription. Every chat costs ${plural(pricing.costs.prompt, "credit")}, however big the change, and a failed build is refunded.`
+		? `${plural(pricing.signupTokens, "free credit")} on sign-up${weeklyPhrase(pricing) ? `, ${weeklyPhrase(pricing)}` : ""}, then one-off credit packs with no subscription. Every chat costs ${plural(pricing.costs.prompt, "credit")}, however big the change, and a failed build is refunded.`
 		: "Free right now, with no account needed."
 	return {
 		makes: "Websites, front-end web apps, tools and browser games",

@@ -122,6 +122,13 @@ export function AccountPill({ auth, theme }: { auth: AccountState; theme: Theme 
 	)
 }
 
+/** ", next on Tue 2 Dec" while a weekly top-up is waiting; nothing when none is. */
+const refillNote = (nextRefillAt: number | null | undefined) => {
+	if (typeof nextRefillAt !== "number") return ""
+	if (nextRefillAt <= Date.now()) return ", due now"
+	return `, next on ${new Date(nextRefillAt).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}`
+}
+
 /** The recharge panel. Opens whenever billing is on, so recharging is never hidden. */
 export function TokenShop({ auth }: { auth: AccountState }) {
 	const { config, account } = auth
@@ -176,6 +183,11 @@ export function TokenShop({ auth }: { auth: AccountState }) {
 			<p className="shop-costs">
 				You have <strong>{account.tokens} credit{account.tokens === 1 ? "" : "s"}</strong>. Every chat costs {config.costs.prompt}, a repo deploy {config.costs.deploy}, and failed builds are refunded.
 			</p>
+			{(config.weeklyTokens ?? 0) > 0 && (
+				<p className="shop-refill">
+					Free top-up to <strong>{config.weeklyTokens} credits</strong> every week{refillNote(account.nextRefillAt)}.
+				</p>
+			)}
 			<ul className="shop-packs">
 				{config.packs.map((pack) => (
 					<li key={pack.id} className="shop-pack">

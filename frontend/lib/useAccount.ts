@@ -15,6 +15,8 @@ export interface AuthConfig {
 	billing: boolean
 	googleClientId: string | null
 	signupTokens: number
+	/** Each account is topped back up to this once a week; 0 or missing means no weekly top-up. */
+	weeklyTokens?: number
 	/** `pr` is missing on an API from before pull requests. */
 	costs: { deploy: number; prompt: number; pr?: number }
 	currency: string
@@ -33,6 +35,10 @@ export interface Account {
 	name: string
 	picture: string
 	tokens: number
+	/** The last weekly top-up (epoch ms), or null before the first. Missing on an older API. */
+	refilledAt?: number | null
+	/** When the next weekly top-up can happen, or null when none is waiting. */
+	nextRefillAt?: number | null
 }
 
 const STORAGE_KEY = "rwaft:session"

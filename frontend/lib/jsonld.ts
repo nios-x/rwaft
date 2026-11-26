@@ -37,7 +37,9 @@ export function appJsonLd(pricing: Pricing) {
 				name: "Free",
 				price: "0",
 				priceCurrency: currency,
-				description: pricing.billing ? `${pricing.signupTokens} free credits on sign-up` : "Every build is free",
+				description: pricing.billing
+					? `${pricing.signupTokens} free credits on sign-up${pricing.weeklyTokens > 0 ? `, topped back up to ${pricing.weeklyTokens} every week` : ""}`
+					: "Every build is free",
 			},
 			...(pricing.payments ? pricing.packs : []).map((pack) => ({
 				"@type": "Offer",
