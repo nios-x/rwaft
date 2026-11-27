@@ -28,6 +28,11 @@ services:
           type: keyvalue # <- change to `redis` on older Render accounts
           name: rwaft-redis
           property: connectionString
+      # Postgres: accounts, credits, sessions, deployments, saved source and
+      # build logs (Redis holds only the job queues). Set in the dashboard; the
+      # service creates its `rwaft` schema on first use.
+      - key: DATABASE_URL
+        sync: false
 
       # Public origin of THIS service -- the API hostname the frontend talks to.
       - key: PUBLIC_BASE_URL
@@ -130,6 +135,11 @@ services:
           type: keyvalue # <- change to `redis` on older Render accounts
           name: rwaft-redis
           property: connectionString
+      # Postgres: accounts, credits, sessions, deployments, saved source and
+      # build logs (Redis holds only the job queues). Set in the dashboard; the
+      # service creates its `rwaft` schema on first use.
+      - key: DATABASE_URL
+        sync: false
 
       - key: BUILD_ROOT
         value: /tmp/rwaft-builds

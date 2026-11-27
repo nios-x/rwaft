@@ -1,4 +1,5 @@
 import { PR_TOKEN_DEADLINES, PR_WATCHING, prTokenKey, prWatchKey, type createRedisClient } from "./config.ts"
+import { kv } from "./db.ts"
 import { flushLogs, jobLog, runWithJobContext, type LogLevel } from "./joblog.ts"
 import { GitHubClient, GitHubError, openToken, revokeToken } from "./github.ts"
 import { updatePullRequest, type PullRequestRef } from "./pr.ts"
@@ -66,8 +67,9 @@ export interface Watch {
 
 /** Hands a finished PR job's token to the watch. The caller must not revoke it after this. */
 export async function startWatching(redis: RedisLike, watch: Watch): Promise<void> {
+	// The watch's state in Postgres; when to look next on Redis's schedule beside the queues.
+	await kv.set(prWatchKey(watch.jobId), JSON.stringify(watch), WATCH_KEEP_SECONDS)
 	await redis.multi()
-		.set(prWatchKey(watch.jobId), JSON.stringify(watch), { EX: WATCH_KEEP_SECONDS })
 		.zAdd(PR_WATCHING, { score: Date.now() + FIRST_LOOK_MS, value: watch.jobId })
 		.zAdd(PR_TOKEN_DEADLINES, { score: Date.now() + TOKEN_HEARTBEAT_MS, value: watch.jobId })
 		.exec()
@@ -157,7 +159,7 @@ type Step =
 
 /** One visit to one watch: look at its checks, then wait, finish or fix. Exported for tests. */
 export async function visitWatch(redis: RedisLike, jobId: string): Promise<void> {
-	const raw = await redis.get(prWatchKey(jobId))
+	const raw = await kv.get(prWatchKey(jobId))
 	if (!raw) {
 		await redis.zRem(PR_WATCHING, jobId)
 		return
@@ -166,7 +168,7 @@ export async function visitWatch(redis: RedisLike, jobId: string): Promise<void>
 	await runWithJobContext({ jobId, userId: watch.userId, kind: "pr" }, async () => {
 		let token: string | null = null
 		try {
-			const sealed = await redis.get(prTokenKey(jobId))
+			const sealed = await kv.get(prTokenKey(jobId))
 			if (!sealed) {
 				await finish(redis, watch, null, "Stopped watching checks: GitHub access for it ran out", "warn")
 				return
@@ -191,10 +193,8 @@ export async function visitWatch(redis: RedisLike, jobId: string): Promise<void>
 			if (step.done) {
 				await finish(redis, watch, token, step.message, step.level)
 			} else {
-				await redis.multi()
-					.set(prWatchKey(jobId), JSON.stringify(step.watch), { EX: WATCH_KEEP_SECONDS })
-					.zAdd(PR_WATCHING, { score: Date.now() + step.delay, value: jobId })
-					.exec()
+				await kv.set(prWatchKey(jobId), JSON.stringify(step.watch), WATCH_KEEP_SECONDS)
+				await redis.zAdd(PR_WATCHING, { score: Date.now() + step.delay, value: jobId })
 			}
 		} finally {
 			await flushLogs()
@@ -205,10 +205,9 @@ export async function visitWatch(redis: RedisLike, jobId: string): Promise<void>
 /** Ends a watch: says why, forgets it, and revokes its token. */
 async function finish(redis: RedisLike, watch: Watch, token: string | null, message: string, level: LogLevel) {
 	jobLog(message, level)
+	await kv.del(prWatchKey(watch.jobId), prTokenKey(watch.jobId))
 	await redis.multi()
-		.del(prWatchKey(watch.jobId))
 		.zRem(PR_WATCHING, watch.jobId)
-		.del(prTokenKey(watch.jobId))
 		.zRem(PR_TOKEN_DEADLINES, watch.jobId)
 		.exec()
 	if (token) await revokeToken(token).catch((error) => console.warn(`[ci] Token revoke for ${watch.jobId} failed:`, (error as Error).message))

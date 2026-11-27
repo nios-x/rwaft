@@ -1,76 +1,87 @@
-import { createRedisClient, getRedisClient, type RedisClient } from "./redis.ts"
-import { logChannel, logHistoryKey } from "./constants.ts"
+import { T, q } from "./db.ts"
 
 /**
- * Per-user log fan-out.
+ * Per-user build logs, from Postgres.
  *
- * Redis puts a connection into subscriber mode, so a naive implementation needs
- * one Redis connection per connected browser — which exhausts a managed Redis
- * plan's connection limit almost immediately. Instead this module keeps ONE
- * subscriber connection for the whole process and multiplexes it: the first
- * listener for a user SUBSCRIBEs, the last one to leave UNSUBSCRIBEs.
+ * The worker appends every event to the log_events table (in batches). A
+ * browser following a build gets the user's recent history, then new rows as
+ * they arrive: one poller per user, shared by every open stream for that user,
+ * reading only rows newer than the last it sent, and only while someone is
+ * watching. Nothing reads the table on a timer once the last stream closes,
+ * so an idle database can suspend.
  */
 
 export type Listener = (payload: string) => void
 
-const listeners = new Map<string, Set<Listener>>()
+const POLL_MS = Number(process.env.LOG_POLL_MS || 1_000)
+const POLL_BATCH = 500
 
-let subscriber: RedisClient | null = null
-let subscriberReady: Promise<RedisClient> | null = null
-
-async function getSubscriber(): Promise<RedisClient> {
-	if (subscriber?.isOpen) return subscriber
-	if (!subscriberReady) {
-		subscriberReady = (async () => {
-			const client = createRedisClient()
-			await client.connect()
-			subscriber = client
-			// After a reconnect node-redis restores subscriptions itself, so
-			// there is nothing to replay here.
-			return client
-		})().catch((error) => {
-			subscriberReady = null
-			throw error
-		})
-	}
-	return subscriberReady
+interface Follower {
+	listeners: Set<Listener>
+	/** The newest log_events id already sent. */
+	cursor: number
+	timer: ReturnType<typeof setTimeout> | null
+	polling: boolean
 }
 
-/**
- * Streams a user's log channel to `listener`.
- * Returns an unsubscribe function that is always safe to call twice.
- */
-export async function subscribeToUserLogs(userId: string, listener: Listener): Promise<() => Promise<void>> {
-	const channel = logChannel(userId)
-	const client = await getSubscriber()
+const followers = new Map<string, Follower>()
 
-	let group = listeners.get(channel)
-	if (!group) {
-		group = new Set()
-		listeners.set(channel, group)
-		await client.subscribe(channel, (message: string) => {
-			for (const fn of listeners.get(channel) ?? []) {
+async function latestId(userId: string): Promise<number> {
+	const rows = await q<{ id: number | string | null }>(`select max(id) as id from ${T.logEvents} where user_id = $1`, [userId])
+	return Number(rows[0]?.id ?? 0) || 0
+}
+
+function schedule(userId: string, follower: Follower) {
+	follower.timer = setTimeout(() => void poll(userId, follower), POLL_MS)
+}
+
+async function poll(userId: string, follower: Follower) {
+	if (followers.get(userId) !== follower || follower.polling) return
+	follower.polling = true
+	try {
+		const rows = await q<{ id: number | string; payload: string }>(
+			`select id, payload from ${T.logEvents} where user_id = $1 and id > $2::bigint order by id limit ${POLL_BATCH}`,
+			[userId, follower.cursor])
+		for (const row of rows) {
+			follower.cursor = Math.max(follower.cursor, Number(row.id))
+			for (const listener of follower.listeners) {
 				try {
-					fn(message)
+					listener(row.payload)
 				} catch (error) {
 					console.error("[logstream] Listener threw:", (error as Error).message)
 				}
 			}
-		})
+		}
+	} catch (error) {
+		console.error("[logstream] Poll failed:", (error as Error).message)
+	} finally {
+		follower.polling = false
+		if (followers.get(userId) === follower && follower.listeners.size > 0) schedule(userId, follower)
 	}
-	group.add(listener)
+}
+
+/**
+ * Streams a user's new log events to `listener`, from now on.
+ * Returns an unsubscribe function that is always safe to call twice.
+ */
+export async function subscribeToUserLogs(userId: string, listener: Listener): Promise<() => Promise<void>> {
+	let follower = followers.get(userId)
+	if (!follower) {
+		follower = { listeners: new Set(), cursor: await latestId(userId), timer: null, polling: false }
+		followers.set(userId, follower)
+		schedule(userId, follower)
+	}
+	follower.listeners.add(listener)
 
 	let released = false
+	const mine = follower
 	return async () => {
 		if (released) return
 		released = true
-		const current = listeners.get(channel)
-		if (!current) return
-		current.delete(listener)
-		if (current.size === 0) {
-			listeners.delete(channel)
-			// Last reader for this user left — stop paying for the subscription.
-			await client.unsubscribe(channel).catch(() => { })
+		mine.listeners.delete(listener)
+		if (mine.listeners.size === 0 && followers.get(userId) === mine) {
+			if (mine.timer) clearTimeout(mine.timer)
+			followers.delete(userId)
 		}
 	}
 }
@@ -81,8 +92,10 @@ export async function subscribeToUserLogs(userId: string, listener: Listener): P
  */
 export async function readLogHistory(userId: string, limit: number): Promise<string[]> {
 	try {
-		const client = await getRedisClient()
-		return await client.lRange(logHistoryKey(userId), -limit, -1)
+		const rows = await q<{ payload: string }>(
+			`select payload from (select id, payload from ${T.logEvents} where user_id = $1 order by id desc limit $2::int) recent order by id`,
+			[userId, limit])
+		return rows.map((row) => row.payload)
 	} catch (error) {
 		console.error("[logstream] Failed to read history:", (error as Error).message)
 		return []
@@ -91,16 +104,10 @@ export async function readLogHistory(userId: string, limit: number): Promise<str
 
 /** Clears a user's retained history — backs the "clear console" action. */
 export async function clearLogHistory(userId: string): Promise<void> {
-	const client = await getRedisClient()
-	await client.del(logHistoryKey(userId))
+	await q(`delete from ${T.logEvents} where user_id = $1`, [userId])
 }
 
 export async function closeLogStream(): Promise<void> {
-	listeners.clear()
-	if (!subscriber) return
-	try {
-		await subscriber.quit()
-	} catch { /* already closed */ }
-	subscriber = null
-	subscriberReady = null
+	for (const follower of followers.values()) if (follower.timer) clearTimeout(follower.timer)
+	followers.clear()
 }

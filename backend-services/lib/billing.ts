@@ -1,7 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
-import { getRedisClient } from "./redis.ts"
-import { fulfilledKey, userKey } from "./constants.ts"
-import type { Account } from "./accounts.ts"
+import { creditOnce, type Account } from "./accounts.ts"
 
 /**
  * Token purchases through Dodo Payments Checkout.
@@ -207,14 +205,6 @@ export function verifyDodoSignature(
 	})
 }
 
-/** Credits a payment's tokens exactly once, however many times Dodo delivers the event. */
-const FULFIL_SCRIPT = `
-if redis.call('SET', KEYS[1], ARGV[2], 'NX') then
-	return redis.call('HINCRBY', KEYS[2], 'tokens', ARGV[1])
-end
-return -1
-`
-
 /** The fields of a Dodo Payment this service reads. */
 export interface DodoPayment {
 	payment_id: string
@@ -242,10 +232,7 @@ export async function fulfilPayment(payment: DodoPayment): Promise<FulfilResult>
 	const tokens = tokensFor(payment.product_cart)
 	if (!userId || tokens <= 0) return "invalid"
 
-	const redis = await getRedisClient()
-	const reply = Number(await redis.sendCommand([
-		"EVAL", FULFIL_SCRIPT, "2", fulfilledKey(payment.payment_id), userKey(userId),
-		String(tokens), JSON.stringify({ userId, tokens, packId: payment.metadata?.packId, at: new Date().toISOString() })
-	]))
-	return reply < 0 ? "duplicate" : "credited"
+	// Credited exactly once, however many times Dodo delivers the event.
+	const credited = await creditOnce(`payment:${payment.payment_id}`, userId, tokens, { userId, tokens, packId: payment.metadata?.packId ?? null, at: new Date().toISOString() })
+	return credited ? "credited" : "duplicate"
 }

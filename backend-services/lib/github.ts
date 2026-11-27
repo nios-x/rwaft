@@ -1,7 +1,8 @@
 import { gunzipSync } from "node:zlib"
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto"
 import { getRedisClient } from "./redis.ts"
-import { PR_TOKEN_DEADLINES, prTokenKey, sourceKey } from "./constants.ts"
+import { PR_TOKEN_DEADLINES, prTokenKey } from "./constants.ts"
+import { T, kv, q } from "./db.ts"
 
 /**
  * "Push to GitHub" through a GitHub OAuth App.
@@ -127,14 +128,25 @@ export function openToken(sealed: string): string {
  * here belongs to a job that never ran, or a worker that died. A failed
  * revoke stays for the next sweep; one GitHub says is already gone doesn't.
  */
+let sweeping = false
+
 export async function revokeExpiredTokens(): Promise<number> {
+	// One sweep at a time (the API runs as one instance).
+	if (sweeping) return 0
+	sweeping = true
+	try {
+		return await sweepExpiredTokens()
+	} finally {
+		sweeping = false
+	}
+}
+
+async function sweepExpiredTokens(): Promise<number> {
 	const redis = await getRedisClient()
-	// One sweep at a time across API instances.
-	if (await redis.set(`${PR_TOKEN_DEADLINES}:sweep`, "1", { NX: true, EX: 50 }) !== "OK") return 0
 	const due = await redis.zRangeByScore(PR_TOKEN_DEADLINES, "-inf", Date.now(), { LIMIT: { offset: 0, count: 50 } })
 	let revoked = 0
 	for (const jobId of due) {
-		const sealed = await redis.get(prTokenKey(jobId))
+		const sealed = await kv.get(prTokenKey(jobId))
 		if (sealed) {
 			let token: string | null = null
 			try {
@@ -154,8 +166,11 @@ export async function revokeExpiredTokens(): Promise<number> {
 				}
 			}
 		}
-		await redis.multi().del(prTokenKey(jobId)).zRem(PR_TOKEN_DEADLINES, jobId).exec()
+		await kv.del(prTokenKey(jobId))
+		await redis.zRem(PR_TOKEN_DEADLINES, jobId)
 	}
+	// Expired short-lived records go with the sweep, which only runs while there are tokens to look at.
+	if (due.length > 0) await kv.prune().catch(() => { })
 	return revoked
 }
 
@@ -271,8 +286,10 @@ export interface BranchList {
 
 /** GitHub lists 100 branches a page; this many pages covers nearly every repository. */
 const BRANCH_PAGES = 3
-const BRANCH_CACHE_SECONDS = 60
-const branchCacheKey = (repo: RepositoryRef) => `rwaft:github:branches:${repo.owner.toLowerCase()}/${repo.name.toLowerCase()}`
+const BRANCH_CACHE_MS = 60_000
+/** In memory: a minute-long cache doesn't need to outlive the process. */
+const branchCache = new Map<string, { result: BranchList | null; expiresAt: number }>()
+const branchCacheKey = (repo: RepositoryRef) => `${repo.owner.toLowerCase()}/${repo.name.toLowerCase()}`
 
 /**
  * A public repository's branches, for the pull request tab's base picker,
@@ -282,9 +299,10 @@ const branchCacheKey = (repo: RepositoryRef) => `rwaft:github:branches:${repo.ow
  * again whenever the repository field settles.
  */
 export async function listPublicBranches(repo: RepositoryRef): Promise<BranchList | null> {
-	const redis = await getRedisClient().catch(() => null)
-	const cached = await redis?.get(branchCacheKey(repo)).catch(() => null)
-	if (cached) return cached === "none" ? null : JSON.parse(cached) as BranchList
+	const now = Date.now()
+	const cached = branchCache.get(branchCacheKey(repo))
+	if (cached && cached.expiresAt > now) return cached.result
+	if (branchCache.size > 500) for (const [key, entry] of branchCache) if (entry.expiresAt <= now) branchCache.delete(key)
 
 	const basic = Buffer.from(`${GITHUB_CLIENT_ID}:${GITHUB_CLIENT_SECRET}`).toString("base64")
 	const headers = { Authorization: `Basic ${basic}` }
@@ -309,7 +327,7 @@ export async function listPublicBranches(repo: RepositoryRef): Promise<BranchLis
 		if (!(error instanceof GitHubError) || error.status !== 404) throw error
 		result = null
 	}
-	await redis?.set(branchCacheKey(repo), result ? JSON.stringify(result) : "none", { EX: BRANCH_CACHE_SECONDS }).catch(() => { })
+	branchCache.set(branchCacheKey(repo), { result, expiresAt: Date.now() + BRANCH_CACHE_MS })
 	return result
 }
 
@@ -331,19 +349,15 @@ export interface SourceSnapshot {
 }
 
 export async function readSnapshot(buildId: string): Promise<SourceSnapshot | null> {
-	const redis = await getRedisClient()
-	const key = sourceKey(buildId)
-	const [[owner, fileCount, repoUrl], hasFiles] = await Promise.all([
-		redis.hmGet(key, ["owner", "fileCount", "repoUrl"]),
-		redis.hExists(key, "files")
-	])
-	if (!owner) return null
-	return { owner, fileCount: Number(fileCount) || 0, repoUrl: repoUrl || undefined, hasFiles: Boolean(hasFiles) }
+	const [row] = await q<{ owner: string; file_count: number; repo_url: string | null; has_files: boolean }>(
+		`select owner, file_count, repo_url, files is not null as has_files from ${T.sources} where job_id = $1 and expires_at > now()`, [buildId])
+	if (!row?.owner) return null
+	return { owner: row.owner, fileCount: Number(row.file_count) || 0, repoUrl: row.repo_url || undefined, hasFiles: Boolean(row.has_files) }
 }
 
 export async function readSnapshotFiles(buildId: string): Promise<SourceFile[] | null> {
-	const redis = await getRedisClient()
-	const packed = await redis.hGet(sourceKey(buildId), "files")
+	const [row] = await q<{ files: string | null }>(`select files from ${T.sources} where job_id = $1 and expires_at > now()`, [buildId])
+	const packed = row?.files
 	if (!packed) return null
 	const files = JSON.parse(gunzipSync(Buffer.from(packed, "base64")).toString("utf-8")) as SourceFile[]
 	return Array.isArray(files) ? files : null
@@ -354,8 +368,7 @@ export async function readSnapshotFiles(buildId: string): Promise<SourceFile[] |
  * expiry: a pushed app can still be changed with a follow-up message.
  */
 export async function markSnapshotPushed(buildId: string, repoUrl: string): Promise<void> {
-	const redis = await getRedisClient()
-	await redis.hSet(sourceKey(buildId), "repoUrl", repoUrl)
+	await q(`update ${T.sources} set repo_url = $2 where job_id = $1`, [buildId, repoUrl])
 }
 
 // ── Pushing ─────────────────────────────────────────────────────────────────

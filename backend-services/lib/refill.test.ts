@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { REFILL_PERIOD_MS, WEEKLY_CREDITS, nextRefillAt, refillArgs } from "./refill.ts"
-import { accountFromFields, hashFromReply } from "./accounts.ts"
+import { REFILL_PERIOD_MS, WEEKLY_CREDITS, nextRefillAt, refillParams } from "./refill.ts"
+import { accountFromRow } from "./accounts.ts"
 
 /**
- * Pure parts of the weekly top-up: no Redis. The scripts themselves are run
- * against a real Redis in refill.redis.test.ts.
+ * Pure parts of the weekly top-up: no database. The SQL itself runs against a
+ * real Postgres in accounts.pg.test.ts.
  */
 
 const NOW = Date.UTC(2026, 10, 25, 12, 0, 0)
@@ -33,39 +33,31 @@ describe("nextRefillAt", () => {
 	})
 })
 
-describe("refillArgs", () => {
-	test("passes now, floor and period as strings, in script order", () => {
-		expect(refillArgs(NOW, 5, REFILL_PERIOD_MS)).toEqual([String(NOW), "5", String(REFILL_PERIOD_MS)])
+describe("refillParams", () => {
+	test("passes now, floor and period, in the order refillSql numbers them", () => {
+		expect(refillParams(NOW, 5, REFILL_PERIOD_MS)).toEqual([NOW, 5, REFILL_PERIOD_MS])
 	})
 
 	test("defaults to the configured weekly floor and a 7-day period", () => {
-		expect(refillArgs(NOW)).toEqual([String(NOW), String(WEEKLY_CREDITS), String(7 * DAY)])
+		expect(refillParams(NOW)).toEqual([NOW, WEEKLY_CREDITS, 7 * DAY])
 	})
 })
 
-describe("hashFromReply", () => {
-	test("turns HGETALL's flat reply into an object", () => {
-		expect(hashFromReply(["tokens", "5", "email", "a@b.c"])).toEqual({ tokens: "5", email: "a@b.c" })
-	})
-
-	test("is empty for a missing hash or an unexpected reply", () => {
-		expect(hashFromReply([])).toEqual({})
-		expect(hashFromReply(null)).toEqual({})
-		expect(hashFromReply("OK")).toEqual({})
-	})
-})
-
-describe("accountFromFields", () => {
-	test("reads the balance and the refill time", () => {
-		const account = accountFromFields("g-1", { tokens: "3", refilledAt: String(NOW - DAY), email: "a@b.c" }, NOW)
+describe("accountFromRow", () => {
+	test("reads the balance and the refill time, including a bigint that arrives as a string", () => {
+		const account = accountFromRow({ id: "g-1", email: "a@b.c", name: "A", picture: "", tokens: 3, refilled_at: String(NOW - DAY) }, NOW)
 		expect(account.tokens).toBe(3)
 		expect(account.refilledAt).toBe(NOW - DAY)
 		expect(account.email).toBe("a@b.c")
 		expect(account.nextRefillAt).toBe(WEEKLY_CREDITS > 3 ? NOW + 6 * DAY : null)
 	})
 
-	test("treats a missing or malformed refill time as never refilled", () => {
-		expect(accountFromFields("g-1", { tokens: "0" }, NOW).refilledAt).toBeNull()
-		expect(accountFromFields("g-1", { tokens: "0", refilledAt: "soon" }, NOW).refilledAt).toBeNull()
+	test("treats a missing refill time as never refilled", () => {
+		expect(accountFromRow({ id: "g-1", email: null, name: null, picture: null, tokens: 0, refilled_at: null }, NOW).refilledAt).toBeNull()
+	})
+
+	test("survives nulls in the text columns", () => {
+		const account = accountFromRow({ id: "g-2", email: null, name: null, picture: null, tokens: null, refilled_at: null }, NOW)
+		expect(account).toMatchObject({ email: "", name: "", picture: "", tokens: 0 })
 	})
 })
