@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto"
 import type { NextFunction, Request, Response } from "express"
-import { getRedisClient } from "./redis.ts"
+import { T, q } from "./db.ts"
 
 /**
  * The admin panel's password. Hardcoded by request; ADMIN_PASSWORD overrides
@@ -11,8 +11,9 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD?.trim() || "RWAFTADMIN"
 
 /** Wrong guesses allowed per IP before it is locked out for the window. */
 const MAX_FAILURES = 10
-const FAILURE_WINDOW_SECONDS = 15 * 60
-const failureKey = (ip: string) => `rwaft:admin:failures:${ip}`
+const FAILURE_WINDOW_MS = 15 * 60_000
+/** Wrong guesses per IP, in memory: the API runs as one instance, and a restart only forgives early. */
+const failures = new Map<string, { count: number; resetAt: number }>()
 
 /** Hashing first makes the comparison constant-time whatever the input's length. */
 const digest = (value: string) => createHash("sha256").update(value).digest()
@@ -22,27 +23,23 @@ const digest = (value: string) => createHash("sha256").update(value).digest()
  * are counted per IP rather than through the shared rate limiter, which keys
  * on the self-reported X-User-Id and so could be sidestepped by changing it.
  */
-export const requireAdmin = async (req: Request, res: Response, next: NextFunction) => {
+export const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
 	res.setHeader("Cache-Control", "no-store")
 	const ip = req.ip || "unknown"
-	try {
-		const redis = await getRedisClient()
-		const failures = Number(await redis.get(failureKey(ip)) || 0)
-		if (failures >= MAX_FAILURES) {
-			res.status(429).json({ status: "failed", message: "Too many wrong passwords. Try again in 15 minutes." })
-			return
-		}
+	const now = Date.now()
+	const entry = failures.get(ip)
+	if (entry && entry.resetAt <= now) failures.delete(ip)
+	if ((failures.get(ip)?.count ?? 0) >= MAX_FAILURES) {
+		res.status(429).json({ status: "failed", message: "Too many wrong passwords. Try again in 15 minutes." })
+		return
+	}
 
-		const given = req.header("x-admin-password") || ""
-		if (!timingSafeEqual(digest(given), digest(ADMIN_PASSWORD))) {
-			const count = await redis.incr(failureKey(ip))
-			if (count === 1) await redis.expire(failureKey(ip), FAILURE_WINDOW_SECONDS)
-			res.status(401).json({ status: "failed", message: "Wrong password" })
-			return
-		}
-	} catch (error) {
-		console.error("[admin] Password check failed:", (error as Error).message)
-		res.status(503).json({ status: "failed", message: "Admin service unavailable" })
+	const given = req.header("x-admin-password") || ""
+	if (!timingSafeEqual(digest(given), digest(ADMIN_PASSWORD))) {
+		const current = failures.get(ip) ?? { count: 0, resetAt: now + FAILURE_WINDOW_MS }
+		current.count++
+		failures.set(ip, current)
+		res.status(401).json({ status: "failed", message: "Wrong password" })
 		return
 	}
 	next()
@@ -66,35 +63,17 @@ export interface UserPage {
 	users: AdminUser[]
 }
 
-/**
- * Every account, newest first, one page of it returned. Accounts are Redis
- * hashes with no index, so this scans them all: fine for an admin page at
- * this scale, and it is what makes the totals exact.
- */
+/** Every account, newest first, one page of it returned, with exact totals across all that match. */
 export async function listUsers(page: number, pageSize: number, query: string): Promise<UserPage> {
-	const redis = await getRedisClient()
-	const keys: string[] = []
-	for await (const batch of redis.scanIterator({ MATCH: "rwaft:user:g-*", COUNT: 500 })) {
-		keys.push(...batch)
-	}
-
-	const users: AdminUser[] = []
-	for (let index = 0; index < keys.length; index += 200) {
-		const slice = keys.slice(index, index + 200)
-		const multi = redis.multi()
-		for (const key of slice) multi.hmGet(key, ["email", "name", "tokens", "createdAt"])
-		const rows = await multi.exec() as unknown as Array<Array<string | null>>
-		rows.forEach((row, offset) => {
-			const [email, name, tokens, createdAt] = row
-			users.push({
-				id: slice[offset]!.slice("rwaft:user:".length),
-				email: email || "",
-				name: name || "",
-				credits: Number(tokens || 0),
-				createdAt: createdAt || null
-			})
-		})
-	}
+	const rows = await q<{ id: string; email: string; name: string; tokens: number; created_at: Date | string | null }>(
+		`select id, email, name, tokens, created_at from ${T.accounts} where id like 'g-%'`)
+	const users: AdminUser[] = rows.map((row) => ({
+		id: row.id,
+		email: row.email || "",
+		name: row.name || "",
+		credits: Number(row.tokens || 0),
+		createdAt: row.created_at ? new Date(row.created_at).toISOString() : null
+	}))
 
 	const needle = query.trim().toLowerCase()
 	const matching = needle

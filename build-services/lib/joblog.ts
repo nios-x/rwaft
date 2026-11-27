@@ -1,14 +1,13 @@
 import { AsyncLocalStorage } from "node:async_hooks"
-import { createRedisClient } from "./config.ts"
+import { T, q } from "./db.ts"
 
 /**
- * Per-user log streaming over Redis pub/sub.
+ * Per-user build logs, in Postgres.
  *
- * Every job carries a `userId` supplied by the client. The worker publishes
- * every meaningful line to `rwaft:logs:<userId>` while ALSO appending it to a
- * capped history list, so a browser that connects late (or reconnects after a
- * dropped SSE stream) can replay what it missed instead of staring at a blank
- * console.
+ * Every job carries a `userId` supplied by the client. Each meaningful line is
+ * appended to the log_events table, in batches (a build can print thousands
+ * of npm lines), and the API streams new rows to the browser and replays the
+ * recent ones to a browser that connects late or reconnects.
  *
  * The job context is carried in AsyncLocalStorage so deep helpers (ai.ts,
  * tools.ts) can emit user-visible logs without threading a callback through
@@ -50,13 +49,13 @@ export interface StatusEvent {
 
 export type StreamEvent = LogEvent | StatusEvent
 
-export const logChannel = (userId: string) => `rwaft:logs:${userId}`
-export const logHistoryKey = (userId: string) => `rwaft:logs:${userId}:history`
-
 /** Keep the last N events per user so reconnecting clients can replay. */
 const HISTORY_LIMIT = Number(process.env.LOG_HISTORY_LIMIT || 500)
-/** History expires so abandoned users don't accumulate in Redis forever. */
+/** History expires so abandoned users don't accumulate forever. */
 const HISTORY_TTL_SECONDS = Number(process.env.LOG_HISTORY_TTL_SECONDS || 24 * 60 * 60)
+/** Lines are written at most this often, in one insert, while a build is printing. */
+const FLUSH_MS = Number(process.env.LOG_FLUSH_MS || 250)
+const BATCH_ROWS = 200
 /** A single runaway build line must not blow up the payload. */
 const MAX_MESSAGE_CHARS = Number(process.env.LOG_MAX_MESSAGE_CHARS || 4_000)
 
@@ -70,74 +69,73 @@ export function currentJob(): JobContext | undefined {
 	return storage.getStore()
 }
 
-// ── Publisher connection ────────────────────────────────────────────────────
+// ── Writer ──────────────────────────────────────────────────────────────────
 
-type Publisher = ReturnType<typeof createRedisClient>
-
-let publisherPromise: Promise<Publisher> | null = null
-
-async function getPublisher(): Promise<Publisher> {
-	if (!publisherPromise) {
-		publisherPromise = (async () => {
-			const client = createRedisClient()
-			client.on("error", () => { /* config.ts already logs; don't crash the job */ })
-			await client.connect()
-			return client
-		})().catch((error) => {
-			// Reset so the next log attempt can retry a fresh connection.
-			publisherPromise = null
-			throw error
-		})
-	}
-	return publisherPromise
-}
-
+/** Events waiting to be written, in the order they were emitted. */
+let pending: Array<{ userId: string; payload: string }> = []
+let flushTimer: ReturnType<typeof setTimeout> | null = null
 /**
- * Publishes are serialized through this chain so messages reach subscribers in
- * the order they were emitted, and so a slow Redis can never fan out into
- * thousands of concurrent in-flight commands.
+ * Writes are serialized through this chain so rows are inserted (and get ids)
+ * in the order they were emitted, and a slow database can never fan out into
+ * many concurrent inserts.
  */
-let publishChain: Promise<void> = Promise.resolve()
-let publishFailureLogged = false
+let writeChain: Promise<void> = Promise.resolve()
+let writeFailureLogged = false
 
-function enqueuePublish(userId: string, event: StreamEvent): void {
-	publishChain = publishChain.then(async () => {
-		try {
-			const publisher = await getPublisher()
-			const payload = JSON.stringify(event)
-			const historyKey = logHistoryKey(userId)
-			await publisher
-				.multi()
-				.publish(logChannel(userId), payload)
-				.rPush(historyKey, payload)
-				.lTrim(historyKey, -HISTORY_LIMIT, -1)
-				.expire(historyKey, HISTORY_TTL_SECONDS)
-				.exec()
-			publishFailureLogged = false
-		} catch (error) {
-			// Log streaming is best-effort telemetry: never fail a build because
-			// the log channel is unavailable. Report once per outage, not per line.
-			if (!publishFailureLogged) {
-				publishFailureLogged = true
-				console.error("[joblog] Failed to publish logs:", (error as Error).message)
+function writePending(): Promise<void> {
+	if (flushTimer) {
+		clearTimeout(flushTimer)
+		flushTimer = null
+	}
+	writeChain = writeChain.then(async () => {
+		while (pending.length > 0) {
+			const batch = pending.splice(0, BATCH_ROWS)
+			try {
+				await q(`insert into ${T.logEvents} (user_id, payload)
+					select row->>'u', row->>'p' from jsonb_array_elements($1::jsonb) as row`,
+				[batch.map((event) => ({ u: event.userId, p: event.payload }))])
+				writeFailureLogged = false
+			} catch (error) {
+				// Log streaming is best-effort telemetry: never fail a build because
+				// the log store is unavailable. Report once per outage, not per line.
+				if (!writeFailureLogged) {
+					writeFailureLogged = true
+					console.error("[joblog] Failed to write logs:", (error as Error).message)
+				}
 			}
 		}
 	})
+	return writeChain
 }
 
-/** Resolves once every queued publish has been flushed. */
+function enqueuePublish(userId: string, event: StreamEvent): void {
+	pending.push({ userId, payload: JSON.stringify(event) })
+	if (pending.length >= BATCH_ROWS) void writePending()
+	else if (!flushTimer) flushTimer = setTimeout(() => void writePending(), FLUSH_MS)
+}
+
+/** Resolves once every emitted event has been written. */
 export async function flushLogs(): Promise<void> {
-	await publishChain
+	await writePending()
 }
 
 export async function closeLogPublisher(): Promise<void> {
 	await flushLogs()
-	if (!publisherPromise) return
+}
+
+/**
+ * Drops a user's events beyond the newest HISTORY_LIMIT, and everyone's older
+ * than HISTORY_TTL_SECONDS. Called when a job ends, never on a timer, so an
+ * idle database can suspend.
+ */
+export async function pruneLogHistory(userId: string): Promise<void> {
 	try {
-		const publisher = await publisherPromise
-		await publisher.quit()
-	} catch { /* already gone */ }
-	publisherPromise = null
+		await q(`delete from ${T.logEvents} where user_id = $1 and id < (
+			select id from ${T.logEvents} where user_id = $1 order by id desc offset $2::int limit 1)`, [userId, HISTORY_LIMIT - 1])
+		await q(`delete from ${T.logEvents} where created_at < now() - $1::int * interval '1 second'`, [HISTORY_TTL_SECONDS])
+	} catch (error) {
+		console.warn("[joblog] Could not prune old logs:", (error as Error).message)
+	}
 }
 
 // ── Emitters ────────────────────────────────────────────────────────────────

@@ -1,13 +1,13 @@
 import type { NextFunction, Request, Response } from "express"
-import { getRedisClient } from "./redis.ts"
 
 /**
- * Redis-backed fixed-window rate limiter.
+ * Fixed-window rate limiter, in memory.
  *
  * /deploy and /prompt each start a container build and, for prompts, a chain of
  * paid AI calls. Leaving them unmetered on a public URL is the fastest way to
- * turn this project into someone else's free build farm. The counter lives in
- * Redis so the limit holds across multiple API instances.
+ * turn this project into someone else's free build farm. The API runs as one
+ * instance, so counters live in this process: a restart only resets windows
+ * early, and checking a limit costs no database or Redis request.
  */
 export interface RateLimitOptions {
 	/** Bucket name, so different routes get independent budgets. */
@@ -28,35 +28,40 @@ function clientKey(req: Request, res: Response): string {
 	return `ip:${req.ip || "unknown"}`
 }
 
+const windows = new Map<string, { count: number; resetAt: number }>()
+let lastSweep = 0
+
+/** Forgets finished windows now and then, so the map can't grow without bound. */
+function sweep(now: number) {
+	if (now - lastSweep < 60_000) return
+	lastSweep = now
+	for (const [key, window] of windows) if (window.resetAt <= now) windows.delete(key)
+}
+
 export function rateLimit({ name, limit, windowSeconds }: RateLimitOptions) {
-	return async (req: Request, res: Response, next: NextFunction) => {
-		const key = `rwaft:ratelimit:${name}:${clientKey(req, res)}`
+	return (req: Request, res: Response, next: NextFunction) => {
+		const key = `${name}:${clientKey(req, res)}`
+		const now = Date.now()
+		sweep(now)
+		let window = windows.get(key)
+		if (!window || window.resetAt <= now) {
+			window = { count: 0, resetAt: now + windowSeconds * 1_000 }
+			windows.set(key, window)
+		}
+		window.count++
 
-		try {
-			const redis = await getRedisClient()
-			const count = await redis.incr(key)
-			if (count === 1) {
-				await redis.expire(key, windowSeconds)
-			}
+		const remaining = Math.max(0, limit - window.count)
+		res.setHeader("X-RateLimit-Limit", String(limit))
+		res.setHeader("X-RateLimit-Remaining", String(remaining))
 
-			const remaining = Math.max(0, limit - count)
-			res.setHeader("X-RateLimit-Limit", String(limit))
-			res.setHeader("X-RateLimit-Remaining", String(remaining))
-
-			if (count > limit) {
-				const ttl = await redis.ttl(key)
-				const retryAfter = ttl > 0 ? ttl : windowSeconds
-				res.setHeader("Retry-After", String(retryAfter))
-				res.status(429).json({
-					status: "failed",
-					message: `Too many requests. Try again in ${retryAfter}s.`
-				})
-				return
-			}
-		} catch (error) {
-			// Redis being down must not take the API down with it. Log and allow;
-			// the deploy handler itself will fail loudly if Redis is truly gone.
-			console.error(`[ratelimit] Bypassed (${name}):`, (error as Error).message)
+		if (window.count > limit) {
+			const retryAfter = Math.max(1, Math.ceil((window.resetAt - now) / 1_000))
+			res.setHeader("Retry-After", String(retryAfter))
+			res.status(429).json({
+				status: "failed",
+				message: `Too many requests. Try again in ${retryAfter}s.`
+			})
+			return
 		}
 
 		next()

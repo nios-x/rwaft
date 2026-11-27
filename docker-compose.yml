@@ -1,4 +1,5 @@
-# Local stack: Redis, the API, the build worker and the frontend.
+# Local stack: Redis (job queues), Postgres (everything else), the API, the
+# build worker and the frontend.
 #
 #   docker compose up --build             # free mode: every build is free
 #   PROD=true docker compose up --build   # metered: Google sign-in + tokens
@@ -6,7 +7,8 @@
 # Secrets (Cloudinary, AI keys, GOOGLE_CLIENT_ID, Dodo Payments) come from the same
 # .env files the services use outside Docker. Values set under `environment`
 # below win over those files, which is what points both services at the Redis
-# in this stack rather than whatever REDIS_URL a local .env names.
+# and Postgres in this stack rather than whatever REDIS_URL / DATABASE_URL a
+# local .env names.
 #
 # Open http://localhost:3001 for the console. The API is on :3000. If those
 # ports are taken, move both: API_PORT=3100 WEB_PORT=3101 docker compose up --build
@@ -14,16 +16,36 @@
 services:
   redis:
     image: redis:7.4-alpine
-    # Append-only persistence and no eviction: token balances live in here and
-    # must survive a restart and never be evicted under memory pressure.
+    # Only the job queues live here. Append-only persistence and no eviction
+    # still matter: a queued job must survive a restart.
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis-data:/data
     ports:
-      # Loopback only, for redis-cli (e.g. granting tokens by hand).
+      # Loopback only, for redis-cli.
       - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    # Accounts, credits, sessions, deployments, saved source and build logs.
+    # The services create their `rwaft` schema on first use.
+    environment:
+      POSTGRES_USER: rwaft
+      POSTGRES_PASSWORD: rwaft
+      POSTGRES_DB: rwaft
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      # Loopback only, for psql (e.g. granting credits by hand).
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "rwaft"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -38,6 +60,7 @@ services:
         required: false
     environment:
       REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://rwaft:rwaft@postgres:5432/rwaft
       PUBLIC_BASE_URL: http://localhost:${API_PORT:-3000}
       FRONTEND_ORIGIN: http://localhost:${WEB_PORT:-3001}
       # Path-based deployment URLs (http://localhost:<API_PORT>/<id>/); a wildcard
@@ -52,6 +75,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   worker:
@@ -63,6 +88,7 @@ services:
         required: false
     environment:
       REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://rwaft:rwaft@postgres:5432/rwaft
       BUILD_ROOT: /tmp/rwaft-builds
       BUILD_CONCURRENCY: "1"
       BUILD_HEAP_MB: "1024"
@@ -73,6 +99,8 @@ services:
       - npm-cache:/home/bun/.npm
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
@@ -90,5 +118,6 @@ services:
 
 volumes:
   redis-data:
+  postgres-data:
   builds:
   npm-cache:

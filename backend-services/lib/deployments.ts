@@ -1,12 +1,6 @@
 import { isAccountId } from "./accounts.ts"
-import {
-	DEPLOYMENT_STATUS_PREFIX,
-	MAX_DEPLOYMENTS_PER_ACCOUNT,
-	accountDeploymentsKey,
-	deploymentKey,
-	type DeploymentStatus
-} from "./constants.ts"
-import { getRedisClient } from "./redis.ts"
+import { MAX_DEPLOYMENTS_PER_ACCOUNT, statusKey, type DeploymentStatus } from "./constants.ts"
+import { T, kv, q } from "./db.ts"
 
 /**
  * The dashboard's memory.
@@ -16,6 +10,10 @@ import { getRedisClient } from "./redis.ts"
  * was, are kept for good (the newest MAX_DEPLOYMENTS_PER_ACCOUNT of them), so
  * the dashboard can list them from any device. Anonymous builds aren't
  * recorded: nobody could prove they own them later.
+ *
+ * A deployment is a row of the deployments table: its owner, project root and
+ * creation time as columns, and everything else as string fields in `data`
+ * (jsonb), so later facts (an outcome, a push, a pull request) merge in.
  */
 
 export type DeploymentKind = "prompt" | "deploy" | "pr"
@@ -72,54 +70,36 @@ const MAX_ERROR_CHARS = 300
 const FINAL_STATES = new Set(["ready", "failed"])
 const STATES = new Set(["queued", "building", "ready", "failed"])
 
-/** Writes fields onto a deployment only if it still exists, so a removed one isn't brought back. */
-const UPDATE_SCRIPT = `
-if redis.call('EXISTS', KEYS[1]) == 1 then
-	return redis.call('HSET', KEYS[1], unpack(ARGV))
-end
-return -1
-`
-
 /** Records a job the API just accepted. A no-op unless it runs under an account. */
 export async function recordDeployment(accountId: string | undefined, entry: NewDeployment): Promise<void> {
 	if (!accountId || !isAccountId(accountId)) return
-	const redis = await getRedisClient()
 	// A change joins the project its parent belongs to.
-	const root = entry.parent ? (await redis.hGet(deploymentKey(entry.parent), "root")) || entry.parent : entry.id
+	const parent = entry.parent ? (await q<{ root: string }>(`select root from ${T.deployments} where id = $1`, [entry.parent]))[0] : undefined
+	const root = entry.parent ? parent?.root || entry.parent : entry.id
 	const now = Date.now()
-	const listKey = accountDeploymentsKey(accountId)
-
-	await redis.multi()
-		.hSet(deploymentKey(entry.id), {
-			owner: accountId,
-			kind: entry.kind,
-			url: entry.url,
-			createdAt: String(now),
-			status: "queued",
-			charged: String(entry.charged),
-			source: entry.source.slice(0, MAX_SOURCE_CHARS),
-			root,
-			...(entry.parent ? { parent: entry.parent } : {}),
-			...(entry.repo ? { repo: entry.repo } : {}),
-			...(entry.private ? { private: "1" } : {})
-		})
-		.zAdd(listKey, { score: now, value: entry.id })
-		.exec()
-
-	// Keep the newest; the oldest beyond the cap go, record and all.
-	const overflow = (await redis.zCard(listKey)) - MAX_DEPLOYMENTS_PER_ACCOUNT
-	if (overflow > 0) {
-		const oldest = await redis.zRange(listKey, 0, overflow - 1)
-		if (oldest.length > 0) await redis.multi().del(oldest.map(deploymentKey)).zRem(listKey, oldest).exec()
+	const data: Record<string, string> = {
+		kind: entry.kind,
+		url: entry.url,
+		status: "queued",
+		charged: String(entry.charged),
+		source: entry.source.slice(0, MAX_SOURCE_CHARS),
+		...(entry.parent ? { parent: entry.parent } : {}),
+		...(entry.repo ? { repo: entry.repo } : {}),
+		...(entry.private ? { private: "1" } : {})
 	}
+	await q(`insert into ${T.deployments} (id, owner, root, created_at, data) values ($1, $2, $3, $4::bigint, $5::jsonb)
+		on conflict (id) do nothing`, [entry.id, accountId, root, now, data])
+
+	// Keep the newest; the oldest beyond the cap go.
+	await q(`delete from ${T.deployments} where owner = $1 and id not in (
+		select id from ${T.deployments} where owner = $1 order by created_at desc limit $2::int)`, [accountId, MAX_DEPLOYMENTS_PER_ACCOUNT])
 }
 
 /** Adds what happened later (a push to GitHub, an outcome) to a deployment that is still listed. */
 export async function updateDeployment(id: string, fields: Record<string, string>): Promise<void> {
-	const pairs = Object.entries(fields).flat()
-	if (pairs.length === 0) return
-	const redis = await getRedisClient()
-	await redis.sendCommand(["EVAL", UPDATE_SCRIPT, "1", deploymentKey(id), ...pairs])
+	if (Object.keys(fields).length === 0) return
+	// An UPDATE only touches a row that exists, so a removed deployment isn't brought back.
+	await q(`update ${T.deployments} set data = data || $2::jsonb where id = $1`, [id, fields])
 }
 
 const toDeployment = (id: string, fields: Record<string, string>): Deployment | null => {
@@ -153,30 +133,31 @@ const toDeployment = (id: string, fields: Record<string, string>): Deployment | 
 	}
 }
 
+interface DeploymentRow {
+	id: string
+	owner: string
+	root: string
+	created_at: number | string
+	data: Record<string, unknown> | string
+}
+
+/** The row as the string fields toDeployment reads, the same shape the record always had. */
+const fieldsOf = (row: DeploymentRow): Record<string, string> => {
+	const data = typeof row.data === "string" ? JSON.parse(row.data) as Record<string, unknown> : row.data
+	const fields: Record<string, string> = {}
+	for (const [key, value] of Object.entries(data ?? {})) if (value !== null && value !== undefined) fields[key] = String(value)
+	return { ...fields, owner: row.owner, root: row.root, createdAt: String(row.created_at) }
+}
+
 /** Every deployment the account has, newest first. */
 export async function listDeployments(accountId: string): Promise<Deployment[]> {
-	const redis = await getRedisClient()
-	const listKey = accountDeploymentsKey(accountId)
-	const ids = (await redis.zRange(listKey, 0, -1)).reverse()
-	if (ids.length === 0) return []
+	const rows = await q<DeploymentRow>(`select id, owner, root, created_at, data from ${T.deployments} where owner = $1 order by created_at desc`, [accountId])
+	const deployments = rows.map((row) => toDeployment(row.id, fieldsOf(row))).filter((deployment): deployment is Deployment => deployment !== null)
 
-	// Issued in one tick, so node-redis pipelines them.
-	const rows = await Promise.all(ids.map((id) => redis.hGetAll(deploymentKey(id))))
-	const deployments: Deployment[] = []
-	const missing: string[] = []
-	ids.forEach((id, index) => {
-		const fields = rows[index] as Record<string, string> | undefined
-		const deployment = fields && fields.owner === accountId ? toDeployment(id, fields) : null
-		if (deployment) deployments.push(deployment)
-		else missing.push(id)
-	})
-	if (missing.length > 0) await redis.zRem(listKey, missing).catch(() => { })
-
-	// Jobs the worker hasn't reported on (one from before it recorded outcomes,
-	// or one it crashed on): their day-long status key may still know.
+	// Jobs the worker hasn't reported on (one it crashed on): their day-long status may still know.
 	const pending = deployments.filter((deployment) => !FINAL_STATES.has(deployment.status))
 	if (pending.length > 0) {
-		const statuses = await redis.mGet(pending.map((deployment) => `${DEPLOYMENT_STATUS_PREFIX}${deployment.id}`))
+		const statuses = await kv.getMany(pending.map((deployment) => statusKey(deployment.id)))
 		await Promise.all(pending.map(async (deployment, index) => {
 			const status = statuses[index]
 			if (!status) {
@@ -197,19 +178,10 @@ export async function listDeployments(accountId: string): Promise<Deployment[]> 
  * the deployment isn't this account's.
  */
 export async function removeDeployments(accountId: string, id: string, wholeProject: boolean): Promise<number> {
-	const redis = await getRedisClient()
-	const [owner, root] = await redis.hmGet(deploymentKey(id), ["owner", "root"])
-	if (owner !== accountId) return 0
-
-	const listKey = accountDeploymentsKey(accountId)
-	let ids = [id]
-	if (wholeProject) {
-		const project = root || id
-		const all = await redis.zRange(listKey, 0, -1)
-		const roots = await Promise.all(all.map((other) => redis.hGet(deploymentKey(other), "root")))
-		ids = all.filter((other, index) => other === project || roots[index] === project)
-		if (!ids.includes(id)) ids.push(id)
-	}
-	await redis.multi().del(ids.map(deploymentKey)).zRem(listKey, ids).exec()
-	return ids.length
+	const [target] = await q<{ owner: string; root: string }>(`select owner, root from ${T.deployments} where id = $1`, [id])
+	if (!target || target.owner !== accountId) return 0
+	const removed = wholeProject
+		? await q(`delete from ${T.deployments} where owner = $1 and (id = $2 or root = $3 or id = $3) returning id`, [accountId, id, target.root || id])
+		: await q(`delete from ${T.deployments} where owner = $1 and id = $2 returning id`, [accountId, id])
+	return removed.length
 }

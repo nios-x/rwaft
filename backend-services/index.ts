@@ -12,13 +12,13 @@ import { genId, genUserId, getAllFileNames, isDeploymentId, isUserId, validateRe
 import { uploadFile } from "./lib/upload.ts"
 import { getRawAssetUrl } from "./lib/cloudinary.ts"
 import { closeRedis, getRedisClient, isRedisHealthy } from "./lib/redis.ts"
+import { closeDb, isDatabaseHealthy, kv } from "./lib/db.ts"
 import { corsmiddlewares, securityHeaders } from "./lib/middleware.ts"
 import { withBadge } from "./lib/badge.ts"
 import { rateLimit } from "./lib/ratelimit.ts"
 import { clearLogHistory, closeLogStream, readLogHistory, subscribeToUserLogs } from "./lib/logstream.ts"
 import {
 	DEPLOY_QUEUE,
-	DEPLOYMENT_STATUS_PREFIX,
 	PROMPT_QUEUE,
 	PR_QUEUE,
 	githubPrKey,
@@ -26,7 +26,7 @@ import {
 	PR_TOKEN_DEADLINES,
 	prResultKey,
 	prTokenKey,
-	userKey,
+	statusKey,
 	type JobCharge
 } from "./lib/constants.ts"
 import {
@@ -34,6 +34,7 @@ import {
 	SIGNUP_TOKENS,
 	TOKEN_COSTS,
 	WEEKLY_CREDITS,
+	addTokens,
 	authenticate,
 	createSession,
 	destroySession,
@@ -366,13 +367,14 @@ const sendCloudinaryFile = async (id: string, filePath: string, res: Response) =
 // ── Health ──────────────────────────────────────────────────────────────────
 
 app.get(["/health", "/healthz"], async (_req, res) => {
-	const redisOk = await isRedisHealthy()
+	const [redisOk, databaseOk] = await Promise.all([isRedisHealthy(), isDatabaseHealthy()])
 	// Report 200 while degraded so the platform keeps the instance in rotation:
-	// static asset serving still works without Redis.
+	// static asset serving still works without Redis or Postgres.
 	res.status(200).json({
-		status: redisOk ? "healthy" : "degraded",
+		status: redisOk && databaseOk ? "healthy" : "degraded",
 		service: "backend",
 		redis: redisOk ? "connected" : "disconnected",
+		database: databaseOk ? "connected" : "disconnected",
 		timestamp: new Date().toISOString()
 	})
 })
@@ -506,8 +508,7 @@ app.post(
 				return
 			}
 			const added = Math.max(0, Math.min(TEST_CREDIT_AMOUNT, TEST_CREDIT_CAP - account.tokens))
-			const redis = await getRedisClient()
-			const balance = added > 0 ? await redis.hIncrBy(userKey(accountId), "tokens", added) : account.tokens
+			const balance = added > 0 ? (await addTokens(accountId, added)) ?? account.tokens : account.tokens
 			res.json({ status: "success", added, balance })
 		} catch (error) {
 			console.error("[billing] Test top-up failed:", (error as Error).message)
@@ -570,9 +571,8 @@ app.get("/queue/:id", async (req, res) => {
 		return
 	}
 	try {
-		const redis = await getRedisClient()
 		const [status, line] = await Promise.all([
-			redis.get(`${DEPLOYMENT_STATUS_PREFIX}${id}`),
+			kv.get(statusKey(id)),
 			linePosition(id)
 		])
 		res.setHeader("Cache-Control", "no-store")
@@ -592,8 +592,7 @@ app.get("/status/:id", async (req, res) => {
 		return
 	}
 	try {
-		const redis = await getRedisClient()
-		const status = await redis.get(`${DEPLOYMENT_STATUS_PREFIX}${id}`)
+		const status = await kv.get(statusKey(id))
 		res.setHeader("Cache-Control", "no-store")
 		res.json({
 			id,
@@ -712,7 +711,7 @@ app.delete("/logs/:userId", async (req, res) => {
  */
 const enqueueJob = async (queue: string, job: { id: string; charge?: JobCharge } & Record<string, unknown>) => {
 	const redis = await getRedisClient()
-	await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${job.id}`, "queued", { EX: STATUS_TTL_SECONDS })
+	await kv.set(statusKey(job.id), "queued", STATUS_TTL_SECONDS)
 	await joinLine(job.id)
 	try {
 		await redis.rPush(queue, JSON.stringify(job))
@@ -984,14 +983,12 @@ const githubRedirectUri = (req: Request) =>
 	process.env.GITHUB_REDIRECT_URI?.trim() || `${publicOrigin(req)}/github/callback`
 
 const readPush = async (pushId: string): Promise<PushRecord | null> => {
-	const redis = await getRedisClient()
-	const raw = await redis.get(githubPushKey(pushId))
+	const raw = await kv.get(githubPushKey(pushId))
 	return raw ? JSON.parse(raw) as PushRecord : null
 }
 
 const writePush = async (pushId: string, record: PushRecord) => {
-	const redis = await getRedisClient()
-	await redis.set(githubPushKey(pushId), JSON.stringify(record), { EX: GITHUB_PUSH_TTL_SECONDS })
+	await kv.set(githubPushKey(pushId), JSON.stringify(record), GITHUB_PUSH_TTL_SECONDS)
 }
 
 const escapeHtml = (text: string) =>
@@ -1111,15 +1108,14 @@ app.get("/github/callback", async (req, res) => {
 
 	let record: PushRecord | null
 	try {
-		const redis = await getRedisClient()
 		// One callback per push: a reload or a replayed URL must not push twice.
-		const claimed = await redis.set(`${githubPushKey(pushId)}:claimed`, "1", { NX: true, EX: GITHUB_PUSH_TTL_SECONDS })
+		const claimed = await kv.setIfAbsent(`${githubPushKey(pushId)}:claimed`, "1", GITHUB_PUSH_TTL_SECONDS)
 		record = await readPush(pushId)
 		if (!record) {
 			sendPushPage(res, 410, "failed", "This push has expired. Start it again from rwaft.")
 			return
 		}
-		if (claimed !== "OK") {
+		if (!claimed) {
 			if (record.state === "done") sendPushPage(res, 200, "done", "Your code is on GitHub.", record.repoUrl)
 			else sendPushPage(res, 409, "failed", record.message || "This push is already being handled. Go back to rwaft to see how it went.")
 			return
@@ -1216,14 +1212,23 @@ interface PrRequest {
 const isPrRequestId = (value: string) => /^pr-[A-Za-z0-9_-]{32}$/.test(value)
 
 const readPrRequest = async (requestId: string): Promise<PrRequest | null> => {
-	const redis = await getRedisClient()
-	const raw = await redis.get(githubPrKey(requestId))
+	const raw = await kv.get(githubPrKey(requestId))
 	return raw ? JSON.parse(raw) as PrRequest : null
 }
 
 const writePrRequest = async (requestId: string, record: PrRequest) => {
-	const redis = await getRedisClient()
-	await redis.set(githubPrKey(requestId), JSON.stringify(record), { EX: PR_REQUEST_TTL_SECONDS })
+	await kv.set(githubPrKey(requestId), JSON.stringify(record), PR_REQUEST_TTL_SECONDS)
+}
+
+/** What a PR job opened, as the worker wrote it (JSON of string fields), or null once it has expired. */
+const readPrResult = async (jobId: string): Promise<Record<string, string> | null> => {
+	const raw = await kv.get(prResultKey(jobId))
+	if (!raw) return null
+	try {
+		return JSON.parse(raw) as Record<string, string>
+	} catch {
+		return null
+	}
 }
 
 const PR_EXPIRED = {
@@ -1270,8 +1275,8 @@ app.post(
 					res.status(400).json({ status: "failed", message: "Invalid pull request to add to" })
 					return
 				}
-				const redis = await getRedisClient()
-				const [owner, repoName, priv, url] = await redis.hmGet(prResultKey(body.from), ["owner", "repo", "private", "url"])
+				const parent = await readPrResult(body.from)
+				const [owner, repoName, priv, url] = [parent?.owner, parent?.repo, parent?.private, parent?.url]
 				const parsed = parseRepository(repoName ?? "")
 				// Someone else's pull request answers exactly like an expired one.
 				if (!owner || !url || !parsed.ok || !isRequester(owner, req, res)) {
@@ -1416,8 +1421,8 @@ app.get("/github/pr-result/:id", async (req, res) => {
 		return
 	}
 	try {
-		const redis = await getRedisClient()
-		const [owner, url, title, number, files, branch, base, fork, repo] = await redis.hmGet(prResultKey(id), [...PR_RESULT_FIELDS])
+		const result = await readPrResult(id)
+		const [owner, url, title, number, files, branch, base, fork, repo] = PR_RESULT_FIELDS.map((field) => result?.[field])
 		// Someone else's pull request answers exactly like a missing one.
 		if (!owner || !url || !isRequester(owner, req, res)) {
 			res.json({ status: "success", available: false })
@@ -1459,15 +1464,14 @@ const sendPrPage = (res: Response, status: number, outcome: "started" | "failed"
 async function handlePrCallback(req: Request, res: Response, requestId: string, code: string) {
 	let record: PrRequest | null
 	try {
-		const redis = await getRedisClient()
 		// One callback per request: a reload or a replayed URL must not start two jobs.
-		const claimed = await redis.set(`${githubPrKey(requestId)}:claimed`, "1", { NX: true, EX: PR_REQUEST_TTL_SECONDS })
+		const claimed = await kv.setIfAbsent(`${githubPrKey(requestId)}:claimed`, "1", PR_REQUEST_TTL_SECONDS)
 		record = await readPrRequest(requestId)
 		if (!record) {
 			sendPrPage(res, 410, "failed", "This request has expired. Start it again from rwaft.")
 			return
 		}
-		if (claimed !== "OK") {
+		if (!claimed) {
 			if (record.state === "queued") sendPrPage(res, 200, "started", "rwaft is already working on this pull request.", record.repoUrl)
 			else sendPrPage(res, 409, "failed", record.message || "This request is already being handled. Go back to rwaft to see how it went.")
 			return
@@ -1511,11 +1515,10 @@ async function handlePrCallback(req: Request, res: Response, requestId: string, 
 			charge = { userId: record.accountId, tokens: cost }
 		}
 
+		// The sealed token in Postgres; its revoke deadline on Redis's schedule beside the queue.
+		await kv.set(prTokenKey(jobId), sealToken(token), PR_TOKEN_KEEP_SECONDS)
 		const redis = await getRedisClient()
-		await redis.multi()
-			.set(prTokenKey(jobId), sealToken(token), { EX: PR_TOKEN_KEEP_SECONDS })
-			.zAdd(PR_TOKEN_DEADLINES, { score: Date.now() + PR_TOKEN_TTL_SECONDS * 1_000, value: jobId })
-			.exec()
+		await redis.zAdd(PR_TOKEN_DEADLINES, { score: Date.now() + PR_TOKEN_TTL_SECONDS * 1_000, value: jobId })
 		const repoUrl = record.prUrl ?? info.html_url
 		await enqueueJob(PR_QUEUE, {
 			id: jobId,
@@ -1550,8 +1553,9 @@ async function handlePrCallback(req: Request, res: Response, requestId: string, 
 		const message = error instanceof Error ? error.message : String(error)
 		console.error(`[github] PR for ${repo.owner}/${repo.name} not started${error instanceof GitHubError ? ` (${error.status})` : ""}:`, message)
 		await refundCharge(jobId, charge)
+		await kv.del(prTokenKey(jobId)).catch(() => { })
 		await getRedisClient()
-			.then((redis) => redis.multi().del(prTokenKey(jobId)).zRem(PR_TOKEN_DEADLINES, jobId).exec())
+			.then((redis) => redis.zRem(PR_TOKEN_DEADLINES, jobId))
 			.catch(() => { })
 		await writePrRequest(requestId, { ...record, state: "failed", message }).catch(() => { })
 		sendPrPage(res, 502, "failed", message)
@@ -1601,10 +1605,9 @@ app.get("/{*splat}", async (req, res) => {
 
 	let deploymentStatus: string | null = null
 	try {
-		const redis = await getRedisClient()
-		deploymentStatus = await redis.get(`${DEPLOYMENT_STATUS_PREFIX}${deploymentId}`)
+		deploymentStatus = await kv.get(statusKey(deploymentId))
 	} catch {
-		// Redis is down but the artifacts live on Cloudinary — serve them anyway.
+		// The database is down but the artifacts live on Cloudinary — serve them anyway.
 	}
 
 	if (deploymentStatus === "queued" || deploymentStatus === "building") {
@@ -1695,6 +1698,7 @@ const shutdown = async (signal: string) => {
 	server.close(async () => {
 		await closeLogStream().catch(() => { })
 		await closeRedis().catch(() => { })
+		await closeDb().catch(() => { })
 		process.exit(0)
 	})
 }

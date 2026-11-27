@@ -12,8 +12,12 @@ const directory = path.dirname(fileURLToPath(import.meta.url))
 // file still fills the gaps.
 loadEnv({ path: path.join(directory, "..", ".env"), override: false })
 
-// ── Queue / key names shared with backend-services ──────────────────────────
-// Keep these in sync with backend-services/lib/constants.ts.
+// ── Names shared with backend-services ──────────────────────────────────────
+// Keep these in sync with backend-services/lib/constants.ts. Redis holds only
+// the job queues and their schedules; everything else is in Postgres
+// (lib/db.ts), where the key helpers below name rows of its key-value table.
+
+// Redis: the job queues
 export const DEPLOY_QUEUE = "rwaft:deploy"
 export const PROMPT_QUEUE = "rwaft:prompt"
 /** An AI change to a GitHub repository, opened as a pull request. */
@@ -22,29 +26,23 @@ export const PR_QUEUE = "rwaft:pr"
 export const DEPLOY_PROCESSING = "rwaft:deploy:processing"
 export const PROMPT_PROCESSING = "rwaft:prompt:processing"
 export const PR_PROCESSING = "rwaft:pr:processing"
-export const DEPLOYMENT_STATUS_PREFIX = "rwaft:deployment-status:"
 /** Build line: waiting jobs scored by enqueue time, running ones by start time. */
 export const BUILD_WAITING = "rwaft:builds:waiting"
 export const BUILD_ACTIVE = "rwaft:builds:active"
-export const userKey = (userId: string) => `rwaft:user:${userId}`
-export const refundKey = (jobId: string) => `rwaft:billing:refunded:${jobId}`
-/** A generated app's source, kept for "Push to GitHub". Expires on its own. */
-export const sourceKey = (jobId: string) => `rwaft:source:${jobId}`
-/** A PR job's GitHub token, encrypted by the API. Deleted and revoked when the job ends. */
-export const prTokenKey = (jobId: string) => `rwaft:github:pr-token:${jobId}`
-/** What a PR job opened, read back by the API for the console. */
-export const prResultKey = (jobId: string) => `rwaft:pr:result:${jobId}`
-/** Sealed PR tokens by revoke deadline; the API's sweep revokes what a job left behind. Same as the API's. */
+/** Sealed PR tokens' job ids by revoke deadline; the API's sweep revokes what a job left behind. Same as the API's. */
 export const PR_TOKEN_DEADLINES = "rwaft:github:pr-token-deadlines"
 /** Pull requests whose checks are being followed, scored by when to look next. */
 export const PR_WATCHING = "rwaft:pr:watching"
-export const prWatchKey = (jobId: string) => `rwaft:pr:watch:${jobId}`
-/**
- * A deployment's record for the dashboard, written by the API when the job is
- * accepted (only for signed-in accounts). The worker adds how it ended, and
- * only to a record that exists. Same as the API's.
- */
-export const deploymentKey = (jobId: string) => `rwaft:deployment:${jobId}`
+
+// Postgres key-value rows (lib/db.ts kv)
+/** A job's status for a day: queued, building, ready or failed. */
+export const statusKey = (jobId: string) => `status:${jobId}`
+/** A PR job's GitHub token, encrypted by the API. Deleted and revoked when the job ends. */
+export const prTokenKey = (jobId: string) => `pr-token:${jobId}`
+/** What a PR job opened (JSON of string fields), read back by the API for the console. */
+export const prResultKey = (jobId: string) => `pr-result:${jobId}`
+/** A followed pull request's watch state (JSON). */
+export const prWatchKey = (jobId: string) => `pr-watch:${jobId}`
 
 const redisUrl = process.env.REDIS_URL
 

@@ -44,7 +44,7 @@ The platform is engineered around an **event-driven, queue-based microservices a
 5. [Engineering Decision Log (Trade-offs & Rationale)](#-engineering-decision-log)
 6. [Repository & Directory Structure](#-repository--directory-structure)
 7. [Environment Variables Reference](#-environment-variables-reference)
-8. [Live Build Logs (Redis Pub/Sub)](#-live-build-logs-redis-pubsub)
+8. [Live Build Logs](#-live-build-logs)
 9. [Local Development & Quickstart](#-local-development--quickstart)
 10. [Production Deployment Guide (Render, Docker & Vercel)](#-production-deployment-guide)
 
@@ -70,7 +70,7 @@ flowchart TB
 
     subgraph MessageBus ["Event Bus & State Store"]
         RedisQueue["📬 Redis Lists (rwaft:deploy / rwaft:prompt)"]
-        RedisState["📊 Redis Status Cache (rwaft:deployment-status:*)"]
+        RedisState["📊 Postgres job status (kv status:*)"]
     end
 
     subgraph WorkerPool ["Build Services Worker (build-services)"]
@@ -130,7 +130,7 @@ flowchart TB
 ### 2. Backend API Gateway & Dynamic Reverse Proxy
 - **Framework**: Express on Bun/Node runtime.
 - **Endpoints**:
-  - `POST /deploy`: Ingests repository URLs, performs shallow clone using `simple-git`, batches raw files into Cloudinary staging storage, registers the deployment ID in Redis, pushes to the queue, and returns an immediate response `<id>.<domain>/`.
+  - `POST /deploy`: Ingests repository URLs, performs shallow clone using `simple-git`, batches raw files into Cloudinary staging storage, records its status in Postgres, pushes to the queue, and returns an immediate response `<id>.<domain>/`.
   - `POST /prompt`: Generates a unique deployment ID, pushes the prompt payload directly to `rwaft:prompt`, and sets status to `building`.
   - `GET /{*splat}` (Wildcard Reverse Proxy):
     - **Subdomain Extraction**: Resolves target deployment ID either from subdomains (`<id>.domain.com`) or fallback path params (`domain.com/<id>/index.html`).
@@ -139,11 +139,11 @@ flowchart TB
 
 ### 3. Redis Asynchronous Message Bus
 - **Engine**: Redis with atomic list operations (`rPush`, `BLMOVE`) and key expiration. `BLMOVE` moves a claimed job onto a companion `:processing` list, so a worker that dies mid-build leaves the job recoverable instead of losing it; the entry is acknowledged with `lRem` only after the job settles, and orphans are requeued at worker startup.
-- **Log bus**: `rwaft:logs:<userId>` pub/sub channel plus a capped history list — see [Live Build Logs](#-live-build-logs-redis-pubsub).
+- **Only queues**: Redis holds the job queues and their schedules (place in line, check watches, token deadlines) and nothing else. Accounts, credits, sessions, statuses, deployments, saved source and build logs live in Postgres (`backend-services/lib/db.ts`) — see [Live Build Logs](#-live-build-logs).
 - **Queues**:
   - `rwaft:deploy`: Ingests IDs of Git projects ready for compilation.
   - `rwaft:prompt`: Ingests `{ id, prompt }` payloads for AI generation.
-- **Atomic Status Registry**: Keys under `rwaft:deployment-status:<id>` (`queued` | `building` | `ready` | `failed`) with a 24-hour TTL (`STATUS_TTL_SECONDS`), enabling zero-database instantaneous state lookups.
+- **Status Registry**: rows `status:<id>` (`queued` | `building` | `ready` | `failed`) in Postgres's expiring key-value table, kept for 24 hours (`STATUS_TTL_SECONDS`).
 
 ### 4. Distributed Build & Compilation Worker
 - **Lifecycle Management**:
@@ -182,7 +182,8 @@ sequenceDiagram
     actor Developer as User
     participant Front as Frontend (Next.js)
     participant API as Backend Gateway
-    participant Redis as Redis Queue/Cache
+    participant Redis as Redis Queue
+    participant DB as Postgres
     participant Cloud as Cloudinary
     participant Worker as Build Worker
 
@@ -192,7 +193,7 @@ sequenceDiagram
     API->>API: Git Clone into Temp Sandbox
     API->>Cloud: Upload Raw Files to rwaft/a1b2c3d4/* (Batched)
     API->>API: Remove Local Git Clone
-    API->>Redis: SET rwaft:deployment-status:a1b2c3d4 = "building"
+    API->>DB: status:a1b2c3d4 = "building"
     API->>Redis: RPUSH rwaft:deploy "a1b2c3d4"
     API-->>Front: 200 OK { id, url: "http://a1b2c3d4.domain.com" }
     Front-->>Developer: Show Loading / Status Screen
@@ -204,7 +205,7 @@ sequenceDiagram
     Worker->>Worker: Apply CRA/Vite compatibility patches
     Worker->>Worker: npm run build
     Worker->>Cloud: Upload dist/ to rwaft-dist/a1b2c3d4/*
-    Worker->>Redis: SET rwaft:deployment-status:a1b2c3d4 = "ready"
+    Worker->>DB: status:a1b2c3d4 = "ready"
     Worker->>Worker: Cleanup local builds/a1b2c3d4
 ```
 
@@ -217,6 +218,7 @@ sequenceDiagram
     participant Front as Frontend (Next.js)
     participant API as Backend Gateway
     participant Redis as Redis Queue
+    participant DB as Postgres
     participant Worker as Build Worker
     participant AI as Gemini
     participant Cloud as Cloudinary
@@ -224,7 +226,7 @@ sequenceDiagram
     Developer->>Front: "Build an interactive Kanban board in Dark Mode"
     Front->>API: POST /prompt { prompt }
     API->>API: Generate ID ("k9x2m1p0")
-    API->>Redis: SET rwaft:deployment-status:k9x2m1p0 = "building"
+    API->>DB: status:k9x2m1p0 = "building"
     API->>Redis: RPUSH rwaft:prompt { id, prompt }
     API-->>Front: 200 OK { id, url }
 
@@ -248,7 +250,7 @@ sequenceDiagram
     end
 
     Worker->>Cloud: Upload dist/ to rwaft-dist/k9x2m1p0/*
-    Worker->>Redis: SET rwaft:deployment-status:k9x2m1p0 = "ready"
+    Worker->>DB: status:k9x2m1p0 = "ready"
     Worker->>Worker: releaseJobState("k9x2m1p0")
 ```
 
@@ -259,12 +261,12 @@ sequenceDiagram
     autonumber
     actor User as Visitor
     participant Gateway as Backend Reverse Proxy
-    participant Redis as Redis Status
+    participant Redis as Postgres Status
     participant Cloud as Cloudinary CDN
 
     User->>Gateway: GET http://a1b2c3d4.domain.com/index.html
     Gateway->>Gateway: Extract Subdomain: "a1b2c3d4"
-    Gateway->>Redis: GET rwaft:deployment-status:a1b2c3d4
+    Gateway->>Redis: SELECT status:a1b2c3d4
 
     alt Status == "building"
         Redis-->>Gateway: "building"
@@ -318,10 +320,11 @@ rwaft/
 │   ├── lib/
 │   │   ├── cloudinary.ts             # Cloudinary client & asset URL resolution
 │   │   ├── constants.ts              # Queue/key names shared with the worker
-│   │   ├── logstream.ts              # Multiplexed Redis subscriber for per-user SSE
+│   │   ├── logstream.ts              # Per-user SSE from Postgres log_events
 │   │   ├── middleware.ts             # CORS allowlist & security headers
-│   │   ├── ratelimit.ts              # Redis-backed per-user/IP rate limiting
-│   │   ├── redis.ts                  # Lazy, self-healing Redis connection
+│   │   ├── ratelimit.ts              # In-memory per-user/IP rate limiting
+│   │   ├── db.ts                     # Postgres: schema, queries, expiring key-value
+│   │   ├── redis.ts                  # Lazy, self-healing Redis connection (queues only)
 │   │   ├── upload.ts                 # Cloudinary uploader
 │   │   └── utils.ts                  # CSPRNG ids, repo URL validation, file crawler
 │   ├── index.ts                      # Routes: /deploy /prompt /logs /status /session + site proxy
@@ -371,7 +374,9 @@ files are git-ignored and are excluded from Docker images.
 
 | Variable | Type | Required | Description | Default |
 | :--- | :---: | :---: | :--- | :--- |
-| `REDIS_URL` | `string` | **Yes** | Redis connection URI (local, Upstash, Render Key Value) | — |
+| `REDIS_URL` | `string` | **Yes** | Redis connection URI, for the job queues (local, Upstash, Render Key Value) | — |
+| `DATABASE_URL` | `string` | **Yes** | Postgres connection URI (local, Neon): accounts, credits, sessions, deployments, saved source, logs | — |
+| `DB_SCHEMA` | `string` | No | Schema for rwaft's tables, created on first use | `rwaft` |
 | `CLOUDINARY_CLOUD_NAME` | `string` | **Yes** | Cloudinary account name | — |
 | `CLOUDINARY_API_KEY` | `string` | **Yes**\* | Cloudinary API key (signed uploads) | — |
 | `CLOUDINARY_API_SECRET` | `string` | **Yes**\* | Cloudinary API secret | — |
@@ -405,6 +410,7 @@ files are git-ignored and are excluded from Docker images.
 | Variable | Type | Required | Description | Default |
 | :--- | :---: | :---: | :--- | :--- |
 | `REDIS_URL` | `string` | **Yes** | Same Redis instance as the API | — |
+| `DATABASE_URL` | `string` | **Yes** | Same Postgres database as the API | — |
 | `CLOUDINARY_*` | `string` | **Yes** | Same Cloudinary settings as the API | — |
 | `GEMINI_API_KEY` | `string` | **Yes**† | Google Gemini key. `GEMINI_API_KEY1`…`9` add rotation across free-tier keys | — |
 | `AI_MODEL` | `string` | No | Preferred Gemini model | `gemini-3.8-flash` |
@@ -432,26 +438,25 @@ files are git-ignored and are excluded from Docker images.
 
 ## 🎟️ Accounts, Tokens & the Build Line
 
-- **Sign-in.** The browser gets a Google ID token from Google Identity Services and posts it to `POST /auth/google`. The API verifies it against Google's published keys (signature, issuer, audience, expiry, verified email), creates the account on first sign-in (`rwaft:user:g-<sub>`), and returns an opaque session token. Only the token's SHA-256 is stored.
-- **Metering (`PROD=true`).** `/deploy` and `/prompt` require a session and atomically deduct tokens (a Lua script) before any work starts, so two tabs cannot spend the same balance. The charge rides on the job; if the build fails, the worker refunds it exactly once per job, even if a crash makes the job run twice. `PROD=false` skips all of this.
+- **Sign-in.** The browser gets a Google ID token from Google Identity Services and posts it to `POST /auth/google`. The API verifies it against Google's published keys (signature, issuer, audience, expiry, verified email), creates the account on first sign-in (a row in `rwaft.accounts`), and returns an opaque session token. Only the token's SHA-256 is stored.
+- **Metering (`PROD=true`).** `/deploy` and `/prompt` require a session and atomically deduct tokens (one transaction, after any weekly top-up that is due) before any work starts, so two tabs cannot spend the same balance. The charge rides on the job; if the build fails, the worker refunds it exactly once per job, even if a crash makes the job run twice. `PROD=false` skips all of this.
 - **Buying tokens.** `POST /billing/checkout` creates a Dodo Payments Checkout Session for the pack's Dodo product and the browser is redirected to Dodo. Tokens are credited only from the signed `payment.succeeded` webhook (Standard Webhooks signature), at most once per payment, with the amount taken from the server's own pack map rather than the payload. All provider-specific code lives in `backend-services/lib/billing.ts`.
 - **Place in line.** Builds run one at a time per worker slot. Every job joins a shared sorted set when it is queued and leaves it when its build starts, so `GET /queue/:id` returns its position, how many are waiting and how many are running. The console and the "still building" page both show it.
-- **Granting tokens by hand:** `redis-cli HINCRBY rwaft:user:g-<google-sub> tokens 50`.
+- **Granting tokens by hand:** `update rwaft.accounts set tokens = tokens + 50 where id = 'g-<google-sub>';`
 
 ---
 
-## 📡 Live Build Logs (Redis Pub/Sub)
+## 📡 Live Build Logs
 
-Build output streams from the worker to the browser in real time, isolated per
-user.
+Build output streams from the worker to the browser in near real time, isolated
+per user.
 
 ```
 worker jobLog()
-      │  publish + capped history list
+      │  buffered, one insert per batch (≤ every 250 ms)
       ▼
-Redis  rwaft:logs:<userId>           (pub/sub channel)
-       rwaft:logs:<userId>:history   (last 500 events, 24h TTL)
-      │  one shared subscriber, fanned out in-process
+Postgres rwaft.log_events             (newest 500 per user, 24h)
+      │  one poller per user (1 s), only while someone is watching
       ▼
 API    GET /logs/:userId             (Server-Sent Events)
       ▼
@@ -461,23 +466,22 @@ Browser EventSource → live console
 **How a user is identified.** On first visit the browser calls `GET /session`,
 which returns a unique id (`u-` + 128 random bits). It is kept in
 `localStorage`, sent with every `/deploy` and `/prompt` request, and carried
-through the queue payload to the worker. The worker publishes only to that
-user's channel, so one person's build output is never visible in another's
-console.
+through the queue payload to the worker. The worker writes every event under
+that id, so one person's build output is never visible in another's console.
 
 **Design notes**
 
 - **SSE, not WebSockets** — the traffic is one-way, it passes through ordinary
   HTTP proxies, and `EventSource` reconnects on its own.
 - **History replay** — each connection replays recent events before following
-  the live channel, so a refresh or a dropped connection mid-build resumes
+  new ones, so a refresh or a dropped connection mid-build resumes
   instead of showing an empty console. Duplicates are expected and the client
   de-dupes on the server-assigned `jobId:seq`.
-- **One Redis subscriber per process** — Redis puts a connection into subscriber
-  mode, so a connection per browser would exhaust a managed Redis plan's limit.
-  The API multiplexes a single subscriber and unsubscribes when the last reader
-  for a user disconnects.
-- **Best-effort** — a log publish failure never fails a build.
+- **One poller per user** — every open stream for a user shares one poller,
+  which stops when the last one closes, so an idle database can suspend.
+- **Batched writes** — a build can print thousands of npm lines; they are
+  written in batches rather than one request per line.
+- **Best-effort** — a log write failure never fails a build.
 
 | Endpoint | Purpose |
 | :--- | :--- |
@@ -494,7 +498,8 @@ console.
 - **[Bun](https://bun.sh)** (v1.1+) — runs the API and worker
 - **[Node.js](https://nodejs.org)** (v20+) and npm — the worker shells out to npm to build user projects
 - **[Git](https://git-scm.com)**
-- **[Redis](https://redis.io)** locally or on Upstash
+- **[Redis](https://redis.io)** locally or on Upstash, for the job queues
+- **[Postgres](https://www.postgresql.org)** locally or on Neon, for everything else
 - **Cloudinary** credentials, and a **Gemini** API key
 
 ### Step 1: Clone

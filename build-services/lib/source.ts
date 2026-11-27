@@ -1,7 +1,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { gunzipSync, gzipSync } from "node:zlib"
-import { sourceKey, type createRedisClient } from "./config.ts"
+import type { createRedisClient } from "./config.ts"
+import { EXPIRES_AT, T, q } from "./db.ts"
 import { jobLog } from "./joblog.ts"
 import type { AppPlan } from "./plan.ts"
 
@@ -62,7 +63,7 @@ const MAX_HISTORY = 12
  * content base64 so binary assets survive. `owner` is the log channel id the
  * build ran under; only a request from that user may push or change it.
  */
-export async function saveSourceSnapshot(redis: RedisLike, jobId: string, owner: string, projectDir: string, meta: SourceMeta) {
+export async function saveSourceSnapshot(_redis: RedisLike, jobId: string, owner: string, projectDir: string, meta: SourceMeta) {
 	const fileNames = await listSourceFiles(projectDir)
 	if (fileNames.length === 0) throw new Error("the project has no source files")
 	if (fileNames.length > SOURCE_MAX_FILES) throw new Error(`the project has ${fileNames.length} files, over the ${SOURCE_MAX_FILES} limit`)
@@ -79,18 +80,13 @@ export async function saveSourceSnapshot(redis: RedisLike, jobId: string, owner:
 	const history = meta.history.length > MAX_HISTORY
 		? [meta.history[0]!, ...meta.history.slice(-(MAX_HISTORY - 1))]
 		: meta.history
-	const key = sourceKey(jobId)
-	await redis.multi()
-		.hSet(key, {
-			owner,
-			files: packed.toString("base64"),
-			fileCount: String(files.length),
-			createdAt: String(Date.now()),
-			history: JSON.stringify(history),
-			...(meta.plan ? { plan: JSON.stringify(meta.plan) } : {})
-		})
-		.expire(key, SOURCE_TTL_SECONDS)
-		.exec()
+	await q(`insert into ${T.sources} (job_id, owner, files, file_count, history, plan, created_at, expires_at)
+		values ($1, $2, $3, $4::int, $5, $6, $7::bigint, ${EXPIRES_AT("$8")})
+		on conflict (job_id) do update set owner = excluded.owner, files = excluded.files, file_count = excluded.file_count,
+			history = excluded.history, plan = excluded.plan, created_at = excluded.created_at, expires_at = excluded.expires_at`,
+		[jobId, owner, packed.toString("base64"), files.length, JSON.stringify(history), meta.plan ? JSON.stringify(meta.plan) : null, Date.now(), SOURCE_TTL_SECONDS])
+	// Expired snapshots are cleared as new ones are kept, never on a timer.
+	await q(`delete from ${T.sources} where expires_at <= now()`).catch(() => { })
 	jobLog(`Kept the source (${files.length} files) for ${Math.round(SOURCE_TTL_SECONDS / 3600)} hours, so you can change this app or push it to GitHub`)
 }
 
@@ -99,8 +95,10 @@ export async function saveSourceSnapshot(redis: RedisLike, jobId: string, owner:
  * point of a follow-up change. Throws in plain words when it has expired,
  * which fails the job and refunds it.
  */
-export async function restoreSourceSnapshot(redis: RedisLike, jobId: string, projectDir: string): Promise<SourceMeta> {
-	const [packed, rawHistory, rawPlan] = await redis.hmGet(sourceKey(jobId), ["files", "history", "plan"])
+export async function restoreSourceSnapshot(_redis: RedisLike, jobId: string, projectDir: string): Promise<SourceMeta> {
+	const [row] = await q<{ files: string | null; history: string | null; plan: string | null }>(
+		`select files, history, plan from ${T.sources} where job_id = $1 and expires_at > now()`, [jobId])
+	const [packed, rawHistory, rawPlan] = [row?.files, row?.history, row?.plan]
 	if (!packed) throw new Error("This app's saved code has expired, so it can't be changed. Describe the whole app to build it again")
 
 	const files = JSON.parse(gunzipSync(Buffer.from(packed, "base64")).toString("utf-8")) as Array<{ path: string; content: string }>

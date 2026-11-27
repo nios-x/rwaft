@@ -16,15 +16,12 @@ import {
 	DEPLOY_PROCESSING,
 	PROMPT_PROCESSING,
 	PR_PROCESSING,
-	DEPLOYMENT_STATUS_PREFIX,
 	BUILD_WAITING,
 	BUILD_ACTIVE,
-	userKey,
-	refundKey,
+	statusKey,
 	prTokenKey,
 	prResultKey,
-	PR_TOKEN_DEADLINES,
-	deploymentKey
+	PR_TOKEN_DEADLINES
 } from "./lib/config.ts"
 import { getAllFileNames } from "./lib/helper.ts"
 import { uploadFile } from "./lib/upload.ts"
@@ -39,6 +36,7 @@ import {
 	jobStatus,
 	flushLogs,
 	closeLogPublisher,
+	pruneLogHistory,
 	type JobKind
 } from "./lib/joblog.ts"
 import { run, installDependencies, buildProject } from "./lib/run.ts"
@@ -51,6 +49,7 @@ import { nudgeWatcher, startWatching, watchChecksForever } from "./lib/ci.ts"
 import { GitHubClient, canHandlePullRequests, openToken, revokeToken } from "./lib/github.ts"
 import { assertNoUndefinedIdentifiers } from "./lib/validate.ts"
 import { nextBackoff } from "./lib/pacing.ts"
+import { T, closeDb, kv, q, tx } from "./lib/db.ts"
 import {
 	RUNTIME_DEPENDENCIES,
 	BUILD_DEPENDENCIES,
@@ -868,45 +867,35 @@ function parsePayload(raw: string, label: string): JobPayload | null {
 	}
 }
 
-/** Credits a refund at most once per job, even if a crash makes the job run twice. */
-const REFUND_SCRIPT = `
-if redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[2]) then
-	return redis.call('HINCRBY', KEYS[2], 'tokens', ARGV[1])
-end
-return -1
-`
-const REFUND_MARKER_TTL_SECONDS = 7 * 24 * 60 * 60
-
 /**
- * Writes onto the job's dashboard record (lib/config.ts deploymentKey), only if
- * it exists: anonymous jobs have none, and one the user removed stays removed.
+ * Writes onto the job's dashboard record (Postgres deployments, written by the
+ * API for signed-in accounts). An UPDATE only touches a row that exists:
+ * anonymous jobs have none, and one the user removed stays removed.
  */
-const UPDATE_DEPLOYMENT_SCRIPT = `
-if redis.call('EXISTS', KEYS[1]) == 1 then
-	return redis.call('HSET', KEYS[1], unpack(ARGV))
-end
-return -1
-`
-
-/** Best effort: the dashboard falls back to the day-long status key when this fails. */
-async function updateDeployment(redis: RedisLike, id: string, fields: Record<string, string>) {
+async function updateDeployment(_redis: RedisLike, id: string, fields: Record<string, string>) {
 	try {
-		await redis.sendCommand(["EVAL", UPDATE_DEPLOYMENT_SCRIPT, "1", deploymentKey(id), ...Object.entries(fields).flat()])
+		await q(`update ${T.deployments} set data = data || $2::jsonb where id = $1`, [id, fields])
 	} catch (error) {
 		console.warn(`[dashboard] Could not update ${id}:`, (error as Error).message)
 	}
 }
 
-/** The user got nothing from a failed build, so the tokens it cost go back. */
-async function refundFailedJob(redis: RedisLike, payload: JobPayload) {
+/** A job's day-long status, which the API's waiting page and console read. */
+const setStatus = (id: string, status: string) => kv.set(statusKey(id), status, STATUS_TTL_SECONDS)
+
+/** The user got nothing from a failed build, so the tokens it cost go back, once per job even if a crash runs it twice. */
+async function refundFailedJob(_redis: RedisLike, payload: JobPayload) {
 	const { charge } = payload
 	if (!charge) return
 	try {
-		const reply = Number(await redis.sendCommand([
-			"EVAL", REFUND_SCRIPT, "2", refundKey(payload.id), userKey(charge.userId),
-			String(charge.tokens), String(REFUND_MARKER_TTL_SECONDS)
-		]))
-		if (reply >= 0) jobLog(`Refunded ${charge.tokens} credit${charge.tokens === 1 ? "" : "s"} for the failed build`, "warn")
+		const credited = await tx(async (run) => {
+			const inserted = await run(`insert into ${T.billingEvents} (key, account_id, tokens) values ($1, $2, $3::int)
+				on conflict (key) do nothing returning key`, [`refund:${payload.id}`, charge.userId, charge.tokens])
+			if (inserted.length === 0) return false
+			await run(`update ${T.accounts} set tokens = tokens + $2::int where id = $1`, [charge.userId, charge.tokens])
+			return true
+		})
+		if (credited) jobLog(`Refunded ${charge.tokens} credit${charge.tokens === 1 ? "" : "s"} for the failed build`, "warn")
 	} catch (error) {
 		console.error(`[billing] Refund for ${payload.id} failed:`, (error as Error).message)
 	}
@@ -978,13 +967,13 @@ async function pump(
 					await redis.zAdd(BUILD_ACTIVE, { score: Date.now(), value: id }).catch(() => { })
 					jobStatus("building")
 					jobLog(`Starting ${kind} job ${id}`)
-					await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "building", { EX: STATUS_TTL_SECONDS })
+					await setStatus(id, "building")
 					await updateDeployment(redis, id, { status: "building", startedAt: String(Date.now()) })
 
 					return await withTimeout(handler(payload, redis), JOB_TIMEOUT_MS, `${kind} job ${id}`)
 				})
 
-				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "ready", { EX: STATUS_TTL_SECONDS })
+				await setStatus(id, "ready")
 				const url = result?.url ?? payload.deploymentUrl
 				await updateDeployment(redis, id, { status: "ready", finishedAt: String(Date.now()), ...(result?.url ? { url: result.url } : {}) })
 				// The console reads these two lines; keep them in sync with frontend/lib/stages.ts.
@@ -992,7 +981,7 @@ async function pump(
 				jobStatus("ready", { url })
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error)
-				await redis.set(`${DEPLOYMENT_STATUS_PREFIX}${id}`, "failed", { EX: STATUS_TTL_SECONDS }).catch(() => { })
+				await setStatus(id, "failed").catch(() => { })
 				await updateDeployment(redis, id, { status: "failed", finishedAt: String(Date.now()), error: message.slice(0, 300) })
 				jobLog(`Deployment ${id} failed: ${message}`, "error")
 				jobStatus("failed", { error: message })
@@ -1005,6 +994,7 @@ async function pump(
 				// Ack last: until this runs, a crash leaves the job recoverable.
 				await redis.lRem(processing, 1, raw!).catch(() => { })
 				await flushLogs()
+				await pruneLogHistory(userId)
 			}
 		})
 	}
@@ -1104,8 +1094,7 @@ const promptWorker = () => pump("prompt", "prompt", PROMPT_QUEUE, PROMPT_PROCESS
  * which revokes it when the watch ends.
  */
 const writePrResult = async (redis: RedisLike, payload: JobPayload, result: PullRequestResult) => {
-	await redis.multi()
-		.hSet(prResultKey(payload.id), {
+	await kv.set(prResultKey(payload.id), JSON.stringify({
 			owner: payload.userId,
 			url: result.url,
 			title: result.title,
@@ -1118,11 +1107,9 @@ const writePrResult = async (redis: RedisLike, payload: JobPayload, result: Pull
 			head: result.head,
 			branchName: result.branch,
 			private: payload.private ? "1" : "0",
-			history: JSON.stringify(result.history),
-			sha: result.sha
-		})
-		.expire(prResultKey(payload.id), STATUS_TTL_SECONDS)
-		.exec()
+		history: JSON.stringify(result.history),
+		sha: result.sha
+	}), STATUS_TTL_SECONDS)
 	// Kept for good on the dashboard record, unlike the day-long result above.
 	await updateDeployment(redis, payload.id, {
 		url: result.url,
@@ -1136,8 +1123,11 @@ const writePrResult = async (redis: RedisLike, payload: JobPayload, result: Pull
 }
 
 /** The pull request an earlier job opened or added to, as a follow-up needs it. */
-const readPrRef = async (redis: RedisLike, jobId: string): Promise<PullRequestRef | null> => {
-	const fields = await redis.hGetAll(prResultKey(jobId))
+const readPrRef = async (_redis: RedisLike, jobId: string): Promise<PullRequestRef | null> => {
+	let fields: Record<string, string> = {}
+	try {
+		fields = JSON.parse(await kv.get(prResultKey(jobId)) || "{}") as Record<string, string>
+	} catch { /* unreadable: treated as gone */ }
 	if (!fields.url || !fields.repo || !fields.head || !fields.branchName || !Number(fields.number)) return null
 	let history: string[] = []
 	try {
@@ -1166,7 +1156,7 @@ const prWorker = () => pump("pr", "pr", PR_QUEUE, PR_PROCESSING, async (payload,
 			console.error("[pr] GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET must be set on build-services (the API's values) to handle pull requests")
 			throw new Error("Pull requests aren't set up on the build server yet")
 		}
-		const sealed = await redis.get(prTokenKey(payload.id))
+		const sealed = await kv.get(prTokenKey(payload.id))
 		if (!sealed) throw new Error("GitHub access for this request ran out while it waited in line. Start it again")
 		try {
 			token = openToken(sealed)
@@ -1204,7 +1194,8 @@ const prWorker = () => pump("pr", "pr", PR_QUEUE, PR_PROCESSING, async (payload,
 		return payload.from ? { url: result.url, done: `Added your change to pull request ${result.url}` } : { url: result.url }
 	} finally {
 		if (!handedToWatch) {
-			await redis.multi().del(prTokenKey(payload.id)).zRem(PR_TOKEN_DEADLINES, payload.id).exec().catch(() => { })
+			await kv.del(prTokenKey(payload.id)).catch(() => { })
+			await redis.zRem(PR_TOKEN_DEADLINES, payload.id).catch(() => { })
 			if (token) {
 				await revokeToken(token).catch((error) => console.warn(`[pr] Token revoke for ${payload.id} failed:`, (error as Error).message))
 			}
@@ -1299,6 +1290,7 @@ const shutdown = async (signal: string) => {
 		process.exit(0)
 	}, Number(process.env.SHUTDOWN_GRACE_MS || 25_000)).unref()
 	await closeLogPublisher().catch(() => { })
+	await closeDb().catch(() => { })
 }
 
 process.on("SIGTERM", () => { void shutdown("SIGTERM") })
